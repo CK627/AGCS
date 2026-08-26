@@ -4,7 +4,7 @@
 import time
 
 from common.pid import PID
-from agcs_lib.motion import move_body, go_forward, go_back
+from agcs_lib.motion import move_body, go_forward, go_back, turn_left, turn_right
 from agcs_lib.vision import pixel_to_arm_coord
 from agcs_lib.sensors import show_status
 from agcs_lib.logs import get_logger, action_msg
@@ -50,6 +50,19 @@ class Grabber:
         self.reach_x = float(walk.get('reach_x', 8.0))
         self.reach_y = float(walk.get('reach_y', 24.0))
         self.body_z = 0
+
+        # 抬头夹取（高处目标）参数，参考官方 intelligent_fetch 的抬头思路
+        self.tilt_pose = [float(v) for v in gc.get('tilt_pose', [0, 15, 30])]
+        self.tilt_pitch = int(gc.get('tilt_pitch', 0))
+        self.tilt_cx_min = int(gc.get('tilt_cx_min', 250))
+        self.tilt_cx_max = int(gc.get('tilt_cx_max', 390))
+        self.tilt_cy_min = int(gc.get('tilt_cy_min', 240))
+        self.tilt_cy_max = int(gc.get('tilt_cy_max', 400))
+        self.tilt_turn_deg = int(gc.get('tilt_turn_deg', 4))
+        self.tilt_rounds = int(gc.get('tilt_rounds', 12))
+        self.fixed_grab = [float(v) for v in gc.get('fixed_grab', [0, 25])]
+        self.fixed_grab_z = float(gc.get('fixed_grab_z', 5))
+        self.turn_sign = int(gf.get('turn_sign', 1))
 
         # 摄像头舵机（21 水平 / 24 俯仰），用于调整后的重扫锁定
         self.x_dis = 500
@@ -196,6 +209,63 @@ class Grabber:
             if abs(c[0] - before[0]) > tol or abs(c[1] - before[1]) > tol:
                 return True
             time.sleep(0.1)
+        # -90 检测位没夹到，尝试抬头夹取（高处目标）
+        self.log.info('[grab] %s', action_msg('低头未夹到', reason='目标可能在高处', action='转抬头夹取'))
+        return self._run_tilted()
+
+    def _turn_body(self, deg):
+        if deg == 0:
+            return
+        if self.turn_sign > 0:
+            (turn_left if deg > 0 else turn_right)(self.ik, abs(deg), 60)
+        else:
+            (turn_right if deg > 0 else turn_left)(self.ik, abs(deg), 60)
+
+    def _run_tilted(self):
+        """抬头夹取（高处目标）：抬头检测 → cx 居中 → 固定夹取点夹取。"""
+        self.ak.setPitchRangeMoving(tuple(self.tilt_pose), self.tilt_pitch, -90, 100, 2)
+        time.sleep(2)
+        self.log.info('[grab] %s', action_msg(
+            '抬头检测', reason='-90检测位未找到目标',
+            action='切抬头位 %s pitch=%d°' % (self.tilt_pose, self.tilt_pitch)))
+        for round_no in range(self.tilt_rounds):
+            r = self._stable(frames=30, need=3)
+            if r is None:
+                self.log.debug('[grab] %s', action_msg('抬头未检测到', action='转身 %d° 重找' % self.tilt_turn_deg))
+                self._turn_body(self.tilt_turn_deg)
+                time.sleep(0.6)
+                continue
+            cx, cy = r['center']
+            self.log.debug('[grab] %s', action_msg(
+                '抬头定位', action='第 %d/%d 轮 cx=%dpx cy=%dpx' % (round_no + 1, self.tilt_rounds, cx, cy)))
+            if cx < self.tilt_cx_min:
+                self._turn_body(self.tilt_turn_deg)
+                time.sleep(0.4)
+                continue
+            if cx > self.tilt_cx_max:
+                self._turn_body(-self.tilt_turn_deg)
+                time.sleep(0.4)
+                continue
+            if self.tilt_cy_min <= cy <= self.tilt_cy_max:
+                fx, fy = self.fixed_grab
+                self.log.info('[grab] %s', action_msg(
+                    '抬头夹取', action='固定夹取点 (%.1fcm, %.1fcm, %.1fcm)' % (fx, fy, self.fixed_grab_z)))
+                res = self.ak.setPitchRangeMoving((fx, fy + 2.0, self.fixed_grab_z), -90, -90, 100, 2)
+                if res is False:
+                    return False
+                time.sleep(2)
+                self.board.bus_servo_set_position(0.5, [[25, self.gripper_close]])
+                time.sleep(0.5)
+                self.ak.setPitchRangeMoving((fx, fy, 8), -90, -90, 100, 1)
+                time.sleep(1)
+                self.ak.setPitchRangeMoving((12, 24, -5), -90, -90, 100, 1.5)
+                time.sleep(1.5)
+                self.board.bus_servo_set_position(0.5, [[25, self.gripper_open]])
+                time.sleep(0.5)
+                self.ak.setPitchRangeMoving((0, 15, 5), -90, -90, 100, 1.5)
+                time.sleep(1.5)
+                self.log.info('[grab] %s', action_msg('夹取成功', reason='抬头目标进入窗口'))
+                return True
         return False
 
     def run(self, cy=None, x_dis=None, y_dis=None):
