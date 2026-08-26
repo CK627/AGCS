@@ -1,11 +1,9 @@
 #!/usr/bin/python3
 # coding=utf8
-"""寻路算法（二开）：先 24 号舵机上下扫描，未找到再逐点转动 21 号舵机，每次转动后 24 号上下扫描一遍。
+"""寻路算法（二开）：21+24 双舵机搜索 + PID 持续锁定 + 步态逼近。
 
-扫描顺序：
-- 先检测初始位(500, 260)；
-- 未找到时，21 号舵机脉宽固定，先让 24 号舵机上下扫描一遍；
-- 仍未找到时，21 号舵机逐点转动，每动一次脉宽就做一次 24 号舵机上下扫描；
+参照官方 color_track.py：
+- 舵机21 水平、舵机24 俯仰，搜索时两轴都扫；
 - 找到后 PID 让摄像头一直锁定目标，避免目标进入盲区导致连续丢失/重扫。
 """
 import math
@@ -96,53 +94,16 @@ class Searcher:
         self._set_cam(self.x_dis + self.x_pid.output, self.y_dis + self.y_pid.output)
         return abs(cx - 320) < 30 and abs(cy - 240) < 30
 
-    def _close(self, r, dist=None, best_dist=None, start_dist=None):
-        """到位判定：距离优先，贴底时结合历史最近距离与距离回升，避免远距误判和贴底面积失真。"""
+    def _close(self, r):
         cy = r['center'][1]
         radius = max(int(r.get('radius', 20)), 1)
-        if dist is None:
-            dist = self.area_k / math.sqrt(max(int(r.get('area', 1)), 1))
-        # 估算距离确实进入 near_cm 以内 → 到位
-        if dist <= self.near_cm:
-            return True
-        # 目标贴到画面底部（即将出画面）时的兜底
         if cy + radius >= 480 - self.edge_margin:
-            # 已经逼近（历史最近距离足够小、相比起点确有下降），且当前估算比历史最近回升超过3cm：
-            # 说明目标底部被画面截断、面积变小导致距离虚高 → 视为到位
-            if (best_dist is not None and start_dist is not None
-                    and best_dist <= self.near_cm * 1.5
-                    and best_dist <= start_dist - 3.0
-                    and dist > best_dist + 3.0):
-                return True
-            # 贴底且估算距离仍然很近（收紧到 near_cm，bgas 在 <15cm 才触发）
-            return dist <= self.near_cm
-        return False
-
-    def _vertical_sweep(self, x):
-        """固定 21 号舵机脉宽为 x，让 24 号舵机上下扫描一遍；找到目标返回 dict，否则返回 None。"""
-        for y in self.v_scan:
-            self._set_cam(x, y)
-            r = self.detect()
-            if r is not None:
-                print('[search][扫描] 检测到目标 x_dis=%d y_dis=%d' % (x, y), flush=True)
-                # 检测到目标后先 PID 锁定到画面中心，不再继续扫描
-                for _ in range(4):
-                    self._track(r['center'])
-                    time.sleep(0.1)
-                    r2 = self.detect()
-                    if r2 is not None:
-                        r = r2
-                    else:
-                        break
-                cr = self._confirm()
-                if cr is not None:
-                    return cr
-                # 确认失败也返回当前目标，交给上层追踪处理
-                return r
-        return None
+            return True
+        dist = self.area_k / math.sqrt(max(int(r.get('area', 1)), 1))
+        return dist <= self.near_cm
 
     def search(self):
-        """第一次扫描：先 24 号舵机上下扫描；未找到再逐点转动 21 号舵机，每次转动后 24 号上下扫描一遍。"""
+        """21+24 双轴扫描，返回目标 dict 或 None。"""
         self.board.bus_servo_set_position(0.5, [[25, 120]])
         time.sleep(0.5)
         self._set_cam(500, 260)
@@ -152,19 +113,29 @@ class Searcher:
             if cr is not None:
                 return cr
 
-        # 第一步：21 号舵机脉宽固定在中位(500)，仅 24 号舵机上下扫描
-        print('[search][扫描] 21号舵机固定脉宽500，24号舵机上下扫描', flush=True)
-        r = self._vertical_sweep(500)
-        if r is not None:
-            return r
-
-        # 第二步：21 号舵机逐点转动，每动一次脉宽就做一次 24 号舵机上下扫描
-        pans = [400, 300, 250, 600, 700, 750]  # 21舵机水平扫描：先左后右，范围250~750，步进100
-        for x in pans:
-            print('[search][扫描] 21号舵机脉宽=%d，24号舵机上下扫描' % x, flush=True)
-            r = self._vertical_sweep(x)
-            if r is not None:
-                return r
+        pans = [500, 400, 300, 250, 600, 700, 750]  # 21舵机水平扫描：从中间(500)开始，先左后右，范围250~750，步进100
+        for y in self.v_scan:
+            print('[search][扫描] 俯仰 y_dis=%d 开始水平扫描' % y, flush=True)
+            self._set_cam(500, y)
+            for x in pans:
+                self._set_cam(x, y)
+                r = self.detect()
+                if r is not None:
+                    print('[search][扫描] 检测到目标 x_dis=%d y_dis=%d' % (x, y), flush=True)
+                    # 检测到目标后先 PID 锁定到画面中心，不再继续扫描
+                    for _ in range(4):
+                        self._track(r['center'])
+                        time.sleep(0.1)
+                        r2 = self.detect()
+                        if r2 is not None:
+                            r = r2
+                        else:
+                            break
+                    cr = self._confirm()
+                    if cr is not None:
+                        return cr
+                    # 确认失败也返回当前目标，交给上层追踪处理
+                    return r
         return None
 
     def run(self):
@@ -192,8 +163,6 @@ class Searcher:
 
             # 追踪 + 逼近
             lost = 0
-            start_dist = None
-            best_dist = None
             for step in range(self.max_approach):
                 r = self.detect()
                 if r is None:
@@ -208,13 +177,9 @@ class Searcher:
                 cx, cy = r['center']
                 area = max(int(r.get('area', 1)), 1)
                 dist = self.area_k / math.sqrt(area)
-                if start_dist is None:
-                    start_dist = dist
-                if best_dist is None or dist < best_dist:
-                    best_dist = dist
                 centered = self._track(r['center'])
-                print('[search][追踪] #%d x_dis=%d y_dis=%d cx=%d cy=%d dist=%.1fcm best=%.1fcm'
-                      % (step + 1, self.x_dis, self.y_dis, cx, cy, dist, best_dist), flush=True)
+                print('[search][追踪] #%d x_dis=%d y_dis=%d cx=%d cy=%d dist=%.1fcm'
+                      % (step + 1, self.x_dis, self.y_dis, cx, cy, dist), flush=True)
 
                 # 云台水平偏太多则转身并回正
                 if self.x_dis > 700:
@@ -224,7 +189,7 @@ class Searcher:
                     self._turn_body(10)
                     self._set_cam(500, self.y_dis)
 
-                if self._close(r, dist=dist, best_dist=best_dist, start_dist=start_dist):
+                if self._close(r):
                     return r['center'], cy
 
                 if dist > self.fine_cm:
@@ -234,7 +199,7 @@ class Searcher:
                 time.sleep(0.3)
 
             r = self.detect()
-            if r is not None and self._close(r, best_dist=best_dist, start_dist=start_dist):
+            if r is not None and self._close(r):
                 return r['center'], r['center'][1]
 
         return None, None

@@ -110,12 +110,12 @@ class Searcher:
             # 已经逼近（历史最近距离足够小、相比起点确有下降），且当前估算比历史最近回升超过3cm：
             # 说明目标底部被画面截断、面积变小导致距离虚高 → 视为到位
             if (best_dist is not None and start_dist is not None
-                    and best_dist <= self.near_cm * 1.5
+                    and best_dist <= self.near_cm * 2
                     and best_dist <= start_dist - 3.0
                     and dist > best_dist + 3.0):
                 return True
-            # 贴底且估算距离仍然很近（收紧到 near_cm，bgas 在 <15cm 才触发）
-            return dist <= self.near_cm
+            # 贴底且估算距离仍然很近
+            return dist <= self.near_cm * 1.5
         return False
 
     def _vertical_sweep(self, x):

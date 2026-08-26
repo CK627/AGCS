@@ -19,7 +19,7 @@ def move_body(ik, dz, speed=300):
     相对初始站姿的绝对偏移，dz=0 即复位。返回实际偏移。
     """
     dz = int(dz)
-    ik.moveBody(ik.initial_pos, [0, 0, dz], [0, 0, 0], speed)
+    ik.moveBody(ik.initial_pos, [0, 0, -dz], [0, 0, 0], speed)
     return dz
 
 

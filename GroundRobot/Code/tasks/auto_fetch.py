@@ -1,6 +1,11 @@
 #!/usr/bin/python3
 # coding=utf8
-"""自动取物编排：先寻路(search)，再夹取(grab)，两个算法严格分离。"""
+"""自动取物编排：搜索(search) → 定位判定(bgas) → 纯机械臂夹取(grab)，三个阶段严格分离。
+
+- search：找目标 + 大致接近（只动 1-20 + 云台 21/24）；
+- bgas（Before-Grab-After-Search）：判定/调整到"可抓取"状态（只动 1-20，云台锁定检测位）；
+- grab：只动 21-25 伸臂夹取，绝不动 1-20。
+"""
 import os
 import sys
 import time
@@ -16,10 +21,11 @@ def main():
     from agcs_lib import (
         make_board, make_ik, make_arm_ik, load_params,
         load_lab_data, load_block_params, detect_color, correct_camera,
-        load_undistort_maps, make_ultrasonic, make_display, open_camera, capture,
-        stand,
+        load_undistort_maps, make_ultrasonic, make_display, open_camera,
+        capture, stand,
     )
     from agcs_lib.search import Searcher
+    from agcs_lib.bgas import Bgas
     from agcs_lib.grab import Grabber
     from agcs_lib.sensors import show_status
 
@@ -54,6 +60,7 @@ def main():
     board.bus_servo_set_position(1.0, [[25, int(params['arm'].get('gripper_open', 120))]])
     time.sleep(2)
 
+    # 1) 搜索
     searcher = Searcher(board, ik, ak, params, detect, ultrasonic, display)
     center, cy = searcher.run()
     if center is None:
@@ -62,21 +69,32 @@ def main():
         show_status(display, 0)
         return
 
-    grabber = Grabber(board, ik, ak, params, K, R, T, detect, display)
-    ok = grabber.run(cy=cy)
+    # 2) bgas：定位/可抓取判定（只动 1-20）
+    import agcs_lib.bgas as _b
+    print('[VER] BGAS_FILE=%s' % _b.__file__, flush=True)
+    bgas = Bgas(board, ik, ak, params, K, R, T, detect, display, ultrasonic=ultrasonic)
+    context, reason = bgas.run(cy=cy, x_dis=searcher.x_dis, y_dis=searcher.y_dis)
+    if context is None:
+        print('bgas 定位失败：%s' % reason)
+        cam.camera_close()
+        show_status(display, 0)
+        return
+
+    # 3) grab：纯机械臂夹取（只动 21-25）
+    import agcs_lib.grab as _g
+    print('[VER] GRAB_FILE=%s BGAS_OK=1' % _g.__file__, flush=True)
+    grabber = Grabber(board, ik, ak, params, K, R, T, detect, display, ultrasonic=ultrasonic)
+    ok = grabber.run(context=context, body_z=context['body_z'])
 
     cam.camera_close()
     if ok:
         print('完成：%s 已夹取并放下' % color)
+        show_status(display, 3)
+        time.sleep(5)
+        show_status(display, 0)
     else:
         print('%s 夹取失败' % color)
         show_status(display, 0)
-        return
-
-    # 第三阶段码显示 5 秒后熄灭
-    show_status(display, 3)
-    time.sleep(5)
-    show_status(display, 0)
 
 
 if __name__ == '__main__':

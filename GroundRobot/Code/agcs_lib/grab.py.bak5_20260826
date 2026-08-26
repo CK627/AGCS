@@ -1,0 +1,469 @@
+#!/usr/bin/python3
+# coding=utf8
+"""夹取算法（二开）：超声波实测距离 + 相机几何测高 + 灵活抬机身 + 目标找回 + 纯视觉夹取 + 判定 + 重试。
+
+高度处理：
+- 超声波有效且高度合理时：用超声波距离 + 像素射线几何解算物体高度 H；
+- 机身按实测高度按比例抬升（灵活，非固定步长，高处物体只抬不降），抓取 z = pick_z + H - body_z；
+- 读数不合理（负值=扫到地面/后方）时逐档抬升重测，仍不合理则复位机身退回地面平面；
+- 夹取阶段检测不到目标时自动逐级抬高/降低机身找回，找回后 PID 居中。
+"""
+import time
+import cv2
+import numpy as np
+
+from common.pid import PID
+from agcs_lib.motion import move_body, go_forward, go_back
+from agcs_lib.vision import pixel_to_arm_coord
+from agcs_lib.sensors import show_status, dist_cm
+
+
+class Grabber:
+    """detect: callable，返回 detect_color 的 dict 或 None。"""
+
+    def __init__(self, board, ik, ak, params, K, R, T, detect, display=None, ultrasonic=None):
+        self.board = board
+        self.ik = ik
+        self.ak = ak
+        self.params = params
+        self.K, self.R, self.T = K, R, T
+        self.detect = detect
+        self.display = display
+        self.ultrasonic = ultrasonic
+
+        gc = params.get('grab', {})
+        gf = params.get('gimbal_fetch', {})
+        arm = params['arm']
+        walk = params.get('walk', {})
+
+        self.align_x_cm = float(gc.get('align_x_cm', 0.5))
+        self.align_y_cm = float(gc.get('align_y_cm', 2.0))
+        self.y_ref = float(gc.get('y_ref', 15.0))
+        self.move_tol_px = int(gc.get('move_tol_px', 40))
+        self.pos_ratio = float(gc.get('pos_ratio', 1.5))
+        self.attempts = int(gc.get('attempts', 3))
+        self.body_step = int(gc.get('body_lift_step', 5))
+        self.body_max = int(gc.get('body_lift_max', 30))
+        self.height_iter = int(gc.get('height_max_iter', 12))
+        self.cy_target = int(gc.get('cy_target', 240))
+        self.cy_tol = int(gc.get('cy_tol', 50))
+        self.cy_sign = int(gc.get('cy_sign', 1))
+        self.height_enabled = bool(gc.get('height_enabled', True))
+        self.arm_tilt_step = int(gc.get('arm_tilt_step', 10))
+        self.reacquire_enabled = bool(gc.get('reacquire_enabled', True))
+
+        # 超声波实测距离参数
+        self.ultra_samples = int(gc.get('ultra_samples', 5))
+        self.ultra_rounds = int(gc.get('ultra_rounds', 3))
+        self.ultra_max_cm = float(gc.get('ultra_max_cm', 100.0))
+        self.ultra_jump_cm = float(gc.get('ultra_jump_cm', 8.0))
+        self.ultra_offset_cm = float(gc.get('ultra_offset_cm', 0.0))
+        self.ultra_min_h_cm = float(gc.get('ultra_min_h_cm', -2.0))
+        self.ultra_max_h_cm = float(gc.get('ultra_max_h_cm', 25.0))
+        if isinstance(self.ultrasonic, (list, tuple)):
+            self.ultra_sensors = [s for s in self.ultrasonic if s is not None]
+        elif self.ultrasonic is not None:
+            self.ultra_sensors = [self.ultrasonic]
+        else:
+            self.ultra_sensors = []
+        self.ultra_dist = None
+
+        self.pick_z = float(arm.get('pick_z', 5))
+        self.gripper_open = int(arm.get('gripper_open', 120))
+        self.gripper_close = int(arm.get('gripper_close', 550))
+        self.reach_x = float(walk.get('reach_x', 8.0))
+        self.reach_y = float(walk.get('reach_y', 24.0))
+        self.body_z = 0
+
+        # 摄像头舵机（21 水平 / 24 俯仰），用于调整后的重扫锁定
+        self.x_dis = 500
+        self.y_dis = 260
+        self.x_pid = PID(P=0.1, I=0.001, D=0.008)
+        self.y_pid = PID(P=0.1, I=0.02, D=0.008)
+        self.pan_step = int(gf.get('pan_step', 40))
+        self.settle = float(gf.get('settle_ms', 280)) / 1000.0
+        self.v_scan = [260, 200, 320, 140, 380, 80, 440]
+
+    def _status(self, v):
+        show_status(self.display, v)
+
+    def _stable(self, frames=60, need=5, jitter=5):
+        stable = 0
+        old = None
+        for _ in range(frames):
+            r = self.detect()
+            if r is None:
+                stable = 0
+                old = None
+                time.sleep(0.05)
+                continue
+            c = r['center']
+            if old is not None and abs(c[0] - old[0]) < jitter and abs(c[1] - old[1]) < jitter:
+                stable += 1
+            else:
+                stable = 0
+            old = c
+            if stable >= need:
+                return c
+            time.sleep(0.05)
+        return None
+
+    def set_body(self, dz):
+        """机身升降，dz 单位 mm（正=抬高，负=降低），范围 ±body_max。"""
+        dz = max(-self.body_max, min(self.body_max, int(dz)))
+        move_body(self.ik, dz)
+        self.body_z = dz
+        time.sleep(0.3)
+        return dz
+
+    def _cy_ok(self, cy):
+        return abs(cy - self.cy_target) <= self.cy_tol
+
+    def _cam(self):
+        self.board.bus_servo_set_position(0.02, [[24, int(self.y_dis)], [21, int(self.x_dis)]])
+
+    def _set_cam(self, x, y):
+        self.x_dis = max(0, min(1000, int(x)))
+        self.y_dis = max(0, min(1000, int(y)))
+        self._cam()
+        time.sleep(self.settle)
+
+    def _track(self, center):
+        cx, cy = center
+        self.x_pid.SetPoint = 320
+        self.x_pid.update(cx)
+        self.y_pid.SetPoint = 240
+        self.y_pid.update(cy)
+        self._set_cam(self.x_dis + self.x_pid.output, self.y_dis + self.y_pid.output)
+        return abs(cx - 320) < 30 and abs(cy - 240) < 30
+
+    def _rescan(self):
+        """21+24 双轴扫描找回目标。"""
+        pans = list(range(500 + self.pan_step, 1001, self.pan_step)) + \
+               list(range(1000, -1, -self.pan_step)) + \
+               list(range(0, 500, self.pan_step))
+        for y in self.v_scan:
+            self._set_cam(500, y)
+            for x in pans:
+                self._set_cam(x, y)
+                r = self.detect()
+                if r is not None:
+                    return r
+        return None
+
+    def _reacquire(self):
+        """夹取阶段目标丢失时自动找回：当前云台位复检 → 机身逐级抬高 → 逐级降低 → 复位。"""
+        if not self.reacquire_enabled:
+            return None
+        r = self.detect()
+        if r is not None:
+            self._track(r['center'])
+            return r['center']
+        # 高物体：先逐级抬高机身
+        for dz in range(self.body_step, self.body_max + 1, self.body_step):
+            self.set_body(dz)
+            r = self.detect()
+            if r is not None:
+                print('[grab][找回] 抬高机身 %dmm 找到目标' % dz, flush=True)
+                self._track(r['center'])
+                return r['center']
+        # 再逐级降低
+        for dz in range(-self.body_step, -self.body_max - 1, -self.body_step):
+            self.set_body(dz)
+            r = self.detect()
+            if r is not None:
+                print('[grab][找回] 降低机身 %dmm 找到目标' % dz, flush=True)
+                self._track(r['center'])
+                return r['center']
+        self.set_body(0)
+        return None
+
+    def _ultra_distance(self):
+        """超声波测距：多传感器/多轮采样取最小有效值，相邻两轮一致性校验。
+
+        返回 cm；全部无效返回 None。远距离杂波（扫到后面物体）会被 min + 校验滤掉。
+        """
+        if not self.ultra_sensors:
+            return None
+
+        def read_once():
+            best = None
+            for s in self.ultra_sensors:
+                d = dist_cm(s, samples=self.ultra_samples)
+                if 0 < d <= self.ultra_max_cm:
+                    best = d if best is None else min(best, d)
+            return best
+
+        prev = None
+        last = None
+        for _ in range(max(1, self.ultra_rounds)):
+            cur = read_once()
+            if cur is None:
+                continue
+            last = cur
+            if prev is not None and abs(cur - prev) <= self.ultra_jump_cm:
+                return min(cur, prev)
+            prev = cur
+        return last
+
+    def _coord3(self, center, dist_cm):
+        """像素 + 超声波距离 → 机械臂坐标 (x, y, h)，h 为物体中心相对地面高度 cm。
+
+        与 pixel_to_arm_coord 同一标定约定：地面时 h=0 且 x/y 与旧函数一致；
+        物体抬高时（距离小于该像素的地面交点距离）h>0。
+        机身抬升（body_z>0）时相机随之上移，标定相机高度 T_z 同步补偿。
+        """
+        u, v = center
+        inv_k = np.linalg.inv(self.K)
+        x_cam = inv_k.dot(np.array([[u], [v], [1.0]], dtype=np.float64))
+        r_mat = np.zeros((3, 3), dtype=np.float64)
+        cv2.Rodrigues(self.R, r_mat)
+        rt_x = r_mat.T.dot(x_cam)
+        t_eff = self.T.copy()
+        t_eff[2, 0] += self.body_z  # 机身抬升量 mm
+        rt_t = r_mat.T.dot(t_eff)
+        s = dist_cm * 10.0 / float(np.linalg.norm(x_cam))
+        w = s * rt_x - rt_t
+        x = -w[0, 0] / 10.0
+        y = 15.0 - w[1, 0] / 10.0  # initial_coord[1] = 15
+        h = w[2, 0] / 10.0
+        return x, y, h
+
+    def _measure(self, center):
+        """测量超声波距离并用几何解算高度，返回 (d, valid, h, x, y)。
+
+        valid=False 表示读数不合理（负高度/超上限），调用方据此决定抬机身重测或退回地面平面。
+        """
+        d = self._ultra_distance()
+        if d is None:
+            d = self.ultra_dist
+        if d is None:
+            return None, False, 0.0, 0.0, 0.0
+        d = max(1.0, d + self.ultra_offset_cm)
+        x, y, h = self._coord3(center, d)
+        valid = self.ultra_min_h_cm <= h <= self.ultra_max_h_cm
+        return d, valid, h, x, y
+
+    def _auto_lift(self, center):
+        """高度自适应抬机身：按实测高度按比例抬升（灵活），读数不合理时逐档抬升重测。
+
+        高处物体只抬不降；返回最终 center。
+        """
+        for _ in range(max(1, self.height_iter // 2)):
+            d, valid, h, x, y = self._measure(center)
+            if valid:
+                # 高度合理：按比例抬机身，抬升量 = min(h, body_max) cm -> mm
+                want_mm = int(min(max(h, 0.0), self.body_max / 10.0) * 10.0)
+                if want_mm > self.body_z:
+                    print('[grab][高度] 物体高 %.1fcm，抬机身 %dmm' % (h, want_mm), flush=True)
+                    self.set_body(want_mm)
+                    r = self.detect()
+                    if r is not None:
+                        center = r['center']
+                    continue
+                break
+            # 读数不合理：多为高处物体被读成远处（h 负且幅度中等），抬一档再测
+            if h < self.ultra_min_h_cm and h >= -15.0 and self.body_z < self.body_max:
+                self.set_body(self.body_z + self.body_step)
+                r = self.detect()
+                if r is not None:
+                    center = r['center']
+                continue
+            break
+        return center
+
+    def _solve(self, center, d):
+        """超声波距离 + 像素 → (x, y, h)。
+
+        高度不合理（负值=读数扫到地面/后方，或超上限）时退回地面平面映射，避免污染抓取坐标。
+        """
+        if d is None:
+            x, y = self._coord(center)
+            return x, y, 0.0
+        x, y, h = self._coord3(center, d)
+        if h < self.ultra_min_h_cm or h > self.ultra_max_h_cm:
+            print('[grab][高度] 实测高度 %.1fcm 不合理（像素与距离不一致，可能扫到地面/后方），退回地面平面'
+                  % h, flush=True)
+            x, y = self._coord(center)
+            return x, y, 0.0
+        return x, y, h
+
+    def adjust_height(self, cy):
+        """体态升降兜底（cy 判断）：步长随误差自适应（越偏越大），到极限用 24 舵机。返回 (ok, alarm)。"""
+        print('[grab][高度] 开始调整 cy=%d target=%d' % (cy, self.cy_target))
+        cur = cy
+        for i in range(self.height_iter):
+            if self._cy_ok(cur):
+                return True, False
+            # 灵活步长：误差越大单步越大，封顶 body_max
+            step = max(self.body_step, min(self.body_max, abs(cur - self.cy_target) // 10))
+            step *= self.cy_sign
+            if cur < self.cy_target:
+                if self.body_z + step <= self.body_max:
+                    self.set_body(self.body_z + step)
+                else:
+                    self._set_cam(self.x_dis, self.y_dis + self.arm_tilt_step)
+            else:
+                if self.body_z - step >= -self.body_max:
+                    self.set_body(self.body_z - step)
+                else:
+                    self._set_cam(self.x_dis, self.y_dis - self.arm_tilt_step)
+            # 调整后：先恢复记录舵机位再 PID 锁定，仍看不到才全量重扫
+            r = self.detect()
+            if r is None:
+                self._set_cam(self.found_x, self.found_y)
+                r = self.detect()
+            if r is None:
+                r = self._rescan()
+            if r is None:
+                return False, True
+            self._track(r['center'])
+            cur = r['center'][1]
+            time.sleep(0.25)
+        return False, True
+
+    def _coord(self, center):
+        return pixel_to_arm_coord(self.K, self.R, self.T, center, initial_coord=(0, 15, 5))
+
+    def _aligned(self, x, y):
+        return abs(x) <= self.align_x_cm and abs(y - self.y_ref) <= self.align_y_cm
+
+    def _grab_once(self, x, y, z=None):
+        if z is None:
+            z = self.pick_z
+        res = self.ak.setPitchRangeMoving((x, y + 2.0, z), -90, -90, 100, 1)
+        if res is False:
+            return False
+        time.sleep(1.5)
+        self.board.bus_servo_set_position(0.5, [[25, self.gripper_close]])
+        time.sleep(1.5)
+        self.ak.setPitchRangeMoving((12, 24, 5), -90, -90, 100, 1.5)
+        time.sleep(1.5)
+        self.ak.setPitchRangeMoving((12, 24, -5), -90, -90, 100, 1)
+        time.sleep(1)
+        self.board.bus_servo_set_position(0.5, [[25, self.gripper_open]])
+        time.sleep(0.5)
+        self.ak.setPitchRangeMoving((12, 24, 5), -90, -90, 100, 1)
+        time.sleep(1)
+        self.ak.setPitchRangeMoving((0, 15, 5), -90, -90, 100, 1.5)
+        time.sleep(1.5)
+        return True
+
+    def _verify(self, before):
+        for _ in range(5):
+            r = self.detect()
+            if r is None:
+                return True
+            c = r['center']
+            radius = max(int(r.get('radius', 20)), 1)
+            tol = max(self.move_tol_px, int(self.pos_ratio * radius))
+            if abs(c[0] - before[0]) > tol or abs(c[1] - before[1]) > tol:
+                return True
+            time.sleep(0.1)
+        return False
+
+    def run(self, cy=None, x_dis=None, y_dis=None):
+        self.board.bus_servo_set_position(0.5, [[25, self.gripper_open]])
+        if x_dis is not None:
+            self.x_dis = x_dis
+        if y_dis is not None:
+            self.y_dis = y_dis
+        self.found_x = self.x_dis
+        self.found_y = self.y_dis
+
+        # 优先用超声波实测距离 + 几何测高；有效则跳过 cy 体态升降（z 由机械臂直接补偿）
+        self.ultra_dist = self._ultra_distance()
+        if self.ultra_dist is not None:
+            print('[grab][高度] 超声波距离 %.1fcm，使用实测高度补偿（跳过体态升降）'
+                  % self.ultra_dist, flush=True)
+        elif self.height_enabled and cy is not None and not self._cy_ok(cy):
+            ok, alarm = self.adjust_height(cy)
+            if alarm:
+                print('[grab][提示] 高度未调到目标区间(cy=%d, target=%d)，保持当前体态继续夹取'
+                      % (cy, self.cy_target))
+
+        # 调整机位后：恢复记录舵机位 + PID 锁定，仍看不到才全量重扫
+        # 切回检测位（相机朝下 pitch -90），保证 pixel_to_arm_coord 的标定姿态一致
+        self.ak.setPitchRangeMoving((0, 15, 5), -90, -90, 100, 2)
+        time.sleep(2)
+
+        for attempt in range(self.attempts):
+            print('[grab] 第 %d/%d 次' % (attempt + 1, self.attempts))
+            self._status(2)
+            center = self._stable()
+            if center is None:
+                # 目标丢失：自动抬高/降低机身找回（高物体机身过低时看不到）
+                center = self._reacquire()
+                if center is None:
+                    print('[grab] 机身调整后仍未找到目标')
+                    continue
+
+            # 高度自适应：按实测高度灵活抬机身（高处物体只抬不降）
+            center = self._auto_lift(center)
+
+            # 最终测高求解
+            d, valid, h, x, y = self._measure(center)
+            if valid:
+                z_grab = self.pick_z + h - self.body_z / 10.0
+                print('[grab] 像素=%s 距离=%.1fcm 物体高=%.1fcm 机身=%.1fcm -> x=%.1f y=%.1f z=%.1f'
+                      % (center, d, h, self.body_z / 10.0, x, y, z_grab))
+            else:
+                # 读数仍不合理：复位机身退回地面平面，防止 z 过低卡爪
+                if self.body_z != 0:
+                    self.set_body(0)
+                    r = self.detect()
+                    if r is not None:
+                        center = r['center']
+                x, y = self._coord(center)
+                h = 0.0
+                d = None
+                z_grab = self.pick_z
+                print('[grab] 像素=%s -> x=%.1f cm y=%.1f cm（地面平面，机身已复位）' % (center, x, y))
+
+            for _ in range(20):
+                if self._aligned(x, y):
+                    break
+                r = self.detect()
+                if r is None:
+                    break
+                if d is not None:
+                    x, y, h = self._solve(r['center'], d)
+                else:
+                    x, y = self._coord(r['center'])
+                if y > self.y_ref + self.align_y_cm:
+                    go_forward(self.ik, 12, 50)
+                elif y < self.y_ref - self.align_y_cm:
+                    go_back(self.ik, 12, 50)
+                time.sleep(0.4)
+
+            # 对准后重测一次距离，刷新最终抓取坐标（提高 z 精度）
+            rf = self.detect()
+            if rf is not None:
+                d2, valid2, h2, x2, y2 = self._measure(rf['center'])
+                if valid2:
+                    d, h, x, y = d2, h2, x2, y2
+                elif d is not None:
+                    x, y, h = self._solve(rf['center'], d)
+                else:
+                    x, y = self._coord(rf['center'])
+                    h = 0.0
+                z_grab = self.pick_z + h - self.body_z / 10.0
+
+            if abs(x) > self.reach_x or y > self.reach_y or y < 0:
+                print('[grab] 超出可及范围 x=%.1f cm y=%.1f cm，中止本次' % (x, y))
+                continue
+
+            if not self._grab_once(x, y, z_grab):
+                print('[grab] 逆运动学无解，中止本次')
+                continue
+
+            if self._verify(center):
+                self._status(3)
+                print('[grab] 夹取成功')
+                return True
+            print('[grab] 目标未移动，未夹到，回到靠近位置')
+            self.set_body(0)
+            self.ak.setPitchRangeMoving((0, 15, 5), -90, -90, 100, 2)
+            time.sleep(1.5)
+
+        return False
