@@ -19,6 +19,7 @@ import cv2
 from agcs_lib.motion import move_body, go_forward, go_back, turn_left, turn_right
 from agcs_lib.vision import pixel_to_arm_coord
 from agcs_lib.sensors import show_status, dist_cm
+from agcs_lib.logs import get_logger
 
 
 class Bgas:
@@ -88,14 +89,8 @@ class Bgas:
         show_status(self.display, v)
 
     def _detail(self, msg):
-        """仅写入日志文件（SPIDERPI_LOG），不打印到终端；用于记录每个操作的详细原因。"""
-        try:
-            path = os.environ.get('SPIDERPI_LOG')
-            if path:
-                with open(path, 'a', encoding='utf-8') as f:
-                    f.write('[bgas][详细] %s\n' % msg)
-        except Exception:
-            pass
+        """详细原因，只写日志文件（debug 级别，不打印终端）。"""
+        get_logger().debug('[bgas] %s', msg)
 
     def _stable(self, frames=60, need=5, jitter=5):
         """稳定检测，返回 detect dict 或 None。"""

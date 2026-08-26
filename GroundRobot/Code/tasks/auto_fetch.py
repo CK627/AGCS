@@ -34,6 +34,10 @@ def main():
     args = parser.parse_args()
     color = args.color
 
+    from agcs_lib.logs import setup_logger
+    logger = setup_logger()
+    logger.info('启动 auto_fetch：color=%s', color)
+
     board = make_board()
     ik = make_ik(board)
     ak = make_arm_ik()
