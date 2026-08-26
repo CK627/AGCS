@@ -40,6 +40,8 @@ class SearcherV2:
         self.tilt_min = int(gf.get('tilt_min', 120))
         self.tilt_max = int(gf.get('tilt_max', 440))
         self.near_cm = float(gf.get('near_cm', 15.0))
+        self.fine_cm = float(gf.get('fine_cm', 12.0))
+        self.area_k = float(gf.get('area_k', 1650.0))
         self.obstacle_stop = float(gf.get('obstacle_stop', 12.0))
         self.timeout = float(gf.get('timeout', 60.0))
         self.scan_rounds = int(gf.get('scan_rounds', 3))
@@ -78,19 +80,18 @@ class SearcherV2:
     def _track(self, center):
         """云台 PID 追踪，让目标锁定到画面中心（cx→320, cy→240）。"""
         cx, cy = center
+        centered = abs(cx - 320) < 30 and abs(cy - 240) < 30
+        if centered:
+            # 已居中：完全跳过 PID 更新，避免积分累积导致云台持续抬头/低头过头
+            return True
         self.x_pid.SetPoint = 320
         self.x_pid.update(cx)
         self.y_pid.SetPoint = 240
         self.y_pid.update(cy)
-        dx = self.x_pid.output
-        dy = self.tilt_sign * self.y_pid.output
-        # 死区：目标已居中时不再调云台，避免 PID 积分累积导致过冲（云台压到机械极限）
-        if abs(cx - 320) < 30:
-            dx = 0
-        if abs(cy - 240) < 30:
-            dy = 0
+        dx = 0 if abs(cx - 320) < 30 else self.x_pid.output
+        dy = 0 if abs(cy - 240) < 30 else self.tilt_sign * self.y_pid.output
         self._set_cam(self.x_dis + dx, self.y_dis + dy)
-        return abs(cx - 320) < 30 and abs(cy - 240) < 30
+        return False
 
     def _confirm(self, tries=5, need_hits=2):
         hits = 0
@@ -127,19 +128,35 @@ class SearcherV2:
     def _search(self):
         self.board.bus_servo_set_position(0.5, [[25, 120]])
         time.sleep(0.5)
+        # 1) 初始位检测
         self._set_cam(500, self.y_dis)
         r = self.detect()
         if r is not None:
             cr = self._confirm()
             if cr is not None:
                 return cr
+        # 2) 竖向扫描：21 号固定 500，24 号上下扫
+        self.log.info('[search] %s', action_msg('开始竖向扫描', action='21号固定500，24号上下扫'))
         r = self._vertical_sweep(500)
         if r is not None:
             return r
-        for x in [400, 300, 250, 600, 700, 750]:
-            r = self._vertical_sweep(x)
+        # 3) 横向扫描：21 号水平 0~1000 脉宽完整扫（240°），每个位置检测一次
+        self.log.info('[search] %s', action_msg('竖向未找到，开始横向扫描', action='21号水平 %d~%d 脉宽逐点' % (self.pan_min, self.pan_max)))
+        for x in range(self.pan_min, self.pan_max + 1, self.pan_step):
+            self._set_cam(x, self.y_dis)
+            r = self.detect()
             if r is not None:
-                return r
+                self.log.info('[search] %s', action_msg('横向检测到目标', action='云台水平=%d脉宽 云台俯仰=%d脉宽' % (x, self.y_dis)))
+                for _ in range(4):
+                    self._track(r['center'])
+                    time.sleep(0.1)
+                    r2 = self.detect()
+                    if r2 is not None:
+                        r = r2
+                    else:
+                        break
+                cr = self._confirm()
+                return cr if cr is not None else r
         return None
 
     def _rescan(self):
@@ -212,39 +229,38 @@ class SearcherV2:
                 lost = 0
 
             cx, cy = r['center']
-            # 云台持续追踪（多次迭代 + 重新检测，让目标真正居中，摄像头一直盯着）
-            for _ in range(3):
-                self._track(r['center'])
-                r2 = self.detect()
-                if r2 is None:
-                    break
-                r = r2
-            cx, cy = r['center']
+            # 云台追踪一次（死区已避免积分累积，目标居中就停）
+            self._track(r['center'])
+            area = max(int(r.get('area', 1)), 1)
+            dist = self.area_k / math.sqrt(area)
             ultra = dist_cm(self.ultrasonic) if self.ultrasonic else -1.0
             self.log.info('[search] %s', action_msg(
                 '追踪 #%d' % (step + 1),
-                action='云台水平=%d脉宽 云台俯仰=%d脉宽 中心x=%dpx 中心y=%dpx 超声波=%.1fcm'
-                % (self.x_dis, self.y_dis, cx, cy, ultra)))
+                action='云台水平=%d脉宽 云台俯仰=%d脉宽 中心x=%dpx 中心y=%dpx 面积=%d像素 距离=%.1fcm 超声波=%.1fcm'
+                % (self.x_dis, self.y_dis, cx, cy, area, dist, ultra)))
 
-            # 距离判断（超声波）
-            if 0 < ultra <= self.near_cm:
-                self.log.info('[search] %s', action_msg('够近', action='超声波=%.1fcm' % ultra))
+            # 距离判断（面积估距为主，超声波只做避障）
+            if dist <= self.near_cm:
+                self.log.info('[search] %s', action_msg('够近', action='距离=%.1fcm 面积=%d像素' % (dist, area)))
                 return (cx, cy), cy
             if 0 < ultra <= self.obstacle_stop:
                 self.log.info('[search] %s', action_msg('前方有障碍物/已贴近', action='超声波=%.1fcm 停止前进' % ultra))
                 return (cx, cy), cy
-            # 先对准再走：目标横向偏 → 六足转身；水平居中 → 前进（上下交给云台追踪，避免上下偏死循环）
+            # 先对准再走：目标横向偏 → 六足转身；水平居中 → 前进
             if abs(cx - 320) > 40:
                 deg = (320 - cx) / self.px_per_deg * self.turn_sign
                 deg = max(-self.turn_deg, min(self.turn_deg, deg))
                 self._turn_body(deg)
                 time.sleep(0.4)
             else:
-                # 水平居中就前进逼近（超声波远才前进，避障）
-                if ultra < 0 or ultra > self.obstacle_stop:
-                    go_forward(self.ik, self.walk_mm, self.walk_speed, 1)
+                # 水平居中就前进逼近（按距离选大步/小步）
+                if 0 < ultra <= self.obstacle_stop:
+                    self.log.debug('[search] %s', action_msg('暂停前进', reason='超声波=%.1fcm' % ultra))
+                elif dist > self.fine_cm:
+                    go_forward(self.ik, self.fast_walk_mm, self.fast_speed, 1)
                     time.sleep(0.1)
                 else:
-                    self.log.debug('[search] %s', action_msg('暂停前进', reason='超声波=%.1fcm' % ultra))
+                    go_forward(self.ik, self.walk_mm, self.walk_speed, 1)
+                    time.sleep(0.1)
 
         return None, None
