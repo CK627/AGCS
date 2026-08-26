@@ -37,6 +37,8 @@ class SearcherV2:
         self.turn_deg = int(gf.get('turn_deg', 10))
         self.turn_sign = int(gf.get('turn_sign', 1))
         self.tilt_sign = int(gf.get('tilt_sign', 1))
+        self.tilt_min = int(gf.get('tilt_min', 160))
+        self.tilt_max = int(gf.get('tilt_max', 440))
         self.near_cm = float(gf.get('near_cm', 15.0))
         self.obstacle_stop = float(gf.get('obstacle_stop', 12.0))
         self.timeout = float(gf.get('timeout', 60.0))
@@ -48,10 +50,10 @@ class SearcherV2:
 
         # 云台（与官方 color_track 一致）
         self.x_dis = 500
-        self.y_dis = 260
+        self.y_dis = int(gf.get('cam_start', 330))
         self.x_pid = PID(P=0.1, I=0.001, D=0.008)
         self.y_pid = PID(P=0.1, I=0.02, D=0.008)
-        self.v_scan = [260, 200, 320, 140, 380, 80, 440]
+        self.v_scan = [330, 250, 410, 200, 440, 160, 320]
 
     def _status(self, v):
         show_status(self.display, v)
@@ -61,7 +63,7 @@ class SearcherV2:
 
     def _set_cam(self, x, y):
         self.x_dis = max(self.pan_min, min(self.pan_max, int(x)))
-        self.y_dis = max(0, min(1000, int(y)))
+        self.y_dis = max(self.tilt_min, min(self.tilt_max, int(y)))
         self._cam()
         time.sleep(self.settle)
 
@@ -80,7 +82,14 @@ class SearcherV2:
         self.x_pid.update(cx)
         self.y_pid.SetPoint = 240
         self.y_pid.update(cy)
-        self._set_cam(self.x_dis + self.x_pid.output, self.y_dis + self.tilt_sign * self.y_pid.output)
+        dx = self.x_pid.output
+        dy = self.tilt_sign * self.y_pid.output
+        # 死区：目标已居中时不再调云台，避免 PID 积分累积导致过冲（云台压到机械极限）
+        if abs(cx - 320) < 30:
+            dx = 0
+        if abs(cy - 240) < 30:
+            dy = 0
+        self._set_cam(self.x_dis + dx, self.y_dis + dy)
         return abs(cx - 320) < 30 and abs(cy - 240) < 30
 
     def _confirm(self, tries=5, need_hits=2):
@@ -118,7 +127,7 @@ class SearcherV2:
     def _search(self):
         self.board.bus_servo_set_position(0.5, [[25, 120]])
         time.sleep(0.5)
-        self._set_cam(500, 260)
+        self._set_cam(500, self.y_dis)
         r = self.detect()
         if r is not None:
             cr = self._confirm()
