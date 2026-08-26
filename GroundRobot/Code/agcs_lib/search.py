@@ -229,7 +229,21 @@ class Searcher:
                     self._set_cam(500, self.y_dis)
 
                 if self._close(r, dist=dist, best_dist=best_dist, start_dist=start_dist):
-                    return r['center'], cy
+                    # 到位（贴底/够近）后先水平居中：目标中心偏左/右则转身微调
+                    cx, cy = r['center']
+                    for _ in range(3):
+                        if abs(cx - 320) <= 30:
+                            break
+                        deg = (320 - cx) / self.px_per_deg * self.turn_sign
+                        step = max(-self.turn_deg, min(self.turn_deg, deg))
+                        self._turn_body(step)
+                        time.sleep(0.5)
+                        r2 = self.detect()
+                        if r2 is None:
+                            break
+                        cx, cy = r2['center']
+                        self.log.debug('[search] %s', action_msg('水平居中', action='中心x=%dpx' % cx))
+                    return (cx, cy), cy
 
                 if dist > self.fine_cm:
                     self.log.debug('[search] %s', action_msg(
