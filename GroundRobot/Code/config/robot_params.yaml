@@ -81,7 +81,7 @@ gimbal_fetch:
   min_area: 300           # 目标最小面积
   ultrasonic_max_cm: 400.0  # 超声波超过此值视为无效，改用图片面积
   area_k: 1650.0          # 图片面积->距离系数 dist=k/sqrt(area)，需现场标定
-  near_cm: 18.0           # 进入此距离开始微调
+  near_cm: 15.0           # 距离主判定阈值：估算距离 <= 此值才算到位（贴底回升兜底见 search.py _close）
   walk_mm: 40             # 每次前进距离 mm
   turn_deg: 10            # 每次转向角度 deg
   turn_sign: 1            # 左右方向符号（+1/-1，若左右转反了改成 -1）
@@ -95,3 +95,64 @@ gimbal_fetch:
   max_retries: 3          # 夹取后位置比对失败的最大重试次数
   shoulder_step: 20       # 每次重试微调舵机22的步长脉宽
   pos_tol: 40             # 目标"还在原地"的像素容差
+  # ---- 高度自适应 / 居中闭环 / 重试（auto_search_grab.py 新架构）----
+  cy_target: 240          # 搜索俯仰下抓取就绪的目标垂直像素位置（现场标定）
+  cy_sign: 1              # 高度修正方向符号（反了改 -1）
+  body_lift_step: 5       # 机身每步升降 mm
+  body_lift_max: 70       # 机身相对初始高度的最大升降 mm
+  arm_tilt_step: 10       # 机身到极限后机械臂俯仰每步 deg
+  height_max_iter: 12     # 高度自适应最大迭代次数
+  centering_max_iter: 15  # 夹取居中闭环最大迭代次数
+  pan_gain: 0.25          # 居中闭环舵机21 的 px->脉宽增益
+  grab_attempts: 3        # 夹取总尝试次数
+  ultra_min_bottom: 400     # 超声波高度门槛（目标下缘低于此 px 弃用超声波）
+  # ---- 寻路快慢步 ----
+  fine_cm: 12.0            # 微调模式阈值 cm（<=此距离精细居中）
+  fast_walk_mm: 70         # 远距大步幅 mm
+  fast_speed: 90           # 远距速度
+  walk_speed: 50           # 近距速度
+  scan_rounds: 3           # 寻路重扫轮数
+
+grab:
+  align_x_cm: 0.5          # 夹中对齐 x 阈值 cm
+  align_y_cm: 2.0          # 夹中对齐 y 阈值 cm（相对 y_ref）
+  y_ref: 15.0              # 检测位前向参考 cm
+  move_tol_px: 40          # 判定块被夹走的像素位移
+  pos_ratio: 1.5           # 位移阈值 = max(move_tol_px, pos_ratio*radius)
+  attempts: 3              # 夹取重试次数
+  body_lift_step: 5        # 体态升降步进 mm
+  body_lift_max: 70        # 体态升降上限 mm（最高抬升）
+  body_lift_min: 0         # 体态升降下限 mm（默认 0，不用负姿态；特殊低处才改负值）
+  height_max_iter: 12      # 高度调整迭代上限
+  # ---- 倾斜闭环（高处平台路线，官方 grab_blocks.py 同款）----
+  tilt_pose: [0, 15, 18]   # 倾斜位机械臂姿态 (x,y,z) cm
+  tilt_pitch: -35          # 倾斜位相机俯仰 deg（抬头看，能看见与机身同高的方块）
+  tilt_cy_min: 330         # 倾斜位抓取就绪 cy 窗口下限（现场标定）
+  tilt_cy_max: 430         # 倾斜位抓取就绪 cy 窗口上限（现场标定）
+  tilt_cx_min: 250         # 倾斜位 cx 居中窗口下限
+  tilt_cx_max: 390         # 倾斜位 cx 居中窗口上限
+  tilt_turn_deg: 4         # 倾斜闭环每次转身角度 deg
+  tilt_rounds: 12          # 倾斜闭环最大轮数
+  fixed_grab: [0, 25]      # 倾斜位验收后的固定夹取点 (x, y) cm（现场标定：实测还差 5cm，20->25）
+  fixed_grab_z: 5          # 倾斜位固定夹取 z cm（官方 demo 用 +5；映射路线仍用 pick_z）
+  cy_target: 240           # 高度信号目标 cy（现场标定）
+  cy_tol: 50               # cy 容差 px
+  cy_sign: 1               # 高度修正方向
+  flat_h_cm: 2.0           # 平面/高处分界：超声波实测高度超过此值才抬机身，否则按平面参考系
+  visible_margin_px: 8      # 判定“目标完整出现”的贴边容差 px（外接框距画面边小于此值视为被裁切）
+  usable_margin_px: 30      # 目标中心距画面边缘最小留边 px；中心可见即视为可用，可直接夹取
+  cam_min: 60              # 舵机24 相机俯仰下限脉宽（防止微调低头过度丢目标）
+  cam_max: 600             # 舵机24 相机俯仰上限脉宽
+  # ---- 高度自适应开关 ----
+  height_enabled: true     # 是否启用体态升降（cy_target 未标定时可先 false）
+  reacquire_enabled: true  # 夹取阶段目标丢失时是否自动抬高/降低机身找回
+  # ---- 超声波实测高度（grab.py）----
+  ultra_samples: 5          # 每次读取内部采样次数（dist_cm 再取 min）
+  ultra_rounds: 3           # 一致性校验轮数（相邻两轮差 <= ultra_jump_cm 才采用）
+  ultra_max_cm: 100.0       # 超过此距离视为无效（防止扫到后面物体）
+  ultra_jump_cm: 8.0        # 两轮读数差超过此值视为不一致
+  ultra_offset_cm: 0.0      # 传感器与相机安装偏置修正（传感器比相机近给正值），现场标定
+  ultra_gate_cm: 30.0       # 超声波门控：视觉估距超过此值不启用超声波
+  ultra_match_cm: 15.0      # 超声波与视觉互证容差 cm
+  ultra_min_h_cm: -2.0      # 实测高度低于此值视为读数无效（物体不可能在地下），退回平面参考系
+  ultra_max_h_cm: 25.0      # 实测高度高于此值视为异常，退回平面参考系（机械臂可及上限内）
