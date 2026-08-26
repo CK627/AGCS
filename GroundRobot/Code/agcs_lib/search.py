@@ -105,25 +105,16 @@ class Searcher:
         return abs(cx - 320) < 30 and abs(cy - 240) < 30
 
     def _close(self, r, dist=None, best_dist=None, start_dist=None):
-        """到位判定：距离优先，贴底时结合历史最近距离与距离回升，避免远距误判和贴底面积失真。"""
+        """到位判定：目标贴底（即将出画面）或估算距离进入 near_cm 以内 → 到位。"""
         cy = r['center'][1]
         radius = max(int(r.get('radius', 20)), 1)
+        # 目标贴底（即将出画面）→ 到位：目标已在机器人脚下附近，交给 grab 像素转坐标夹取
+        if cy + radius >= 480 - self.edge_margin:
+            return True
         if dist is None:
             dist = self.area_k / math.sqrt(max(int(r.get('area', 1)), 1))
-        # 估算距离确实进入 near_cm 以内 → 到位
         if dist <= self.near_cm:
             return True
-        # 目标贴到画面底部（即将出画面）时的兜底
-        if cy + radius >= 480 - self.edge_margin:
-            # 已经逼近（历史最近距离足够小、相比起点确有下降），且当前估算比历史最近回升超过3cm：
-            # 说明目标底部被画面截断、面积变小导致距离虚高 → 视为到位
-            if (best_dist is not None and start_dist is not None
-                    and best_dist <= self.near_cm * 1.5
-                    and best_dist <= start_dist - 3.0
-                    and dist > best_dist + 3.0):
-                return True
-            # 贴底且估算距离仍然很近（收紧到 near_cm，bgas 在 <15cm 才触发）
-            return dist <= self.near_cm
         return False
 
     def _vertical_sweep(self, x):
