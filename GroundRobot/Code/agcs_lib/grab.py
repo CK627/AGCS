@@ -84,11 +84,11 @@ class Grabber:
             time.sleep(0.05)
         return None
 
-    def set_body(self, dz):
+    def set_body(self, dz, reason=None):
         dz = max(-self.body_max, min(self.body_max, int(dz)))
         move_body(self.ik, dz)
         self.body_z = dz
-        self.log.debug('[grab] %s', action_msg('机身调整', action='%+dmm' % dz))
+        self.log.debug('[grab] %s', action_msg('机身调整', reason=reason, action='%+dmm' % dz))
         time.sleep(0.3)
         return dz
 
@@ -129,7 +129,9 @@ class Grabber:
 
     def adjust_height(self, cy):
         """体态(1-20)优先，到极限用 24 舵机；每次调整后重扫并锁定。返回 (ok, alarm)。"""
-        self.log.info('[grab] %s', action_msg('开始高度自适应', action='cy=%dpx 目标cy=%dpx' % (cy, self.cy_target)))
+        self.log.info('[grab] %s', action_msg(
+            '开始高度自适应', reason='cy=%dpx 偏离目标 %dpx' % (cy, self.cy_target),
+            action='cy=%dpx 目标cy=%dpx' % (cy, self.cy_target)))
         cur = cy
         for i in range(self.height_iter):
             if self._cy_ok(cur):
@@ -137,12 +139,12 @@ class Grabber:
             step = self.body_step * self.cy_sign
             if cur < self.cy_target:
                 if self.body_z + step <= self.body_max:
-                    self.set_body(self.body_z + step)
+                    self.set_body(self.body_z + step, reason='cy=%dpx 低于目标（目标偏高/远），抬高机身' % cur)
                 else:
                     self._set_cam(self.x_dis, self.y_dis + self.arm_tilt_step)
             else:
                 if self.body_z - step >= -self.body_max:
-                    self.set_body(self.body_z - step)
+                    self.set_body(self.body_z - step, reason='cy=%dpx 高于目标（目标偏低/近），降低机身' % cur)
                 else:
                     self._set_cam(self.x_dis, self.y_dis - self.arm_tilt_step)
             r = self.detect()
@@ -221,7 +223,7 @@ class Grabber:
             self._status(2)
             center = self._stable()
             if center is None:
-                self.log.info('[grab] %s', action_msg('未检测到目标'))
+                self.log.info('[grab] %s', action_msg('未检测到目标', reason='稳定检测未找到目标'))
                 continue
 
             x, y = self._coord(center)
@@ -248,12 +250,12 @@ class Grabber:
                 continue
 
             if not self._grab_once(x, y):
-                self.log.info('[grab] %s', action_msg('逆运动学无解', action='中止本次'))
+                self.log.info('[grab] %s', action_msg('夹取失败', reason='逆运动学无解', action='中止本次'))
                 continue
 
             if self._verify(center):
                 self._status(3)
-                self.log.info('[grab] %s', action_msg('夹取成功'))
+                self.log.info('[grab] %s', action_msg('夹取成功', reason='目标消失或明显位移'))
                 return True
             self.log.info('[grab] %s', action_msg('未夹到', reason='目标未移动', action='回到靠近位置'))
             self.set_body(0)
