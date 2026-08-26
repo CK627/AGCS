@@ -1,0 +1,7 @@
+path: /Users/jj/Documents/MyCode/AGCS/MacYoLo/datasets/worm
+train: images/train
+val: images/val
+test: images/test
+
+names:
+  0: worm

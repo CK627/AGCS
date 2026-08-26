@@ -1,0 +1,50 @@
+{
+  "home": {
+    "lat": 31.2304,
+    "lon": 121.4737
+  },
+  "takeoff_alt": 8.0,
+  "items": [
+    {
+      "seq": 0,
+      "command": "NAV_TAKEOFF",
+      "z": 8.0
+    },
+    {
+      "seq": 1,
+      "command": "NAV_WAYPOINT",
+      "lat": 31.2305,
+      "lon": 121.4738,
+      "alt": 10.0,
+      "hold_s": 1.0
+    },
+    {
+      "seq": 2,
+      "command": "NAV_WAYPOINT",
+      "lat": 31.2306,
+      "lon": 121.4739,
+      "alt": 10.0,
+      "hold_s": 1.0
+    },
+    {
+      "seq": 3,
+      "command": "NAV_WAYPOINT",
+      "lat": 31.2305,
+      "lon": 121.474,
+      "alt": 10.0,
+      "hold_s": 1.0
+    },
+    {
+      "seq": 4,
+      "command": "NAV_WAYPOINT",
+      "lat": 31.2304,
+      "lon": 121.4739,
+      "alt": 10.0,
+      "hold_s": 1.0
+    },
+    {
+      "seq": 5,
+      "command": "NAV_RETURN_TO_LAUNCH"
+    }
+  ]
+}

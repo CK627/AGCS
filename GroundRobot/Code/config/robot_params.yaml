@@ -1,0 +1,97 @@
+# 机器人行为参数（自动任务用）
+# 同步到树莓派后位于 ~/spiderpi/config/robot_params.yaml
+
+vision:
+  target_color: red        # 颜色检测目标（red/green/blue）
+  min_area: 500            # 判定有效目标的最小轮廓面积（640x480 画面下）
+  camera_rotate: 0         # 摄像头画面旋转角度（0/90/180/270；物理已重装，默认 0）
+
+walk:
+  stride: 60               # 直行步幅 mm
+  speed: 50                # 直行速度 mm/s
+  turn_angle: 15           # 原地转向角度 deg
+  turn_speed: 50           # 转向速度 deg/s
+  align_tolerance: 40      # 目标中心与画面中心的像素偏差容差
+  approach_area: 3000      # 目标面积达到该值视为已到抓取距离
+  reach_x: 8.0             # 机械臂可及范围 x（cm），超出则继续接近
+  reach_y: 24.0            # 机械臂可及范围 y（cm），超出则继续接近
+
+obstacle:
+  threshold: 35.0          # 避障触发距离 cm
+  back_stride: 80          # 后退步幅 mm
+  filter_window: 5         # 超声波距离滤波窗口
+
+nav:
+  arrive_radius: 0.8       # 到达判定半径（米）：进入该范围后切近景搜索
+  heading_tolerance: 5.0   # 朝向误差容差（度）
+  max_walk_m: 15.0         # 单任务最大行走距离（米），超出上报 failed
+
+arm:
+  detect_pose: [0, 15, 5]  # 机械臂检测姿态（x, y, z）cm，与官方 block_fetch 一致
+  approach_z: 10            # 夹取前接近高度 cm（夹爪在方块上方，摄像头仍能看到，用于实时微调）
+  pick_z: -5               # 抓取高度 cm（官方 intelligent_fetch 智能取物默认，向下夹）
+  pick_distance: 20.0        # 抓取前超声波"够近"确认距离 cm（超过则继续接近）
+  pitch: -90               # 俯仰角 deg
+  alpha1: -90              # 逆运动学俯仰角搜索范围下界
+  alpha2: 100              # 逆运动学俯仰角搜索范围上界
+  gripper_open: 120        # 夹爪张开脉宽（舵机25）
+  gripper_close: 600       # 夹爪闭合脉宽（舵机25，官方智能取物默认）
+  raise_pose: [12, 24, 5]  # 抓取后抬起位置 cm
+  release_pose: [12, 24, -5]  # 松开/放置位置 cm
+  hand_raise_pose: [0, 10, 25]  # 举手反馈姿态（x, y, z）cm，需现场标定
+  hand_hold: 0.8              # 举手保持时间 s
+  hand_raise_pulses: {21: 500, 22: 507, 23: 704, 24: 650, 25: 500}  # 举手反馈各舵机脉宽（占位=复位值，需现场标定）
+  flip_servos: []             # 方向反的关节（本机机械臂实际没反，留空禁用镜像）
+  flip_gripper: false         # 夹爪25是否也镜像方向（本机不用，false）
+  reset_pulses: {21: 500, 22: 705, 23: 90, 24: 330, 25: 700}  # 复位/检测位各舵机脉宽（官方默认）
+
+search:
+  pan_pulses: [200, 350, 500, 650, 800]  # 底座(21)水平扫描档位脉宽，500≈朝前（需现场标定）
+  pan_step_ms: 350           # 每档转动时间 ms
+  tilt_pulses: [650, 500, 350]  # 肩关节(22)俯仰档位（需现场标定）
+  tilt_step_ms: 350          # 每档转动时间 ms
+  align_tol: 50              # 目标中心距画面中心容差 px
+  align_step: 40             # 对齐微调步长脉宽
+  edge_ratio: 0.15           # 画面边缘判定比例
+  confirm_frames: 5          # 稳定确认帧数
+  min_area: 100              # 目标最小面积
+  body_turn_angle: 120       # 六足每次转身角度 deg
+  body_turn_speed: 80        # 六足转身速度
+
+align:
+  enabled: false          # 夹取前是否先做朝向对齐（现场标定好再打开）
+  ref_angle: 45.0         # 方块"正"时检测到的朝向角（度，mod 90），需现场标定
+  servo21_ratio: 4.1667   # 舵机21 脉宽/度 比例（标称值，可微调）
+  servo21_dir: 1          # 旋转方向符号 +1 或 -1，需现场标定
+  angle_tol: 3.0          # 对齐角度容差（度）
+  max_step: 60            # 单次微调最大脉宽，避免一次转太多
+  max_iter: 8             # 对齐闭环最大迭代次数
+  settle_ms: 400          # 每次微调后等待画面稳定的时间 ms
+  min_area: 300           # 对齐检测的最小目标面积
+  start_pulse: 500        # 对齐前舵机21的起始脉宽（机械臂朝前检测位）
+
+gimbal_fetch:
+  pan_min: 0              # 舵机21 云台扫描下限脉宽
+  pan_max: 1000           # 舵机21 云台扫描上限脉宽（约240°）
+  pan_step: 40            # 云台扫描步长脉宽
+  cam_start: 330          # 舵机24 相机起始脉宽（≈检测位）
+  cam_max: 1000           # 舵机24 相机上限脉宽
+  cam_step: 100           # 每扫一圈抬高脉宽
+  settle_ms: 280          # 每次转动后等待时间 ms（云台转慢一点）
+  min_area: 300           # 目标最小面积
+  ultrasonic_max_cm: 400.0  # 超声波超过此值视为无效，改用图片面积
+  area_k: 1650.0          # 图片面积->距离系数 dist=k/sqrt(area)，需现场标定
+  near_cm: 18.0           # 进入此距离开始微调
+  walk_mm: 40             # 每次前进距离 mm
+  turn_deg: 10            # 每次转向角度 deg
+  turn_sign: 1            # 左右方向符号（+1/-1，若左右转反了改成 -1）
+  tilt_sign: 1            # 俯仰方向符号（+1/-1，若上下反了改成 -1）
+  max_approach: 12        # 接近阶段最大步数
+  cx_tol: 30              # 微调居中像素容差（左右）
+  cy_tol: 30              # 微调居中像素容差（上下）
+  fine_pan_step: 30       # 微调舵机21步长
+  fine_tilt_step: 30      # 微调舵机24步长
+  max_fine: 8             # 微调最大迭代
+  max_retries: 3          # 夹取后位置比对失败的最大重试次数
+  shoulder_step: 20       # 每次重试微调舵机22的步长脉宽
+  pos_tol: 40             # 目标"还在原地"的像素容差

@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>无人机电脑端</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Microsoft YaHei", "PingFang SC", sans-serif; background: #0f172a; color: #e2e8f0; padding: 16px; }
+  h1 { font-size: 20px; margin-bottom: 8px; }
+  #status { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 13px; }
+  .ok { background: #14532d; color: #86efac; }
+  .bad { background: #7f1d1d; color: #fecaca; }
+  .hint { color: #64748b; font-size: 12px; margin: 4px 0 12px; }
+  .wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 900px) { .wrap { grid-template-columns: 1fr; } }
+  .box { background: #1e293b; border-radius: 10px; padding: 12px; }
+  .box h2 { font-size: 14px; color: #94a3b8; font-weight: 400; margin-bottom: 8px; }
+  #videoBox { background: #0b1220; min-height: 300px; display: flex; align-items: center; justify-content: center; }
+  #video { width: 100%; max-height: 520px; object-fit: contain; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+  .card { background: #1e293b; border-radius: 10px; padding: 10px 12px; }
+  .card h2 { font-size: 12px; color: #94a3b8; font-weight: 400; }
+  .card .v { font-size: 18px; font-weight: 600; margin-top: 2px; }
+  .card .s { font-size: 11px; color: #94a3b8; }
+  canvas { width: 100%; height: 160px; background: #0b1220; border-radius: 8px; margin-top: 12px; display: block; }
+  label { display: block; font-size: 12px; color: #94a3b8; margin: 8px 0 3px; }
+  input, textarea, button { width: 100%; font-family: inherit; }
+  input, textarea { background: #0b1220; color: #e2e8f0; border: 1px solid #334155; border-radius: 6px; padding: 8px; }
+  textarea { height: 72px; resize: vertical; }
+  button { background: #2563eb; color: #fff; border: 0; border-radius: 6px; padding: 9px; margin-top: 10px; cursor: pointer; }
+  button.ghost { background: #334155; }
+  #taskResult { margin-top: 10px; font-size: 12px; white-space: pre-wrap; }
+  #err { color: #fca5a5; font-size: 13px; margin-top: 6px; }
+</style>
+</head>
+<body>
+  <h1>无人机电脑端 <span id="status" class="bad">未连接</span></h1>
+  <div class="hint">视频画面 + UDP 实时监控 + 下达任务；本页只上传任务，不解锁、不起飞。</div>
+  <div id="err"></div>
+
+  <div class="wrap">
+    <div class="box">
+      <h2>视频画面</h2>
+      <div id="videoBox">
+        {% if video_enabled %}
+        <img id="video" src="/video_feed" alt="视频未连接" onerror="this.style.display='none'; document.getElementById('videoBox').innerHTML='视频未连接（检查摄像头/开关 VIDEO_ENABLED）'">
+        {% else %}
+        <div style="color:#64748b;font-size:13px">视频未连接（检查摄像头/开关 VIDEO_ENABLED）</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="box">
+      <h2>实时监控（UDP 14550）</h2>
+      <div class="grid">
+        <div class="card"><h2>模式</h2><div class="v" id="mode">-</div><div class="s" id="armed">未解锁</div></div>
+        <div class="card"><h2>姿态 r/p/y</h2><div class="v" id="att">-</div><div class="s">单位：度</div></div>
+        <div class="card"><h2>位置</h2><div class="v" id="pos">-</div><div class="s" id="alt">高度 - m</div></div>
+        <div class="card"><h2>GPS</h2><div class="v" id="gps">-</div><div class="s" id="gps2">-</div></div>
+        <div class="card"><h2>电池</h2><div class="v" id="bat">-</div><div class="s" id="bat2">-</div></div>
+        <div class="card"><h2>速度/航向</h2><div class="v" id="spd">-</div><div class="s" id="hdg">-</div></div>
+      </div>
+      <canvas id="attChart"></canvas>
+      <canvas id="altChart"></canvas>
+    </div>
+  </div>
+
+  <div class="box" style="margin-top:14px">
+    <h2>下达任务（路线清单）</h2>
+    <label>航点列表（格式：纬度,经度,高度；用分号隔开）</label>
+    <textarea id="waypoints">31.23050,121.47380,10;31.23060,121.47390,10</textarea>
+    <label>起飞高度（米）</label>
+    <input id="takeoffAlt" value="8">
+    <button id="previewBtn" class="ghost">预览任务</button>
+    <button id="uploadBtn">下达任务（仅上传）</button>
+    <div id="taskResult"></div>
+  </div>
+
+<script>
+const statusEl = document.getElementById('status');
+const errEl = document.getElementById('err');
+
+function setStatus(ok) {
+  statusEl.textContent = ok ? '已连接' : '未连接';
+  statusEl.className = ok ? 'ok' : 'bad';
+}
+
+async function refreshTelemetry() {
+  try {
+    const d = await (await fetch('/api/telemetry')).json();
+    setStatus(d.connected);
+    errEl.textContent = d.error || '';
+    document.getElementById('mode').textContent = d.mode;
+    document.getElementById('armed').textContent = d.armed ? '已解锁' : '未解锁';
+    document.getElementById('att').textContent =
+      d.roll == null ? '-' : d.roll.toFixed(1) + ' / ' + d.pitch.toFixed(1) + ' / ' + d.yaw.toFixed(1);
+    document.getElementById('pos').textContent =
+      d.lat == null ? '-' : d.lat.toFixed(6) + ', ' + d.lon.toFixed(6);
+    document.getElementById('alt').textContent = '高度 ' + (d.alt == null ? '-' : d.alt.toFixed(1)) + ' m';
+    document.getElementById('gps').textContent =
+      d.fix == null ? '-' : 'fix=' + d.fix + ' 星=' + d.sats;
+    document.getElementById('gps2').textContent = d.eph == null ? '' : 'eph=' + d.eph + 'cm';
+    document.getElementById('bat').textContent =
+      d.volt == null ? '-' : d.volt.toFixed(2) + ' V';
+    document.getElementById('bat2').textContent =
+      d.battery == null ? '-' : '剩余 ' + d.battery + '%';
+    document.getElementById('spd').textContent =
+      d.groundspeed == null ? '-' : d.groundspeed.toFixed(1) + ' m/s';
+    document.getElementById('hdg').textContent =
+      (d.heading == null ? '' : '航向 ' + d.heading + '° ') +
+      (d.climb == null ? '' : '爬升 ' + d.climb.toFixed(1) + ' m/s');
+  } catch (e) {
+    setStatus(false);
+    errEl.textContent = '请求失败：' + e;
+  }
+}
+
+function drawChart(canvas, series, label) {
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width = canvas.clientWidth * (window.devicePixelRatio || 1);
+  const H = canvas.height = canvas.clientHeight * (window.devicePixelRatio || 1);
+  ctx.clearRect(0, 0, W, H);
+  const n = series[0].values.length;
+  if (n < 2) return;
+  let min = Infinity, max = -Infinity;
+  series.forEach(s => s.values.forEach(v => { if (!isNaN(v)) { min = Math.min(min, v); max = Math.max(max, v); } }));
+  if (!isFinite(min)) min = 0;
+  if (!isFinite(max)) max = 1;
+  if (min === max) { min -= 1; max += 1; }
+  const pad = 8;
+  series.forEach(s => {
+    ctx.beginPath(); ctx.strokeStyle = s.color; ctx.lineWidth = 1.5;
+    for (let i = 0; i < n; i++) {
+      const x = pad + (i / (n - 1)) * (W - 2 * pad);
+      const y = pad + (1 - (s.values[i] - min) / (max - min)) * (H - 2 * pad);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  });
+  ctx.fillStyle = '#94a3b8'; ctx.font = '11px sans-serif';
+  ctx.fillText(label + ' 范围 ' + min.toFixed(1) + ' ~ ' + max.toFixed(1), 8, 14);
+}
+
+async function refreshHistory() {
+  try {
+    const h = await (await fetch('/api/history')).json();
+    drawChart(document.getElementById('attChart'),
+      [{name:'roll', color:'#f87171', values:h.roll},
+       {name:'pitch', color:'#4ade80', values:h.pitch},
+       {name:'yaw', color:'#60a5fa', values:h.yaw}], '姿态(°)');
+    drawChart(document.getElementById('altChart'),
+      [{name:'alt', color:'#22d3ee', values:h.alt},
+       {name:'battery%', color:'#fbbf24', values:h.battery}], '高度(m)/电量(%)');
+  } catch (e) {}
+}
+
+function parseWaypoints() {
+  return document.getElementById('waypoints').value.split(';').filter(s => s.trim()).map(seg => {
+    const [lat, lon, alt] = seg.split(',').map(Number);
+    return {lat, lon, alt};
+  });
+}
+
+document.getElementById('previewBtn').onclick = async () => {
+  const r = await fetch('/api/task/preview', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({waypoints: parseWaypoints(), takeoff_alt: +document.getElementById('takeoffAlt').value})
+  });
+  const j = await r.json();
+  document.getElementById('taskResult').textContent = JSON.stringify(j.items, null, 2);
+};
+
+document.getElementById('uploadBtn').onclick = async () => {
+  if (!confirm('确认下达任务？本操作只上传任务，不会解锁/起飞。')) return;
+  const r = await fetch('/api/task/upload', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({waypoints: parseWaypoints(), takeoff_alt: +document.getElementById('takeoffAlt').value})
+  });
+  const j = await r.json();
+  document.getElementById('taskResult').textContent = JSON.stringify(j, null, 2);
+};
+
+refreshTelemetry();
+refreshHistory();
+setInterval(refreshTelemetry, 1000);
+setInterval(refreshHistory, 2000);
+</script>
+</body>
+</html>
