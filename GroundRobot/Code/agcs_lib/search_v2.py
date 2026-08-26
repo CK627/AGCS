@@ -37,7 +37,7 @@ class SearcherV2:
         self.turn_deg = int(gf.get('turn_deg', 10))
         self.turn_sign = int(gf.get('turn_sign', 1))
         self.tilt_sign = int(gf.get('tilt_sign', 1))
-        self.tilt_min = int(gf.get('tilt_min', 160))
+        self.tilt_min = int(gf.get('tilt_min', 120))
         self.tilt_max = int(gf.get('tilt_max', 440))
         self.near_cm = float(gf.get('near_cm', 15.0))
         self.obstacle_stop = float(gf.get('obstacle_stop', 12.0))
@@ -233,18 +233,14 @@ class SearcherV2:
             if 0 < ultra <= self.obstacle_stop:
                 self.log.info('[search] %s', action_msg('前方有障碍物/已贴近', action='超声波=%.1fcm 停止前进' % ultra))
                 return (cx, cy), cy
-            # 先对准再走：目标横向偏 → 六足转身；上下偏 → 云台俯仰；居中才前进
+            # 先对准再走：目标横向偏 → 六足转身；水平居中 → 前进（上下交给云台追踪，避免上下偏死循环）
             if abs(cx - 320) > 40:
                 deg = (320 - cx) / self.px_per_deg * self.turn_sign
                 deg = max(-self.turn_deg, min(self.turn_deg, deg))
                 self._turn_body(deg)
                 time.sleep(0.4)
-            elif abs(cy - 240) > 60:
-                # 上下偏，交给云台俯仰（下一轮 _track 继续调），暂不走路
-                self.log.debug('[search] %s', action_msg('上下未居中', reason='中心y=%dpx' % cy))
-                time.sleep(0.1)
             else:
-                # 目标居中，才前进（超声波远才前进，避障）
+                # 水平居中就前进逼近（超声波远才前进，避障）
                 if ultra < 0 or ultra > self.obstacle_stop:
                     go_forward(self.ik, self.walk_mm, self.walk_speed, 1)
                     time.sleep(0.1)
