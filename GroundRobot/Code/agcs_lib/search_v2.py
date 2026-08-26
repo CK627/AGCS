@@ -36,9 +36,9 @@ class SearcherV2:
         self.px_per_deg = float(gf.get('px_per_deg', 10.7))
         self.turn_deg = int(gf.get('turn_deg', 10))
         self.turn_sign = int(gf.get('turn_sign', 1))
+        self.tilt_sign = int(gf.get('tilt_sign', 1))
         self.near_cm = float(gf.get('near_cm', 15.0))
         self.obstacle_stop = float(gf.get('obstacle_stop', 12.0))
-        self.cam_raise_limit = int(gf.get('cam_raise_limit', 120))
         self.timeout = float(gf.get('timeout', 60.0))
         self.scan_rounds = int(gf.get('scan_rounds', 3))
         self.fast_walk_mm = int(gf.get('fast_walk_mm', 70))
@@ -80,7 +80,7 @@ class SearcherV2:
         self.x_pid.update(cx)
         self.y_pid.SetPoint = 240
         self.y_pid.update(cy)
-        self._set_cam(self.x_dis + self.x_pid.output, self.y_dis + self.y_pid.output)
+        self._set_cam(self.x_dis + self.x_pid.output, self.y_dis + self.tilt_sign * self.y_pid.output)
         return abs(cx - 320) < 30 and abs(cy - 240) < 30
 
     def _confirm(self, tries=5, need_hits=2):
@@ -224,12 +224,6 @@ class SearcherV2:
             if 0 < ultra <= self.obstacle_stop:
                 self.log.info('[search] %s', action_msg('前方有障碍物/已贴近', action='超声波=%.1fcm 停止前进' % ultra))
                 return (cx, cy), cy
-            # 云台抬头到极限（目标太高）→ 停止前进，交给抬头夹取
-            if self.y_dis <= self.cam_raise_limit:
-                self.log.info('[search] %s', action_msg(
-                    '目标过高', reason='云台俯仰=%d脉宽 抬头到下限' % self.y_dis, action='停止前进'))
-                return (cx, cy), cy
-
             # 先对准再走：目标横向偏 → 六足转身；上下偏 → 云台俯仰；居中才前进
             if abs(cx - 320) > 40:
                 deg = (320 - cx) / self.px_per_deg * self.turn_sign
