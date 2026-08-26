@@ -250,13 +250,13 @@ class Searcher:
                 if dist > self.fine_cm:
                     self.log.debug('[search] %s', action_msg(
                         '接近中', reason='距离 %.1fcm > %.1fcm' % (dist, self.fine_cm),
-                        action='前进 %dmm' % self.fast_walk_mm))
-                    go_forward(self.ik, self.fast_walk_mm, self.fast_speed)
+                        action='前进 %dmm x2' % self.fast_walk_mm))
+                    go_forward(self.ik, self.fast_walk_mm, self.fast_speed, 2)
                 else:
                     self.log.debug('[search] %s', action_msg(
                         '接近中', reason='距离 %.1fcm <= %.1fcm' % (dist, self.fine_cm),
-                        action='前进 %dmm' % self.walk_mm))
-                    go_forward(self.ik, self.walk_mm, self.walk_speed)
+                        action='前进 %dmm x2' % self.walk_mm))
+                    go_forward(self.ik, self.walk_mm, self.walk_speed, 2)
                 time.sleep(0.1)
 
             r = self.detect()

@@ -31,8 +31,8 @@ def turn_right(ik, angle=10, speed=60):
     ik.turn_right(ik.initial_pos, 2, angle, speed, 1)
 
 
-def go_forward(ik, step=15, speed=50):
-    ik.go_forward(ik.initial_pos, 2, step, speed, 1)
+def go_forward(ik, step=15, speed=50, times=1):
+    ik.go_forward(ik.initial_pos, 2, step, speed, times)
 
 
 def go_back(ik, step=15, speed=50):
