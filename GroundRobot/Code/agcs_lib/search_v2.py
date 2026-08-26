@@ -194,7 +194,14 @@ class SearcherV2:
                 lost = 0
 
             cx, cy = r['center']
-            self._track(r['center'])
+            # 云台持续追踪（多次迭代 + 重新检测，让目标真正居中，摄像头一直盯着）
+            for _ in range(3):
+                self._track(r['center'])
+                r2 = self.detect()
+                if r2 is None:
+                    break
+                r = r2
+            cx, cy = r['center']
             ultra = dist_cm(self.ultrasonic) if self.ultrasonic else -1.0
             self.log.info('[search] %s', action_msg(
                 '追踪 #%d' % (step + 1),
