@@ -73,7 +73,7 @@ def main():
 
     # 2) grab：纯机械臂夹取（只动 21-25）
     grabber = Grabber(board, ik, ak, params, K, R, T, detect, display, ultrasonic=ultrasonic)
-    ok = grabber.run(center=center)
+    ok = grabber.run(cy=cy, x_dis=searcher.x_dis, y_dis=searcher.y_dis)
 
     cam.camera_close()
     if ok:
