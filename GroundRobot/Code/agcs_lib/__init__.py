@@ -16,9 +16,8 @@ from agcs_lib.vision import (
     load_lab_data,
     load_block_params,
     detect_color,
-    block_orientation,
-    orientation_error,
     pixel_to_arm_coord,
     load_undistort_maps,
     correct_camera,
 )
+from agcs_lib.orientation import block_orientation, orientation_error

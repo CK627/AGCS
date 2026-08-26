@@ -92,40 +92,6 @@ def detect_color(img, lab_data, color='red', size=(640, 480), min_area=500):
             'area': area_max, 'color': color, 'contour': area_max_contour}
 
 
-def block_orientation(contour, eps_factor=0.035):
-    """估算方形目标的朝向角，范围 [0, 90) 度；返回 (angle, pts)，无效返回 (None, None)。"""
-    if contour is None or len(contour) < 4:
-        return None, None
-    perimeter = cv2.arcLength(contour, True)
-    if perimeter <= 0:
-        return None, None
-    approx = cv2.approxPolyDP(contour, eps_factor * perimeter, True)
-    pts = approx.reshape(-1, 2).astype(np.float64)
-    if len(pts) < 4:
-        return None, None
-
-    edge_angles = []
-    n = len(pts)
-    for i in range(n):
-        x1, y1 = pts[i]
-        x2, y2 = pts[(i + 1) % n]
-        ang = math.degrees(math.atan2(y2 - y1, x2 - x1))
-        edge_angles.append(ang % 90.0)
-
-    phases = np.deg2rad(np.asarray(edge_angles, dtype=np.float64) * 4.0)
-    mean4 = math.degrees(math.atan2(float(np.sin(phases).sum()),
-                                    float(np.cos(phases).sum())))
-    return (mean4 / 4.0) % 90.0, pts
-
-
-def orientation_error(angle, ref_angle=0.0):
-    """朝向角误差：周期 90 度的差，返回 [-45, 45) 度。"""
-    d = (angle - ref_angle) % 90.0
-    if d > 45.0:
-        d -= 90.0
-    return d
-
-
 def camera_to_world(cam_mtx, r, t, img_points):
     """像素坐标转平面世界坐标（mm），算法与官方 block_fetch.py 一致。"""
     inv_k = np.asmatrix(cam_mtx).I

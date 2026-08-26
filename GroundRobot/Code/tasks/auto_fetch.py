@@ -34,7 +34,7 @@ def main():
     args = parser.parse_args()
     color = args.color
 
-    from agcs_lib.logs import setup_logger
+    from agcs_lib.logs import setup_logger, action_msg
     logger = setup_logger()
     logger.info('启动 auto_fetch：color=%s', color)
 
@@ -68,36 +68,36 @@ def main():
     searcher = Searcher(board, ik, ak, params, detect, ultrasonic, display)
     center, cy = searcher.run()
     if center is None:
-        print('%s 未找到目标' % color)
+        logger.info('[search] %s', action_msg('未找到目标', reason='颜色=%s' % color))
         cam.camera_close()
         show_status(display, 0)
         return
 
     # 2) bgas：定位/可抓取判定（只动 1-20）
     import agcs_lib.bgas as _b
-    print('[VER] BGAS_FILE=%s' % _b.__file__, flush=True)
+    logger.debug('[VER] BGAS_FILE=%s' % _b.__file__)
     bgas = Bgas(board, ik, ak, params, K, R, T, detect, display, ultrasonic=ultrasonic)
     context, reason = bgas.run(cy=cy, x_dis=searcher.x_dis, y_dis=searcher.y_dis)
     if context is None:
-        print('bgas 定位失败：%s' % reason)
+        logger.info('[bgas] %s', action_msg('定位失败', reason=reason))
         cam.camera_close()
         show_status(display, 0)
         return
 
     # 3) grab：纯机械臂夹取（只动 21-25）
     import agcs_lib.grab as _g
-    print('[VER] GRAB_FILE=%s BGAS_OK=1' % _g.__file__, flush=True)
+    logger.debug('[VER] GRAB_FILE=%s BGAS_OK=1' % _g.__file__)
     grabber = Grabber(board, ik, ak, params, K, R, T, detect, display, ultrasonic=ultrasonic)
     ok = grabber.run(context=context, body_z=context['body_z'])
 
     cam.camera_close()
     if ok:
-        print('完成：%s 已夹取并放下' % color)
+        logger.info('[grab] %s', action_msg('完成', action='%s 已夹取并放下' % color))
         show_status(display, 3)
         time.sleep(5)
         show_status(display, 0)
     else:
-        print('%s 夹取失败' % color)
+        logger.info('[grab] %s', action_msg('夹取失败', reason='颜色=%s' % color))
         show_status(display, 0)
 
 

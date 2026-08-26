@@ -15,7 +15,7 @@ import time
 
 from agcs_lib.vision import pixel_to_arm_coord
 from agcs_lib.sensors import show_status
-from agcs_lib.logs import get_logger
+from agcs_lib.logs import get_logger, action_msg
 
 
 class Grabber:
@@ -30,6 +30,7 @@ class Grabber:
         self.detect = detect
         self.display = display
         self.ultrasonic = ultrasonic  # 仅兼容旧调用，grab 不使用
+        self.log = get_logger()
 
         gc = params.get('grab', {})
         arm = params['arm']
@@ -132,11 +133,11 @@ class Grabber:
         time.sleep(0.5)
 
         for attempt in range(self.attempts):
-            print('[grab] 第 %d/%d 次（%s）' % (attempt + 1, self.attempts, strategy))
+            self.log.debug('[grab] %s', action_msg('夹取尝试', action='第 %d/%d 次 策略=%s' % (attempt + 1, self.attempts, strategy)))
             self._status(2)
             r = self._stable()
             if r is None:
-                print('[grab] 目标不可见，grab 失败', flush=True)
+                self.log.info('[grab] %s', action_msg('夹取失败', reason='目标不可见'))
                 self._detail('grab 失败：稳定检测未找到目标；grab 不调整 1-20，交由上层重新 bgas')
                 return False
             center = r['center']
@@ -144,12 +145,13 @@ class Grabber:
             if strategy == 'mapped':
                 x, y = self._coord(center)
                 z_grab = self.pick_z
-                print('[grab] 像素=%s -> x=%.1f cm y=%.1f cm（机身=%+dmm cy=%d z=%.1f）'
-                      % (center, x, y, self.body_z, center[1], z_grab))
+                self.log.debug('[grab] %s', action_msg(
+                    '坐标计算', action='像素=%s x=%.1fcm y=%.1fcm 机身=%+dmm cy=%dpx z=%.1fcm'
+                    % (center, x, y, self.body_z, center[1], z_grab)))
                 self._detail('坐标计算：地面标定映射 pixel_to_arm_coord 得 x/y=%.1f/%.1f，z=pick_z=%.1f'
                              % (x, y, z_grab))
                 if abs(x) > self.reach_x or y > self.reach_y or y < 0:
-                    print('[grab] 超出可及范围 x=%.1f cm y=%.1f cm，grab 失败' % (x, y))
+                    self.log.info('[grab] %s', action_msg('夹取失败', reason='超出可及范围 x=%.1fcm y=%.1fcm' % (x, y)))
                     self._detail('grab 失败：x=%.1f y=%.1f 超出可及范围（reach_x=%.0f reach_y=%.0f）；'
                                  'grab 不走路，交由上层重新 bgas' % (x, y, self.reach_x, self.reach_y))
                     return False
@@ -163,20 +165,21 @@ class Grabber:
                 cy_max = int(context.get('cy_max', 430))
                 cx, cy = center
                 if not (cx_min <= cx <= cx_max and cy_min <= cy <= cy_max):
-                    print('[grab] 目标 cx=%d cy=%d 不在倾斜位就绪窗口内，grab 失败' % (cx, cy))
+                    self.log.info('[grab] %s', action_msg('夹取失败', reason='cx=%dpx cy=%dpx 不在就绪窗口' % (cx, cy)))
                     self._detail('grab 失败（fixed）：cx=%d cy=%d 不在窗口 [%d-%d, %d-%d]，'
                                  'bgas 后目标漂移；grab 不走路，交由上层重新 bgas'
                                  % (cx, cy, cx_min, cx_max, cy_min, cy_max))
                     return False
-                print('[grab] fixed：目标 cx=%d cy=%d 在就绪窗口，伸臂到固定点 (%.1f, %.1f, %.1f)'
-                      % (cx, cy, x, y, z_grab))
+                self.log.info('[grab] %s', action_msg(
+                    '伸臂', action='cx=%dpx cy=%dpx 固定点 (%.1fcm, %.1fcm, %.1fcm)'
+                    % (cx, cy, x, y, z_grab)))
                 self._detail('坐标：固定夹取点 (%.1f, %.1f, %.1f)（bgas 倾斜闭环已把目标对准窗口）'
                              % (x, y, z_grab))
 
             self._detail('伸出机械臂：setPitchRangeMoving 到 (%.1f, %.1f, %.1f) 夹取'
                          % (x, y + 2.0, z_grab))
             if not self._grab_once(x, y, z_grab):
-                print('[grab] 逆运动学无解，grab 失败')
+                self.log.info('[grab] %s', action_msg('夹取失败', reason='逆运动学无解'))
                 self._detail('grab 失败：目标点 (%.1f, %.1f, %.1f) 逆运动学无解，交由上层重新 bgas'
                              % (x, y, z_grab))
                 return False
@@ -194,11 +197,12 @@ class Grabber:
 
             if self._verify(center):
                 self._status(3)
-                print('[grab] 夹取成功')
+                self.log.info('[grab] %s', action_msg('夹取成功'))
                 self._detail('夹取验证通过：夹取后目标消失/明显位移，判定已夹到')
                 return True
 
-            print('[grab] 目标未移动，未夹到，重试伸臂（第 %d/%d 次）' % (attempt + 1, self.attempts))
+            self.log.info('[grab] %s', action_msg(
+                '未夹到', reason='目标未移动', action='重试伸臂 第 %d/%d 次' % (attempt + 1, self.attempts)))
             self._detail('夹取验证失败：目标仍在原位；grab 只重试伸臂，不调整 1-20')
             if strategy == 'fixed':
                 self.ak.setPitchRangeMoving(tilt_pose, tilt_pitch, -90, 100, 1.5)
@@ -207,6 +211,6 @@ class Grabber:
             time.sleep(1.0)
 
         self._status(0)
-        print('[grab] %d 次尝试均未夹到，grab 失败' % self.attempts)
+        self.log.info('[grab] %s', action_msg('夹取失败', reason='%d 次尝试均未夹到' % self.attempts))
         self._detail('grab 失败：%d 次伸臂重试均未夹到，交由上层重新 bgas' % self.attempts)
         return False

@@ -14,6 +14,7 @@ import time
 from common.pid import PID
 from agcs_lib.motion import turn_left, turn_right, go_forward, go_back
 from agcs_lib.sensors import show_status
+from agcs_lib.logs import get_logger, action_msg
 
 
 class Searcher:
@@ -25,6 +26,7 @@ class Searcher:
         self.detect = detect
         self.ultrasonic = ultrasonic
         self.display = display
+        self.log = get_logger()
 
         gf = params.get('gimbal_fetch', {})
         self.pan_min = int(gf.get('pan_min', 0))
@@ -59,10 +61,15 @@ class Searcher:
         self.board.bus_servo_set_position(0.02, [[24, int(self.y_dis)], [21, int(self.x_dis)]])
 
     def _set_cam(self, x, y):
+        old_x, old_y = self.x_dis, self.y_dis
         self.x_dis = max(self.pan_min, min(self.pan_max, int(x)))
         self.y_dis = max(0, min(1000, int(y)))
         self._cam()
         time.sleep(self.settle)
+        if (old_x, old_y) != (self.x_dis, self.y_dis):
+            self.log.debug('[search] %s', action_msg(
+                '云台调整', action='舵机21 %d->%d脉宽，舵机24 %d->%d脉宽'
+                % (old_x, self.x_dis, old_y, self.y_dis)))
 
     def _confirm(self, tries=5, need_hits=2):
         hits = 0
@@ -81,6 +88,7 @@ class Searcher:
     def _turn_body(self, angle):
         if angle == 0:
             return
+        self.log.info('[search] %s', action_msg('转身', action='%+.0f°' % angle))
         if self.turn_sign > 0:
             (turn_left if angle > 0 else turn_right)(self.ik, abs(angle), 60)
         else:
@@ -124,7 +132,8 @@ class Searcher:
             self._set_cam(x, y)
             r = self.detect()
             if r is not None:
-                print('[search][扫描] 检测到目标 x_dis=%d y_dis=%d' % (x, y), flush=True)
+                self.log.info('[search] %s', action_msg(
+                    '检测到目标', action='云台水平=%d脉宽 云台俯仰=%d脉宽' % (x, y)))
                 # 检测到目标后先 PID 锁定到画面中心，不再继续扫描
                 for _ in range(4):
                     self._track(r['center'])
@@ -153,7 +162,7 @@ class Searcher:
                 return cr
 
         # 第一步：21 号舵机脉宽固定在中位(500)，仅 24 号舵机上下扫描
-        print('[search][扫描] 21号舵机固定脉宽500，24号舵机上下扫描', flush=True)
+        self.log.info('[search] %s', action_msg('开始扫描', action='21号固定500，24号上下扫描'))
         r = self._vertical_sweep(500)
         if r is not None:
             return r
@@ -161,7 +170,7 @@ class Searcher:
         # 第二步：21 号舵机逐点转动，每动一次脉宽就做一次 24 号舵机上下扫描
         pans = [400, 300, 250, 600, 700, 750]  # 21舵机水平扫描：先左后右，范围250~750，步进100
         for x in pans:
-            print('[search][扫描] 21号舵机脉宽=%d，24号舵机上下扫描' % x, flush=True)
+            self.log.info('[search] %s', action_msg('扫描', action='21号脉宽=%d，24号上下扫描' % x))
             r = self._vertical_sweep(x)
             if r is not None:
                 return r
@@ -172,12 +181,13 @@ class Searcher:
         for round_no in range(self.scan_rounds):
             det = self.search()
             if det is None:
-                print('[search] 第%d轮未找到目标' % (round_no + 1))
+                self.log.info('[search] %s', action_msg('第%d轮未找到目标' % (round_no + 1)))
                 continue
 
             cx, cy = det['center']
-            print('[search] 找到目标 x_dis=%d y_dis=%d cx=%d cy=%d area=%d'
-                  % (self.x_dis, self.y_dis, cx, cy, det['area']), flush=True)
+            self.log.info('[search] %s', action_msg(
+                '找到目标', action='云台水平=%d脉宽 云台俯仰=%d脉宽 中心x=%dpx 中心y=%dpx 面积=%d像素'
+                % (self.x_dis, self.y_dis, cx, cy, det['area'])))
 
             # 按云台角度转身朝向一次
             target_dir = (self.x_dis - 500) / 4.1667 + (320 - cx) / self.px_per_deg
@@ -199,8 +209,9 @@ class Searcher:
                 if r is None:
                     lost += 1
                     if lost >= 3:
-                        print('[search] 连续丢失目标')
+                        self.log.info('[search] %s', action_msg('连续丢失目标'))
                         return None, None
+                    self.log.debug('[search] %s', action_msg('目标丢失，后退找回', action='后退 15mm'))
                     go_back(self.ik, 15, 50)
                     time.sleep(0.4)
                     continue
@@ -213,8 +224,10 @@ class Searcher:
                 if best_dist is None or dist < best_dist:
                     best_dist = dist
                 centered = self._track(r['center'])
-                print('[search][追踪] #%d x_dis=%d y_dis=%d cx=%d cy=%d dist=%.1fcm best=%.1fcm'
-                      % (step + 1, self.x_dis, self.y_dis, cx, cy, dist, best_dist), flush=True)
+                self.log.info('[search] %s', action_msg(
+                    '追踪 #%d' % (step + 1),
+                    action='云台水平=%d脉宽 云台俯仰=%d脉宽 中心x=%dpx 中心y=%dpx 距离=%.1fcm 最近距离=%.1fcm'
+                    % (self.x_dis, self.y_dis, cx, cy, dist, best_dist)))
 
                 # 云台水平偏太多则转身并回正
                 if self.x_dis > 700:
@@ -228,8 +241,14 @@ class Searcher:
                     return r['center'], cy
 
                 if dist > self.fine_cm:
+                    self.log.debug('[search] %s', action_msg(
+                        '接近中', reason='距离 %.1fcm > %.1fcm' % (dist, self.fine_cm),
+                        action='前进 %dmm' % self.fast_walk_mm))
                     go_forward(self.ik, self.fast_walk_mm, self.fast_speed)
                 else:
+                    self.log.debug('[search] %s', action_msg(
+                        '接近中', reason='距离 %.1fcm <= %.1fcm' % (dist, self.fine_cm),
+                        action='前进 %dmm' % self.walk_mm))
                     go_forward(self.ik, self.walk_mm, self.walk_speed)
                 time.sleep(0.3)
 

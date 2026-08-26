@@ -13,8 +13,6 @@ from agcs_lib.vision import (
     load_block_params,
     get_area_max_contour,
     detect_color,
-    block_orientation,
-    orientation_error,
     camera_to_world,
     pixel_to_arm_coord,
     load_undistort_maps,
@@ -24,7 +22,6 @@ from agcs_lib.vision import (
 
 __all__ = [
     'load_lab_data', 'load_block_params', 'get_area_max_contour',
-    'detect_color', 'block_orientation', 'orientation_error',
-    'camera_to_world', 'pixel_to_arm_coord', 'load_undistort_maps',
+    'detect_color', 'camera_to_world', 'pixel_to_arm_coord', 'load_undistort_maps',
     'correct_camera', 'range_rgb',
 ]

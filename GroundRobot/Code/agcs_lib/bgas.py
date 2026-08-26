@@ -19,7 +19,7 @@ import cv2
 from agcs_lib.motion import move_body, go_forward, go_back, turn_left, turn_right
 from agcs_lib.vision import pixel_to_arm_coord
 from agcs_lib.sensors import show_status, dist_cm
-from agcs_lib.logs import get_logger
+from agcs_lib.logs import get_logger, action_msg
 
 
 class Bgas:
@@ -34,6 +34,7 @@ class Bgas:
         self.detect = detect
         self.display = display
         self.ultrasonic = ultrasonic  # 仅兼容旧调用，本阶段不依赖超声波
+        self.log = get_logger()
 
         gc = params.get('grab', {})
         walk = params.get('walk', {})
@@ -188,7 +189,7 @@ class Bgas:
             return dz
         move_body(self.ik, dz)
         self.body_z = dz
-        print('[bgas][高度] 机身调整 %+dmm -> %+dmm' % (old_z, dz), flush=True)
+        self.log.info('[bgas] %s', action_msg('机身调整', action='%+dmm -> %+dmm' % (old_z, dz)))
         if reason:
             self._detail('机身调整 %+dmm -> %+dmm，原因：%s' % (old_z, dz, reason))
         time.sleep(0.3)
@@ -212,22 +213,22 @@ class Bgas:
         best_z = self.body_z
         for dz in range(self.body_step, self.body_max + 1, self.body_step):
             self.set_body(dz, reason='找回：目标不可见，抬高机身到 %dmm，让高处物体进入视野' % dz)
-            print('[bgas][找回] 抬高尝试 机身=%dmm' % dz, flush=True)
+            self.log.debug('[bgas] %s', action_msg('找回尝试', action='机身抬升到 %dmm' % dz))
             r = self.detect()
             if r is not None:
                 if self._usable(r):
-                    print('[bgas][找回] 抬高机身 %dmm，目标可用' % dz, flush=True)
+                    self.log.info('[bgas] %s', action_msg('找回成功', action='机身抬升到 %dmm 目标可用' % dz))
                     self._detail('找回成功：机身 %dmm 时目标中心进入画面（可用），停止抬高' % dz)
                     return r
                 if best is None or r.get('area', 0) > best.get('area', 0):
                     best = r
                     best_z = dz
-                print('[bgas][找回] 抬高机身 %dmm，目标已出现但中心不可用，继续抬高' % dz, flush=True)
+                self.log.debug('[bgas] %s', action_msg('找回中', action='机身抬升到 %dmm 目标中心不可用，继续抬高' % dz))
                 self._detail('找回中：机身 %dmm 目标已出现但中心仍在画面外（面积=%d），继续抬高'
                              % (dz, r.get('area', 0)))
         if best is not None:
-            print('[bgas][找回] 抬高后仍不可用，回落到最佳可见高度 %dmm（面积 %d），交给上层补抬升'
-                  % (best_z, best.get('area', 0)), flush=True)
+            self.log.info('[bgas] %s', action_msg(
+                '找回回落', action='回到最佳可见高度 %dmm 面积 %d像素' % (best_z, best.get('area', 0))))
             self._detail('找回：抬高全程中心未进入画面，回落到面积最大的 %dmm（面积=%d），交给上层 _auto_lift 继续'
                          % (best_z, best.get('area', 0)))
             self.set_body(best_z, reason='找回回落：回到面积最大的可见高度 %dmm' % best_z)
@@ -281,12 +282,14 @@ class Bgas:
                         self._detail('抬升适配停止：面积与 cy 连续 2 步无改善（当前面积=%d），避免白抬' % area)
                         break
         if not self._usable(r) and self.body_z != best_z:
-            print('[bgas][高度] 目标仍不可用，回到最优高度 %dmm（面积 %d）' % (best_z, best_area), flush=True)
+            self.log.info('[bgas] %s', action_msg(
+                '抬升适配回落', action='回到最优高度 %dmm 面积 %d像素' % (best_z, best_area)))
             self._detail('抬升适配：结束后目标仍不可用，回到最优高度 %dmm（面积=%d）' % (best_z, best_area))
             self.set_body(best_z, reason='抬升适配回落：回到面积最大的高度 %dmm' % best_z)
             r = best
-        print('[bgas][高度] 抬升适配结束：机身=%dmm 可用=%s 面积=%d'
-              % (self.body_z, self._usable(r), r.get('area', 0)), flush=True)
+        self.log.debug('[bgas] %s', action_msg(
+            '抬升适配结束', action='机身=%dmm 可用=%s 面积=%d像素'
+            % (self.body_z, self._usable(r), r.get('area', 0))))
         self._detail('抬升适配结束：机身=%dmm 可用=%s 面积=%d，交给 cy 高度自适应定最终高度'
                      % (self.body_z, self._usable(r), r.get('area', 0)))
         return r
@@ -294,7 +297,9 @@ class Bgas:
     # ---------- 高度自适应（cy 信号，映射路线用） ----------
     def adjust_height(self, cy):
         """升降机身把目标 cy 调到标定值 cy_target。只动 1-20，云台锁死检测位。"""
-        print('[bgas][高度] 开始调整 cy=%d target=%d 机身=%+dmm' % (cy, self.cy_target, self.body_z))
+        self.log.info('[bgas] %s', action_msg(
+            '开始高度自适应', action='cy=%dpx 目标cy=%dpx 机身=%+dmm'
+            % (cy, self.cy_target, self.body_z)))
         self._detail('高度自适应开始：cy=%d，标定值 cy_target=%d，机身=%+dmm。'
                      '原因：只有把 cy 调到标定区间，地面标定映射 pixel_to_arm_coord 才成立'
                      % (cy, self.cy_target, self.body_z))
@@ -311,7 +316,7 @@ class Bgas:
                                   reason='高度自适应：cy=%d<target=%d（目标偏高/偏远），抬高机身 %dmm'
                                          % (cur, self.cy_target, step))
                 else:
-                    print('[bgas][高度] 机身已达上限，无法继续抬高', flush=True)
+                    self.log.info('[bgas] %s', action_msg('高度自适应失败', reason='机身已达上限'))
                     self._detail('高度自适应失败：机身已达上限 +%dmm，cy=%d 仍 < %d（目标太高/太远，抬高不够）'
                                  % (self.body_max, cur, self.cy_target))
                     return False, True
@@ -321,13 +326,13 @@ class Bgas:
                                   reason='高度自适应：cy=%d>target=%d（目标偏近/偏低），降低机身 %dmm'
                                          % (cur, self.cy_target, step))
                 else:
-                    print('[bgas][高度] 机身已达下限 %dmm，无法继续降低' % self.body_min, flush=True)
+                    self.log.info('[bgas] %s', action_msg('高度自适应失败', reason='机身已达下限 %dmm' % self.body_min))
                     self._detail('高度自适应失败：机身已达下限 %dmm，cy=%d 仍 > %d（目标太近/太低，'
                                  '降低不够；将由上层后退重试）' % (self.body_min, cur, self.cy_target))
                     return False, True
             r = self.detect()
             if r is None:
-                print('[bgas][高度] 调整中目标丢失，尝试找回', flush=True)
+                self.log.debug('[bgas] %s', action_msg('目标丢失', action='触发找回'))
                 self._detail('高度自适应：升降后目标丢失，触发机身找回（保持云台检测位）')
                 r = self._reacquire()
             if r is None:
@@ -365,7 +370,7 @@ class Bgas:
                 return ctx, None
             # 映射路线调不动（太近/太远/超可及等）→ 回退到倾斜闭环（固定点已实测够得到）
             self._detail('bgas 映射路线失败（%s），回退到倾斜闭环路线' % reason)
-            print('[bgas] 映射路线失败（%s），转倾斜闭环' % reason, flush=True)
+            self.log.info('[bgas] %s', action_msg('映射路线失败', reason=reason, action='转倾斜闭环'))
             return self._run_tilted()
         self._detail('bgas 阶段一：目标在 -90 检测位不可见（判断为高处平台），转倾斜闭环路线')
         return self._run_tilted()
@@ -377,20 +382,20 @@ class Bgas:
         last_reason = '未知'
         r = probe
         for round_no in range(self.adapt_rounds):
-            print('[bgas][映射] 定位第 %d/%d 轮' % (round_no + 1, self.adapt_rounds))
+            self.log.debug('[bgas] %s', action_msg('定位', action='第 %d/%d 轮' % (round_no + 1, self.adapt_rounds)))
             if r is None or not self._usable(r):
                 r = self._stable()
             if r is None:
                 r = self._reacquire()
                 if r is None:
                     last_reason = '目标不可见：抬身找回失败'
-                    print('[bgas] 失败：%s' % last_reason, flush=True)
+                    self.log.info('[bgas] %s', action_msg('失败', reason=last_reason))
                     return None, last_reason
             if not self._usable(r):
                 r = self._auto_lift(r)
                 if r is None:
                     last_reason = '目标中心不可用'
-                    print('[bgas] 失败：%s' % last_reason, flush=True)
+                    self.log.info('[bgas] %s', action_msg('失败', reason=last_reason))
                     return None, last_reason
 
             if self.height_enabled and not self._cy_ok(r['center'][1]):
@@ -405,7 +410,9 @@ class Bgas:
                     return None, last_reason
                 if not ok:
                     if limited and r['center'][1] > self.cy_target and walk_b < self.max_back:
-                        print('[bgas] cy=%d 仍 > 目标且机身到下限，后退 %dmm' % (r['center'][1], self.walk_mm), flush=True)
+                        self.log.info('[bgas] %s', action_msg(
+                            '后退', reason='cy=%dpx 偏高且机身到下限' % r['center'][1],
+                            action='后退 %dmm' % self.walk_mm))
                         self._detail('bgas 后退：cy=%d>%d 且机身已到下限（目标太近），后退 %dmm'
                                      % (r['center'][1], self.cy_target, self.walk_mm))
                         go_back(self.ik, self.walk_mm, 50)
@@ -414,7 +421,8 @@ class Bgas:
                         continue
                     if limited:
                         last_reason = 'cy 无法调到标定区间（机身到限位）'
-                        print('[bgas] 失败：%s（cy=%d 机身=%+dmm）' % (last_reason, r['center'][1], self.body_z), flush=True)
+                        self.log.info('[bgas] %s', action_msg(
+                            '失败', reason=last_reason, action='cy=%dpx 机身=%+dmm' % (r['center'][1], self.body_z)))
                         return None, last_reason
 
             x, y = self._coord(r['center'])
@@ -422,8 +430,9 @@ class Bgas:
                          % (r['center'], x, y, self.body_z, r['center'][1]))
             if y > self.reach_y or abs(x) > self.reach_x or y < 0:
                 if self.body_z == 0 and walk_f < self.max_forward:
-                    print('[bgas] 目标 x=%.1f y=%.1f 超出可及且机身未抬（平地），前进 %dmm'
-                          % (x, y, self.walk_mm), flush=True)
+                    self.log.info('[bgas] %s', action_msg(
+                        '前进', reason='目标超出可及 x=%.1fcm y=%.1fcm' % (x, y),
+                        action='前进 %dmm' % self.walk_mm))
                     self._detail('bgas 前进：y=%.1f>reach_y=%.0f（目标偏远）且机身未抬（平地安全），前进 %dmm'
                                  % (y, self.reach_y, self.walk_mm))
                     go_forward(self.ik, self.walk_mm, 50)
@@ -431,10 +440,12 @@ class Bgas:
                     time.sleep(0.4)
                     continue
                 last_reason = '目标超出可及范围（%s）' % ('跨平面禁止前进' if self.body_z != 0 else '已前进到上限')
-                print('[bgas] 失败：%s（x=%.1f y=%.1f 机身=%+dmm）' % (last_reason, x, y, self.body_z), flush=True)
+                self.log.info('[bgas] %s', action_msg(
+                    '失败', reason=last_reason, action='x=%.1fcm y=%.1fcm 机身=%+dmm' % (x, y, self.body_z)))
                 return None, last_reason
             if y < self.y_ref - self.align_y_cm and walk_b < self.max_back:
-                print('[bgas] 目标 y=%.1f 偏近，后退 %dmm' % (y, self.walk_mm), flush=True)
+                self.log.info('[bgas] %s', action_msg(
+                    '后退', reason='目标偏近 y=%.1fcm' % y, action='后退 %dmm' % self.walk_mm))
                 self._detail('bgas 后退：y=%.1f < y_ref-%.0f（目标太近），后退 %dmm'
                              % (y, self.align_y_cm, self.walk_mm))
                 go_back(self.ik, self.walk_mm, 50)
@@ -447,7 +458,8 @@ class Bgas:
             if d_trust is not None:
                 size_cm = self._estimate_size(r, d_trust)
                 self._detail('尺寸估算：目标约 %.1f × %.1f cm（可信距离 %.1fcm）' % (size_cm[0], size_cm[1], d_trust))
-            print('[bgas][映射] 定位完成：x=%.1f y=%.1f cy=%d 机身=%+dmm' % (x, y, r['center'][1], self.body_z))
+            self.log.info('[bgas] %s', action_msg(
+                '定位完成', action='x=%.1fcm y=%.1fcm cy=%dpx 机身=%+dmm' % (x, y, r['center'][1], self.body_z)))
             context = {
                 'strategy': 'mapped',
                 'detect': r,
@@ -480,7 +492,7 @@ class Bgas:
                 stable = 0
                 # 过近时方块会出画面底部：先小步后退（只退不进，安全），再看
                 if walk_b < self.max_back:
-                    print('[bgas][倾斜] 目标不可见（可能过近），先后退 %dmm 再看' % self.walk_mm, flush=True)
+                    self.log.debug('[bgas] %s', action_msg('目标不可见', reason='可能过近', action='后退 %dmm 再看' % self.walk_mm))
                     self._detail('倾斜闭环：目标不可见，先后退 %dmm（过近时方块出画面底部；只退不进，安全）'
                                  % self.walk_mm)
                     go_back(self.ik, self.walk_mm, 50)
@@ -489,15 +501,16 @@ class Bgas:
                     continue
                 r = self._reacquire()
                 if r is None:
-                    print('[bgas][倾斜] 第 %d 轮目标不可见，小角度转身重找' % (round_no + 1), flush=True)
+                    self.log.info('[bgas] %s', action_msg('目标不可见', action='转身 %d° 重找' % self.tilt_turn_deg))
                     self._detail('倾斜闭环：目标不可见且抬身找回失败，左转 %d° 重找'
                                  % self.tilt_turn_deg)
                     self._turn_body(self.tilt_turn_deg)
                     time.sleep(0.6)
                     continue
             cx, cy = r['center']
-            print('[bgas][倾斜] 第 %d/%d 轮 cx=%d cy=%d 机身=%+dmm'
-                  % (round_no + 1, self.tilt_rounds, cx, cy, self.body_z))
+            self.log.debug('[bgas] %s', action_msg(
+                '倾斜定位', action='第 %d/%d 轮 cx=%dpx cy=%dpx 机身=%+dmm'
+                % (round_no + 1, self.tilt_rounds, cx, cy, self.body_z)))
             moved = False
             if cx < self.tilt_cx_min:
                 self._detail('倾斜闭环：cx=%d < %d（目标偏左），左转 %d°'
@@ -518,14 +531,15 @@ class Bgas:
                                          % (cy, self.tilt_cy_min, step))
                     moved = True
                 elif walk_f < self.max_forward:
-                    print('[bgas][倾斜] cy=%d < %d 且机身到上限，前进 %dmm' % (cy, self.tilt_cy_min, self.walk_mm), flush=True)
+                    self.log.info('[bgas] %s', action_msg(
+                        '前进', reason='cy=%dpx 偏低且机身到上限' % cy, action='前进 %dmm' % self.walk_mm))
                     self._detail('倾斜闭环：cy=%d < %d 且机身到上限（目标仍远），前进 %dmm'
                                  % (cy, self.tilt_cy_min, self.walk_mm))
                     go_forward(self.ik, self.walk_mm, 50)
                     walk_f += 1
                     moved = True
                 else:
-                    print('[bgas][倾斜] cy=%d < %d 且抬身/前进都用尽，定位失败' % (cy, self.tilt_cy_min), flush=True)
+                    self.log.info('[bgas] %s', action_msg('定位失败', reason='目标太高/太远'))
                     self._detail('倾斜闭环失败：cy=%d < 窗口下限 %d，机身到上限且前进到上限（目标太高或太远）'
                                  % (cy, self.tilt_cy_min))
                     return None, '倾斜闭环：目标太高/太远（cy=%d < %d 且抬升/前进到上限）' % (cy, self.tilt_cy_min)
@@ -538,14 +552,15 @@ class Bgas:
                                          % (cy, self.tilt_cy_max, step))
                     moved = True
                 elif walk_b < self.max_back:
-                    print('[bgas][倾斜] cy=%d > %d 且机身到下限，后退 %dmm' % (cy, self.tilt_cy_max, self.walk_mm), flush=True)
+                    self.log.info('[bgas] %s', action_msg(
+                        '后退', reason='cy=%dpx 偏高且机身到下限' % cy, action='后退 %dmm' % self.walk_mm))
                     self._detail('倾斜闭环：cy=%d > %d 且机身到下限（目标太近），后退 %dmm'
                                  % (cy, self.tilt_cy_max, self.walk_mm))
                     go_back(self.ik, self.walk_mm, 50)
                     walk_b += 1
                     moved = True
                 else:
-                    print('[bgas][倾斜] cy=%d > %d 且降身/后退都用尽，定位失败' % (cy, self.tilt_cy_max), flush=True)
+                    self.log.info('[bgas] %s', action_msg('定位失败', reason='目标太近/太低'))
                     self._detail('倾斜闭环失败：cy=%d > 窗口上限 %d，机身到下限且后退到上限（目标太近或平台太低）'
                                  % (cy, self.tilt_cy_max))
                     return None, '倾斜闭环：目标太近/太低（cy=%d > %d 且降身/后退到上限）' % (cy, self.tilt_cy_max)
@@ -578,8 +593,9 @@ class Bgas:
                     'size_cm': size_cm,
                     'dist_cm': d_trust,
                 }
-                print('[bgas][倾斜] 定位完成：cx=%d cy=%d 机身=%+dmm，固定夹取点 (%.1f, %.1f)'
-                      % (cx, cy, self.body_z, fx, fy))
+                self.log.info('[bgas] %s', action_msg(
+                    '定位完成', action='cx=%dpx cy=%dpx 机身=%+dmm 固定夹取点 (%.1fcm, %.1fcm)'
+                    % (cx, cy, self.body_z, fx, fy)))
                 self._detail('bgas 倾斜路线验收通过：cx=%d∈[%d,%d] cy=%d∈[%d,%d] 连续 %d 帧稳定，'
                              '固定夹取点 (%.1f,%.1f,%.1f)，移交 grab（只动 21-25）'
                              % (cx, self.tilt_cx_min, self.tilt_cx_max, cy, self.tilt_cy_min,
