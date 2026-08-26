@@ -344,12 +344,16 @@ class Bgas:
 
     # ---------- 主流程 ----------
     def run(self, cy=None, x_dis=None, y_dis=None):
-        """定位到"可抓取"状态；返回 (context, reason)。失败时 context=None。"""
-        # 阶段一：切 -90 检测位探测（低处/地面 → 映射路线）
+        """定位到"可抓取"状态；返回 (context, reason)。失败时 context=None。
+
+        方案 A：只走映射路线（地面/低处），不做倾斜闭环（高处平台）。
+        """
+        # 切 -90 检测位探测
         self.ak.setPitchRangeMoving((0, 15, 5), -90, -90, 100, 2)
         time.sleep(2)
-        self._detail('bgas 阶段一：切 -90 检测位探测（搜索移交 x_dis=%s y_dis=%s cy=%s）' % (x_dis, y_dis, cy))
+        self._detail('bgas：切 -90 检测位探测（搜索移交 x_dis=%s y_dis=%s cy=%s）' % (x_dis, y_dis, cy))
         self._status(1)
+
         probe = None
         for _ in range(5):
             r = self.detect()
@@ -357,23 +361,23 @@ class Bgas:
                 probe = r
                 break
             time.sleep(0.1)
-        if probe is not None:
-            pcy = probe['center'][1]
-            if abs(pcy - self.cy_target) > 120:
-                # -90 可见但 cy 远离标定值（过近/过远）：映射路线必然调不到，直接倾斜闭环
-                self._detail('bgas 阶段一：目标在 -90 检测位可见但 cy=%d 远离标定值 %d（过近/过远），'
-                             '直接转倾斜闭环路线' % (pcy, self.cy_target))
-                return self._run_tilted()
-            self._detail('bgas 阶段一：目标在 -90 检测位可见，走映射路线（地面/低处）')
-            ctx, reason = self._run_mapped(probe)
-            if ctx is not None:
-                return ctx, None
-            # 映射路线调不动（太近/太远/超可及等）→ 回退到倾斜闭环（固定点已实测够得到）
-            self._detail('bgas 映射路线失败（%s），回退到倾斜闭环路线' % reason)
-            self.log.info('[bgas] %s', action_msg('映射路线失败', reason=reason, action='转倾斜闭环'))
-            return self._run_tilted()
-        self._detail('bgas 阶段一：目标在 -90 检测位不可见（判断为高处平台），转倾斜闭环路线')
-        return self._run_tilted()
+
+        # 目标不可见：可能是 search 走过头（目标在脚下），先后退找回
+        if probe is None:
+            self.log.info('[bgas] %s', action_msg('目标不可见', reason='可能走过头', action='后退找回'))
+            for _ in range(self.max_back):
+                go_back(self.ik, self.walk_mm, 50)
+                time.sleep(0.4)
+                r = self.detect()
+                if r is not None and self._usable(r):
+                    probe = r
+                    break
+
+        if probe is None:
+            return None, '目标不可见：后退找回失败'
+
+        self.log.info('[bgas] %s', action_msg('目标可见', action='走映射路线'))
+        return self._run_mapped(probe)
 
     def _run_mapped(self, probe):
         """映射路线：cy 高度自适应 + 地面标定映射可及检查。"""
