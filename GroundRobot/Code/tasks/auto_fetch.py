@@ -1,10 +1,9 @@
 #!/usr/bin/python3
 # coding=utf8
-"""自动取物编排：搜索(search) → 定位判定(bgas) → 纯机械臂夹取(grab)，三个阶段严格分离。
+"""自动取物编排：搜索(search) → 纯机械臂夹取(grab)。
 
-- search：找目标 + 大致接近（只动 1-20 + 云台 21/24）；
-- bgas（Before-Grab-After-Search）：判定/调整到"可抓取"状态（只动 1-20，云台锁定检测位）；
-- grab：只动 21-25 伸臂夹取，绝不动 1-20。
+- search：找目标 + 走路逼近（只动 1-20 + 云台 21/24）；
+- grab：只动 21-25 伸臂夹取（官方 block_fetch/intelligent_fetch 逻辑）。
 """
 import os
 import sys
@@ -25,7 +24,6 @@ def main():
         capture, stand,
     )
     from agcs_lib.search import Searcher
-    from agcs_lib.bgas import Bgas
     from agcs_lib.grab import Grabber
     from agcs_lib.sensors import show_status
 
@@ -73,22 +71,9 @@ def main():
         show_status(display, 0)
         return
 
-    # 2) bgas：定位/可抓取判定（只动 1-20）
-    import agcs_lib.bgas as _b
-    logger.debug('[VER] BGAS_FILE=%s' % _b.__file__)
-    bgas = Bgas(board, ik, ak, params, K, R, T, detect, display, ultrasonic=ultrasonic)
-    context, reason = bgas.run(cy=cy, x_dis=searcher.x_dis, y_dis=searcher.y_dis)
-    if context is None:
-        logger.info('[bgas] %s', action_msg('定位失败', reason=reason))
-        cam.camera_close()
-        show_status(display, 0)
-        return
-
-    # 3) grab：纯机械臂夹取（只动 21-25）
-    import agcs_lib.grab as _g
-    logger.debug('[VER] GRAB_FILE=%s BGAS_OK=1' % _g.__file__)
+    # 2) grab：纯机械臂夹取（只动 21-25）
     grabber = Grabber(board, ik, ak, params, K, R, T, detect, display, ultrasonic=ultrasonic)
-    ok = grabber.run(context=context, body_z=context['body_z'])
+    ok = grabber.run(center=center)
 
     cam.camera_close()
     if ok:
