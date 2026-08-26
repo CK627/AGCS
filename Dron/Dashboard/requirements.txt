@@ -1,5 +1,0 @@
-flask
-waitress
-pymavlink
-opencv-python
-numpy
