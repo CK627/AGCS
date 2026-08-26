@@ -214,7 +214,9 @@ class Searcher:
                     start_dist = dist
                 if best_dist is None or dist < best_dist:
                     best_dist = dist
-                centered = self._track(r['center'])
+                # 只在目标偏离中心较大时才调云台，否则直接前进（更平滑连续）
+                if abs(cx - 320) > 40 or abs(cy - 240) > 60:
+                    self._track(r['center'])
                 self.log.info('[search] %s', action_msg(
                     '追踪 #%d' % (step + 1),
                     action='云台水平=%d脉宽 云台俯仰=%d脉宽 中心x=%dpx 中心y=%dpx 距离=%.1fcm 最近距离=%.1fcm'
@@ -255,7 +257,7 @@ class Searcher:
                         '接近中', reason='距离 %.1fcm <= %.1fcm' % (dist, self.fine_cm),
                         action='前进 %dmm' % self.walk_mm))
                     go_forward(self.ik, self.walk_mm, self.walk_speed)
-                time.sleep(0.3)
+                time.sleep(0.1)
 
             r = self.detect()
             if r is not None and self._close(r, best_dist=best_dist, start_dist=start_dist):
