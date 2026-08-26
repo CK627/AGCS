@@ -9,12 +9,14 @@ REMOTE=/home/pi/spiderpi
 
 EXCLUDE=(--exclude '__pycache__' --exclude '*.md')
 
+# config/、functions/、advanced/、kinematic_routines/ 树莓派上有标定/官方文件，不加 --delete；
+# agcs_lib/、tasks/、communication/ 是我们专属目录，加 --delete 让树莓派和本地完全一致（本地删了树莓派也删）。
 rsync -avz "${EXCLUDE[@]}" "$BASE/config/"            "$ROBOT:$REMOTE/config/"
-rsync -avz "${EXCLUDE[@]}" "$BASE/agcs_lib/"          "$ROBOT:$REMOTE/agcs_lib/"
-rsync -avz "${EXCLUDE[@]}" "$BASE/tasks/"             "$ROBOT:$REMOTE/tasks/"
+rsync -avz --delete "${EXCLUDE[@]}" "$BASE/agcs_lib/"          "$ROBOT:$REMOTE/agcs_lib/"
+rsync -avz --delete "${EXCLUDE[@]}" "$BASE/tasks/"             "$ROBOT:$REMOTE/tasks/"
 rsync -avz "${EXCLUDE[@]}" "$BASE/functions/"         "$ROBOT:$REMOTE/functions/"
 rsync -avz "${EXCLUDE[@]}" "$BASE/advanced/"          "$ROBOT:$REMOTE/advanced/"
 rsync -avz "${EXCLUDE[@]}" "$BASE/kinematic_routines/" "$ROBOT:$REMOTE/kinematic_routines/"
-rsync -avz "${EXCLUDE[@]}" "$BASE/communication/"     "$ROBOT:$REMOTE/communication/"
+rsync -avz --delete "${EXCLUDE[@]}" "$BASE/communication/"     "$ROBOT:$REMOTE/communication/"
 
 echo "同步完成: $ROBOT:$REMOTE"
