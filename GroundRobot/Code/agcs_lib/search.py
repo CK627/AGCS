@@ -105,17 +105,10 @@ class Searcher:
         return abs(cx - 320) < 30 and abs(cy - 240) < 30
 
     def _close(self, r, dist=None, best_dist=None, start_dist=None):
-        """到位判定：目标贴底（即将出画面）或估算距离进入 near_cm 以内 → 到位。"""
-        cy = r['center'][1]
-        radius = max(int(r.get('radius', 20)), 1)
-        # 目标贴底（即将出画面）→ 到位：目标已在机器人脚下附近，交给 grab 像素转坐标夹取
-        if cy + radius >= 480 - self.edge_margin:
-            return True
+        """到位判定：估算距离进入 near_cm 以内 → 到位。"""
         if dist is None:
             dist = self.area_k / math.sqrt(max(int(r.get('area', 1)), 1))
-        if dist <= self.near_cm:
-            return True
-        return False
+        return dist <= self.near_cm
 
     def _vertical_sweep(self, x):
         """固定 21 号舵机脉宽为 x，让 24 号舵机上下扫描一遍；找到目标返回 dict，否则返回 None。"""
@@ -221,6 +214,14 @@ class Searcher:
                     '追踪 #%d' % (step + 1),
                     action='云台水平=%d脉宽 云台俯仰=%d脉宽 中心x=%dpx 中心y=%dpx 距离=%.1fcm 最近距离=%.1fcm'
                     % (self.x_dis, self.y_dis, cx, cy, dist, best_dist)))
+
+                # 贴底（面积被画面裁切导致距离虚高）但距离仍远：后退让目标完整，重新判断
+                if cy + max(int(r.get('radius', 20)), 1) >= 480 - self.edge_margin and dist > self.near_cm:
+                    self.log.debug('[search] %s', action_msg(
+                        '目标贴底但距离远', reason='可能在高处', action='后退 15mm 让目标完整'))
+                    go_back(self.ik, 15, 50)
+                    time.sleep(0.4)
+                    continue
 
                 # 云台水平偏太多则转身并回正
                 if self.x_dis > 700:
