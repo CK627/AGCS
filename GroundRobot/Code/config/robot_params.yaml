@@ -18,6 +18,7 @@ walk:
 
 obstacle:
   threshold: 35.0          # 避障触发距离 cm
+  target_radius_gate: 30   # 目标半径超过此值视为前方是目标，不再触发避障停止
   back_stride: 80          # 后退步幅 mm
   filter_window: 5         # 超声波距离滤波窗口
 
@@ -29,13 +30,14 @@ nav:
 arm:
   detect_pose: [0, 15, 5]  # 机械臂检测姿态（x, y, z）cm，与官方 block_fetch 一致
   approach_z: 10            # 夹取前接近高度 cm（夹爪在方块上方，摄像头仍能看到，用于实时微调）
-  pick_z: -5               # 抓取高度 cm（官方 intelligent_fetch 智能取物默认，向下夹）
+  pick_z: -4               # 抓取高度 cm（夹子还能再低一点）
+  grab_pitch: 0            # 夹取时机械臂俯仰角；避免24号自动低头
   pick_distance: 20.0        # 抓取前超声波"够近"确认距离 cm（超过则继续接近）
   pitch: -90               # 俯仰角 deg
   alpha1: -90              # 逆运动学俯仰角搜索范围下界
   alpha2: 100              # 逆运动学俯仰角搜索范围上界
   gripper_open: 120        # 夹爪张开脉宽（舵机25）
-  gripper_close: 600       # 夹爪闭合脉宽（舵机25，官方智能取物默认）
+  gripper_close: 550       # 夹爪闭合脉宽（舵机25，官方 block_fetch 默认）
   raise_pose: [12, 24, 5]  # 抓取后抬起位置 cm
   release_pose: [12, 24, -5]  # 松开/放置位置 cm
   hand_raise_pose: [0, 10, 25]  # 举手反馈姿态（x, y, z）cm，需现场标定
@@ -46,9 +48,10 @@ arm:
   reset_pulses: {21: 500, 22: 705, 23: 90, 24: 330, 25: 700}  # 复位/检测位各舵机脉宽（官方默认）
 
 search:
-  pan_pulses: [200, 350, 500, 650, 800]  # 底座(21)水平扫描档位脉宽，500≈朝前（需现场标定）
+  pan_pulses: [0, 200, 400, 600, 800, 1000]  # 底座(21)水平扫描档位：从0开始每次+200到1000
+  tilt_scan_step: 20        # 24号平滑扫描每一步的脉宽增量
   pan_step_ms: 350           # 每档转动时间 ms
-  tilt_pulses: [650, 500, 350]  # 肩关节(22)俯仰档位（需现场标定）
+  tilt_pulses: [0, 200, 400, 600, 800, 1000]  # 相机俯仰(24)扫描档位：从0开始每次+200到1000
   tilt_step_ms: 350          # 每档转动时间 ms
   align_tol: 50              # 目标中心距画面中心容差 px
   align_step: 40             # 对齐微调步长脉宽
@@ -74,6 +77,11 @@ gimbal_fetch:
   pan_min: 0              # 舵机21 云台扫描下限脉宽
   pan_max: 1000           # 舵机21 云台扫描上限脉宽（约240°）
   pan_step: 40            # 云台扫描步长脉宽
+  pan_scan_step: 20         # 21号平滑扫描每一步的脉宽增量
+  pan_move_ms: 1            # 21号每小步的移动时间 ms
+  pan_detect_interval_ms: 30  # 21号平滑扫描时的取帧间隔 ms
+  scan_move_ms: 10          # 24号每小步的移动时间 ms
+  detect_interval_ms: 20    # 平滑扫描时的取帧间隔 ms
   cam_start: 330          # 舵机24 相机起始脉宽（≈检测位）
   cam_max: 1000           # 舵机24 相机上限脉宽
   cam_step: 100           # 每扫一圈抬高脉宽
@@ -82,6 +90,13 @@ gimbal_fetch:
   ultrasonic_max_cm: 400.0  # 超声波超过此值视为无效，改用图片面积
   area_k: 1650.0          # 图片面积->距离系数 dist=k/sqrt(area)，需现场标定
   near_cm: 15.0           # 距离主判定阈值：估算距离 <= 此值才算到位（贴底回升兜底见 search.py _close）
+  near_radius: 60          # 目标最小外接圆半径 >= 此值视为够近（夹子太近时调小）
+  base_pulse: 220          # 平地检测位 24 号基准脉宽（现场标定）
+  radius_per_pulse: 0.0273 # 高度补偿：pulse 每增加 1，目标半径约减少多少 px
+  stop_pulse_min: 120      # 24号脉宽低于此值视为已经走到脚下，立即停止逼近
+  slow_radius: 35          # 半径 >= 此值用慢速小步，否则快速接近
+  pan_band: 80             # 21号偏离500超过此值转六足，把摄像头拉回朝前
+  pan_turn_deg: 5          # 每次转身体角度
   walk_mm: 40             # 每次前进距离 mm
   turn_deg: 10            # 每次转向角度 deg
   turn_sign: 1            # 左右方向符号（+1/-1，若左右转反了改成 -1）
@@ -107,19 +122,31 @@ gimbal_fetch:
   grab_attempts: 3        # 夹取总尝试次数
   ultra_min_bottom: 400     # 超声波高度门槛（目标下缘低于此 px 弃用超声波）
   # ---- 寻路快慢步 ----
-  fine_cm: 12.0            # 微调模式阈值 cm（<=此距离精细居中）
+  fine_cm: 12.0            # （旧快慢切换阈值，已由 slow_cm 替代，保留兼容）
   fast_walk_mm: 70         # 远距大步幅 mm
   fast_speed: 90           # 远距速度
   walk_speed: 50           # 近距速度
   scan_rounds: 3           # 寻路重扫轮数
+  slow_cm: 25.0            # 快慢切换阈值：距离 <= 此值改用慢速小步 40mm×1，防近距过冲丢目标
+  stop_y: 20.0             # 超声波 y（前向距离 cm）<= 此值停止逼近进入夹取
 
 grab:
   align_x_cm: 0.5          # 夹中对齐 x 阈值 cm
   align_y_cm: 2.0          # 夹中对齐 y 阈值 cm（相对 y_ref）
   y_ref: 15.0              # 检测位前向参考 cm
+  grab_y_min: 6.0          # 夹取前实际 y 下限 cm
+  grab_y_max: 22.0         # 夹取前实际 y 上限 cm
+  fine_step_mm: 10         # 夹取前六足前后微调步长 mm
   move_tol_px: 40          # 判定块被夹走的像素位移
   pos_ratio: 1.5           # 位移阈值 = max(move_tol_px, pos_ratio*radius)
   attempts: 3              # 夹取重试次数
+  align_iter: 20           # 对齐微调最大迭代次数
+  fine_step_mm: 12         # 夹取前前后微调步长 mm
+  big_step_mm: 30          # 距离偏差大时的大微调步长 mm
+  big_radius_gap: 15       # 半径偏差超过此值使用大微调
+  tilt_live: true          # 抬头夹取用实时检测坐标换算夹取点（false 退回固定夹取点）
+  verify_bottom_margin: 40 # 验证：目标中位数 cy 距画面底部小于此值视为被夹到爪边/贴镜头
+  tilt_body_lift: 30       # 抬头夹取前抬机身高度 mm（高处目标该升不降，区别于地面 cy 反馈）
   body_lift_step: 5        # 体态升降步进 mm
   body_lift_max: 70        # 体态升降上限 mm（最高抬升）
   body_lift_min: 0         # 体态升降下限 mm（默认 0，不用负姿态；特殊低处才改负值）
@@ -127,14 +154,36 @@ grab:
   # ---- 倾斜闭环（高处平台路线，官方 grab_blocks.py 同款）----
   tilt_pose: [0, 15, 18]   # 倾斜位机械臂姿态 (x,y,z) cm
   tilt_pitch: -35          # 倾斜位相机俯仰 deg（抬头看，能看见与机身同高的方块）
-  tilt_cy_min: 330         # 倾斜位抓取就绪 cy 窗口下限（现场标定）
-  tilt_cy_max: 430         # 倾斜位抓取就绪 cy 窗口上限（现场标定）
+  tilt_cy_min: 180         # 就绪窗口 cy 下限（以跟踪中心 240 为基准）
+  tilt_cy_max: 300         # 就绪窗口 cy 上限
   tilt_cx_min: 250         # 倾斜位 cx 居中窗口下限
   tilt_cx_max: 390         # 倾斜位 cx 居中窗口上限
   tilt_turn_deg: 4         # 倾斜闭环每次转身角度 deg
   tilt_rounds: 12          # 倾斜闭环最大轮数
   fixed_grab: [0, 25]      # 倾斜位验收后的固定夹取点 (x, y) cm（现场标定：实测还差 5cm，20->25）
-  fixed_grab_z: 5          # 倾斜位固定夹取 z cm（官方 demo 用 +5；映射路线仍用 pick_z）
+  fixed_grab_z: 0.5        # 固定夹取点 z cm（夹子偏高就先往下调）
+  cam_offset_x: 0.0        # 摄像头相对夹爪的水平补偿 cm
+  cam_offset_y: 0.0        # 摄像头相对夹爪的前后补偿 cm
+  cam_offset_z: -2.0       # 摄像头相对夹爪的高度补偿 cm（自动降点测得的稳定值）
+  cam_offset_z_per_radius: -0.02 # 目标半径越大（越近），夹爪高度补偿每 px 变化 cm
+  cam_offset_y_per_radius: 0.0   # 目标半径越大，前后补偿每 px 变化 cm
+  z_step_down: 0.5             # 每次夹取失败后，夹取点再下调 cm
+  z_tries: 3                   # 默认点已经标定，最多再自动下调 3 次
+  grab_ref_cx: 320         # 画面中心 cx 基准
+  grab_ref_cy: 240         # 画面中心 cy 基准
+  grab_x_gain: 0.05        # cx 偏差 -> 夹取 x 的增益 cm/px
+  grab_y_gain: 0.05        # cy 偏差 -> 夹取 y 的增益 cm/px
+  approach_radius: 35      # 半径达到此值停止大距离微调，开始姿态/角度微调
+  grab_radius: 60          # 半径达到此值且 cx/cy 进窗口，开始夹取
+  high_pulse_threshold: 280  # 24号脉宽超过此值走高处夹取，否则走低处 pixel_to_arm_coord
+  cy_ref: 240             # 高度补偿基准 cy
+  height_gain: 0.05       # cy 每偏离基准 1px，z 调整 cm
+  ultra_weight: 0.0       # 超声波与视觉 y 融合权重（先用0，避免把y拉偏）
+  ultra_max_cm: 30        # 超声波参与融合的最大距离 cm
+  base_pulse: 220         # 高度补偿基准 24 号脉宽
+  height_gain_pulse: 0.0  # 24号脉宽高度补偿（先用0，避免用到过期脉宽）
+  area_ref: 3000          # 面积-高度映射基准面积
+  area_z_gain: 0.0        # 面积高度补偿（先用0）
   cy_target: 240           # 高度信号目标 cy（现场标定）
   cy_tol: 50               # cy 容差 px
   cy_sign: 1               # 高度修正方向

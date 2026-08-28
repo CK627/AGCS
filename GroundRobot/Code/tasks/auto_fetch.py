@@ -1,9 +1,9 @@
 #!/usr/bin/python3
 # coding=utf8
-"""自动取物编排：搜索(search) → 纯机械臂夹取(grab)。
+"""自动取物编排：搜索(search) → 官方色块定点夹取(grab_official)。
 
 - search：找目标 + 走路逼近（只动 1-20 + 云台 21/24）；
-- grab：只动 21-25 伸臂夹取（官方 block_fetch/intelligent_fetch 逻辑）。
+- grab_official：搜索到位后直接调用官方 block_fetch.py 色块定点夹取。
 """
 import os
 import sys
@@ -24,11 +24,14 @@ def main():
         capture, stand,
     )
     from agcs_lib.search import Searcher
-    from agcs_lib.grab import Grabber
+    from agcs_lib.grab_official import official_color_grab
     from agcs_lib.sensors import show_status
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--color', default='red', choices=['red', 'green', 'blue', 'yellow', 'cz1'])
+    parser.add_argument('--detector', default='color', choices=['color', 'yolo'])
+    parser.add_argument('--model', default='models/worm_best.onnx', help='yolo 时的 ONNX 模型路径')
+    parser.add_argument('--conf', type=float, default=0.35, help='yolo 置信度阈值')
     args = parser.parse_args()
     color = args.color
 
@@ -48,11 +51,18 @@ def main():
     display = make_display()
     cam = open_camera()
 
+    detector = None
+    if args.detector == 'yolo':
+        from functions.yolo_detect_onnx import YoloDetector
+        detector = YoloDetector(args.model, conf=args.conf)
+
     def detect(min_area=300):
         f = capture(cam)
         if f is None:
             return None
         f = cv2.remap(correct_camera(f, rotate), mapx, mapy, cv2.INTER_LINEAR)
+        if detector is not None:
+            return detector.detect(f, min_area=min_area)
         return detect_color(f, lab, color, min_area=min_area)
 
     stand(ik)
@@ -71,13 +81,18 @@ def main():
         show_status(display, 0)
         return
 
-    # 2) grab：纯机械臂夹取（只动 21-25）
-    grabber = Grabber(board, ik, ak, params, K, R, T, detect, display, ultrasonic=ultrasonic)
-    ok = grabber.run(cy=cy, x_dis=searcher.x_dis, y_dis=searcher.y_dis)
+    # 寻路刚停，等机器人站稳后再进入官方夹取，避免把未停稳的数据传给 IK。
+    time.sleep(1)
+    ok = official_color_grab(
+        board, ak, params, detect, K, R, T,
+        display=display,
+        min_area=int(params['vision'].get('min_area', 500)),
+        attempts=int(params['grab'].get('attempts', 3)),
+    )
 
     cam.camera_close()
     if ok:
-        logger.info('[grab] %s', action_msg('完成', action='%s 已夹取并放下' % color))
+        logger.info('[grab-official] %s', action_msg('完成', action='%s 已夹取' % color))
         show_status(display, 3)
         time.sleep(5)
         show_status(display, 0)

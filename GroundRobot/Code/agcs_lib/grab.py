@@ -1,18 +1,24 @@
 #!/usr/bin/python3
 # coding=utf8
-"""夹取算法（二开）：体态升降 + 24舵机参与 + 重扫锁定 + 纯视觉夹取 + 判定 + 重试。"""
+"""夹取：官方 block_fetch.py 的地面定点夹取。
+
+流程：
+1. 机械臂到检测位 (0,15,5) pitch=-90；
+2. 稳定识别目标；
+3. pixel_to_arm_coord 换算机械臂坐标 (x,y)；
+4. 可及范围检查；
+5. 按官方 block_fetch 的 move() 夹取、抬起、放置、复位；
+6. 夹取后验证目标是否消失。
+"""
 import time
 
-from common.pid import PID
-from agcs_lib.motion import move_body, go_forward, go_back, turn_left, turn_right
+from agcs_lib.motion import go_forward, go_back
 from agcs_lib.vision import pixel_to_arm_coord
-from agcs_lib.sensors import show_status
+from agcs_lib.sensors import show_status, dist_cm
 from agcs_lib.logs import get_logger, action_msg
 
 
 class Grabber:
-    """detect: callable，返回 detect_color 的 dict 或 None。"""
-
     def __init__(self, board, ik, ak, params, K, R, T, detect, display=None, ultrasonic=None):
         self.board = board
         self.ik = ik
@@ -24,61 +30,41 @@ class Grabber:
         self.ultrasonic = ultrasonic
         self.log = get_logger()
 
-        gc = params.get('grab', {})
-        gf = params.get('gimbal_fetch', {})
         arm = params['arm']
         walk = params.get('walk', {})
+        gc = params.get('grab', {})
 
-        self.align_x_cm = float(gc.get('align_x_cm', 0.5))
-        self.align_y_cm = float(gc.get('align_y_cm', 2.0))
-        self.y_ref = float(gc.get('y_ref', 15.0))
-        self.move_tol_px = int(gc.get('move_tol_px', 40))
-        self.pos_ratio = float(gc.get('pos_ratio', 1.5))
-        self.attempts = int(gc.get('attempts', 3))
-        self.body_step = int(gc.get('body_lift_step', 5))
-        self.body_max = int(gc.get('body_lift_max', 30))
-        self.height_iter = int(gc.get('height_max_iter', 12))
-        self.cy_target = int(gc.get('cy_target', 240))
-        self.cy_tol = int(gc.get('cy_tol', 50))
-        self.cy_sign = int(gc.get('cy_sign', 1))
-        self.height_enabled = bool(gc.get('height_enabled', True))
-        self.arm_tilt_step = int(gc.get('arm_tilt_step', 10))
-
-        self.pick_z = float(arm.get('pick_z', -5))
+        self.detect_pose = [float(v) for v in arm.get('detect_pose', [0, 15, 5])]
+        self.pick_z = float(arm.get('pick_z', 5.0))
+        self.grab_pitch = int(gc.get('grab_pitch', -90))
         self.gripper_open = int(arm.get('gripper_open', 120))
-        self.gripper_close = int(arm.get('gripper_close', 600))
+        self.gripper_close = int(arm.get('gripper_close', 550))
+        self.raise_pose = [float(v) for v in arm.get('raise_pose', [12, 24, 5])]
+        self.release_pose = [float(v) for v in arm.get('release_pose', [12, 24, -5])]
         self.reach_x = float(walk.get('reach_x', 8.0))
         self.reach_y = float(walk.get('reach_y', 24.0))
-        self.body_z = 0
-
-        # 抬头夹取（高处目标）参数，参考官方 intelligent_fetch 的抬头思路
-        self.tilt_pose = [float(v) for v in gc.get('tilt_pose', [0, 15, 30])]
-        self.tilt_pitch = int(gc.get('tilt_pitch', 0))
-        self.tilt_cx_min = int(gc.get('tilt_cx_min', 250))
-        self.tilt_cx_max = int(gc.get('tilt_cx_max', 390))
-        self.tilt_cy_min = int(gc.get('tilt_cy_min', 240))
-        self.tilt_cy_max = int(gc.get('tilt_cy_max', 400))
-        self.tilt_turn_deg = int(gc.get('tilt_turn_deg', 4))
-        self.tilt_rounds = int(gc.get('tilt_rounds', 12))
-        self.fixed_grab = [float(v) for v in gc.get('fixed_grab', [0, 25])]
-        self.fixed_grab_z = float(gc.get('fixed_grab_z', 5))
-        self.turn_sign = int(gf.get('turn_sign', 1))
-
-        # 摄像头舵机（21 水平 / 24 俯仰），用于调整后的重扫锁定
-        self.x_dis = 500
-        self.y_dis = 260
-        self.x_pid = PID(P=0.1, I=0.001, D=0.008)
-        self.y_pid = PID(P=0.1, I=0.02, D=0.008)
-        self.pan_step = int(gf.get('pan_step', 40))
-        self.settle = float(gf.get('settle_ms', 280)) / 1000.0
-        self.v_scan = [260, 200, 320, 140, 380, 80, 440]
+        self.attempts = int(gc.get('attempts', 3))
+        self.cy_ref = float(gc.get('cy_ref', 240.0))
+        self.height_gain = float(gc.get('height_gain', 0.05))
+        self.base_pulse = float(gc.get('base_pulse', 220.0))
+        self.height_gain_pulse = float(gc.get('height_gain_pulse', 0.05))
+        self.area_ref = float(gc.get('area_ref', 3000.0))
+        self.area_z_gain = float(gc.get('area_z_gain', 0.0005))
+        self.grab_y_max = float(gc.get('grab_y_max', 18.0))
+        self.grab_y_min = float(gc.get('grab_y_min', 6.0))
+        self.fine_step_mm = int(gc.get('fine_step_mm', 10))
+        self.align_iter = int(gc.get('align_iter', 20))
+        self.ultra_weight = float(gc.get('ultra_weight', 0.2))
+        self.ultra_max_cm = float(gc.get('ultra_max_cm', 50.0))
 
     def _status(self, v):
         show_status(self.display, v)
 
-    def _stable(self, frames=60, need=5, jitter=5):
+    def _stable(self, frames=80, need=5, jitter=5):
+        """连续多帧目标坐标稳定才返回 dict；否则 None。"""
         stable = 0
         old = None
+        last = None
         for _ in range(frames):
             r = self.detect()
             if r is None:
@@ -92,244 +78,132 @@ class Grabber:
             else:
                 stable = 0
             old = c
+            last = r
             if stable >= need:
-                return c
+                return last
             time.sleep(0.05)
         return None
 
-    def set_body(self, dz, reason=None):
-        dz = max(-self.body_max, min(self.body_max, int(dz)))
-        move_body(self.ik, dz)
-        self.body_z = dz
-        self.log.debug('[grab] %s', action_msg('机身调整', reason=reason, action='%+dmm' % dz))
-        time.sleep(0.3)
-        return dz
-
-    def _cy_ok(self, cy):
-        return abs(cy - self.cy_target) <= self.cy_tol
-
-    def _cam(self):
-        self.board.bus_servo_set_position(0.02, [[24, int(self.y_dis)], [21, int(self.x_dis)]])
-
-    def _set_cam(self, x, y):
-        self.x_dis = max(0, min(1000, int(x)))
-        self.y_dis = max(0, min(1000, int(y)))
-        self._cam()
-        time.sleep(self.settle)
-
-    def _track(self, center):
-        cx, cy = center
-        self.x_pid.SetPoint = 320
-        self.x_pid.update(cx)
-        self.y_pid.SetPoint = 240
-        self.y_pid.update(cy)
-        self._set_cam(self.x_dis + self.x_pid.output, self.y_dis + self.y_pid.output)
-        return abs(cx - 320) < 30 and abs(cy - 240) < 30
+    def _coord(self, center):
+        return pixel_to_arm_coord(self.K, self.R, self.T, center,
+                                  initial_coord=(self.detect_pose[0], self.detect_pose[1]))
 
     def _rescan(self):
-        """21+24 双轴扫描找回目标。"""
-        pans = list(range(500 + self.pan_step, 1001, self.pan_step)) + \
-               list(range(1000, -1, -self.pan_step)) + \
-               list(range(0, 500, self.pan_step))
-        for y in self.v_scan:
-            self._set_cam(500, y)
-            for x in pans:
-                self._set_cam(x, y)
-                r = self.detect()
-                if r is not None:
-                    return r
-        return None
-
-    def adjust_height(self, cy):
-        """体态(1-20)优先，到极限用 24 舵机；每次调整后重扫并锁定。返回 (ok, alarm)。"""
-        self.log.info('[grab] %s', action_msg(
-            '开始高度自适应', reason='cy=%dpx 偏离目标 %dpx' % (cy, self.cy_target),
-            action='cy=%dpx 目标cy=%dpx' % (cy, self.cy_target)))
-        cur = cy
-        for i in range(self.height_iter):
-            if self._cy_ok(cur):
-                return True, False
-            step = self.body_step * self.cy_sign
-            if cur < self.cy_target:
-                if self.body_z + step <= self.body_max:
-                    self.set_body(self.body_z + step, reason='cy=%dpx 低于目标（目标偏高/远），抬高机身' % cur)
-                else:
-                    self._set_cam(self.x_dis, self.y_dis + self.arm_tilt_step)
-            else:
-                if self.body_z - step >= -self.body_max:
-                    self.set_body(self.body_z - step, reason='cy=%dpx 高于目标（目标偏低/近），降低机身' % cur)
-                else:
-                    self._set_cam(self.x_dis, self.y_dis - self.arm_tilt_step)
+        """目标突然丢失时，用 24 号上下扫重新找回。"""
+        self.log.info('[grab] %s', action_msg('重扫找回目标', action='21=500，24上下扫'))
+        self.x_dis = 500
+        best = None
+        best_y = 0
+        best_score = 10 ** 9
+        for y in range(0, 1001, 20):
+            self.y_dis = y
+            self.board.bus_servo_set_position(0.03, [[24, y], [21, self.x_dis]])
+            time.sleep(0.03)
             r = self.detect()
-            if r is None:
-                self._set_cam(self.found_x, self.found_y)
-                r = self.detect()
-            if r is None:
-                r = self._rescan()
-            if r is None:
-                return False, True
-            self._track(r['center'])
-            cur = r['center'][1]
-            time.sleep(0.25)
-        return False, True
+            if r is not None:
+                cx, cy = r['center']
+                score = abs(cx - 320) + abs(cy - 240)
+                if score < best_score:
+                    best = r
+                    best_y = y
+                    best_score = score
+        if best is not None:
+            self.y_dis = best_y
+            self.board.bus_servo_set_position(0.3, [[24, best_y], [21, self.x_dis]])
+            time.sleep(0.3)
+        return best
 
-    def _coord(self, center):
-        return pixel_to_arm_coord(self.K, self.R, self.T, center, initial_coord=(0, 15, 5))
+    def _target_xyz(self, center, area=None):
+        """当前先用手眼标定 K/R/T 换算 x,y，z 用 pick_z；后续可替换为更准的手眼标定。"""
+        x, y = self._coord(center)
+        d = dist_cm(self.ultrasonic)
+        if 0 < d < self.ultra_max_cm:
+            y = y * (1.0 - self.ultra_weight) + d * self.ultra_weight
+            self.log.debug('[grab] %s', action_msg('超声波协同', action='视觉y=%.1f 超声=%.1f 融合y=%.1f' % (y, d, y)))
+        z = self.pick_z + self.height_gain_pulse * (self.y_dis - self.base_pulse)
+        if area is not None:
+            z += self.area_z_gain * (area - self.area_ref)
+        return x, y, z
 
-    def _aligned(self, x, y):
-        return abs(x) <= self.align_x_cm and abs(y - self.y_ref) <= self.align_y_cm
-
-    def _grab_once(self, x, y):
-        res = self.ak.setPitchRangeMoving((x, y + 2.0, self.pick_z), -90, -90, 100, 1)
-        if res is False:
+    def _grab_once(self, x, y, z):
+        """官方 block_fetch.py 的 move() 动作。"""
+        if self.ak.setPitchRangeMoving((x, y, z), self.grab_pitch, -90, 100, 1) is False:
             return False
-        time.sleep(1.5)
+        time.sleep(3)
+
         self.board.bus_servo_set_position(0.5, [[25, self.gripper_close]])
+        time.sleep(2)
+
+        self.ak.setPitchRangeMoving(tuple(self.raise_pose), self.grab_pitch, -90, 100, 1.5)
         time.sleep(1.5)
-        self.ak.setPitchRangeMoving((12, 24, 5), -90, -90, 100, 1.5)
-        time.sleep(1.5)
-        self.ak.setPitchRangeMoving((12, 24, -5), -90, -90, 100, 1)
+        self.ak.setPitchRangeMoving(tuple(self.release_pose), self.grab_pitch, -90, 100, 1)
         time.sleep(1)
+
         self.board.bus_servo_set_position(0.5, [[25, self.gripper_open]])
         time.sleep(0.5)
-        self.ak.setPitchRangeMoving((12, 24, 5), -90, -90, 100, 1)
+
+        self.ak.setPitchRangeMoving(tuple(self.raise_pose), self.grab_pitch, -90, 100, 1)
         time.sleep(1)
-        self.ak.setPitchRangeMoving((0, 15, 5), -90, -90, 100, 1.5)
+        self.ak.setPitchRangeMoving(tuple(self.detect_pose), self.grab_pitch, -90, 100, 1.5)
         time.sleep(1.5)
         return True
 
-    def _verify(self, before):
+    def _verify(self):
+        """夹取后目标消失才认为成功。"""
         for _ in range(5):
             r = self.detect()
             if r is None:
                 return True
-            c = r['center']
-            radius = max(int(r.get('radius', 20)), 1)
-            tol = max(self.move_tol_px, int(self.pos_ratio * radius))
-            if abs(c[0] - before[0]) > tol or abs(c[1] - before[1]) > tol:
-                return True
             time.sleep(0.1)
-        # -90 检测位没夹到，尝试抬头夹取（高处目标）
-        self.log.info('[grab] %s', action_msg('低头未夹到', reason='目标可能在高处', action='转抬头夹取'))
-        return self._run_tilted()
-
-    def _turn_body(self, deg):
-        if deg == 0:
-            return
-        if self.turn_sign > 0:
-            (turn_left if deg > 0 else turn_right)(self.ik, abs(deg), 60)
-        else:
-            (turn_right if deg > 0 else turn_left)(self.ik, abs(deg), 60)
-
-    def _run_tilted(self):
-        """抬头夹取（高处目标）：抬头检测 → cx 居中 → 固定夹取点夹取。"""
-        self.ak.setPitchRangeMoving(tuple(self.tilt_pose), self.tilt_pitch, -90, 100, 2)
-        time.sleep(2)
-        self.log.info('[grab] %s', action_msg(
-            '抬头检测', reason='-90检测位未找到目标',
-            action='切抬头位 %s pitch=%d°' % (self.tilt_pose, self.tilt_pitch)))
-        for round_no in range(self.tilt_rounds):
-            r = self._stable(frames=30, need=3)
-            if r is None:
-                self.log.debug('[grab] %s', action_msg('抬头未检测到', action='转身 %d° 重找' % self.tilt_turn_deg))
-                self._turn_body(self.tilt_turn_deg)
-                time.sleep(0.6)
-                continue
-            cx, cy = r['center']
-            self.log.debug('[grab] %s', action_msg(
-                '抬头定位', action='第 %d/%d 轮 cx=%dpx cy=%dpx' % (round_no + 1, self.tilt_rounds, cx, cy)))
-            if cx < self.tilt_cx_min:
-                self._turn_body(self.tilt_turn_deg)
-                time.sleep(0.4)
-                continue
-            if cx > self.tilt_cx_max:
-                self._turn_body(-self.tilt_turn_deg)
-                time.sleep(0.4)
-                continue
-            if self.tilt_cy_min <= cy <= self.tilt_cy_max:
-                fx, fy = self.fixed_grab
-                self.log.info('[grab] %s', action_msg(
-                    '抬头夹取', action='固定夹取点 (%.1fcm, %.1fcm, %.1fcm)' % (fx, fy, self.fixed_grab_z)))
-                res = self.ak.setPitchRangeMoving((fx, fy + 2.0, self.fixed_grab_z), -90, -90, 100, 2)
-                if res is False:
-                    return False
-                time.sleep(2)
-                self.board.bus_servo_set_position(0.5, [[25, self.gripper_close]])
-                time.sleep(0.5)
-                self.ak.setPitchRangeMoving((fx, fy, 8), -90, -90, 100, 1)
-                time.sleep(1)
-                self.ak.setPitchRangeMoving((12, 24, -5), -90, -90, 100, 1.5)
-                time.sleep(1.5)
-                self.board.bus_servo_set_position(0.5, [[25, self.gripper_open]])
-                time.sleep(0.5)
-                self.ak.setPitchRangeMoving((0, 15, 5), -90, -90, 100, 1.5)
-                time.sleep(1.5)
-                self.log.info('[grab] %s', action_msg('夹取成功', reason='抬头目标进入窗口'))
-                return True
         return False
 
     def run(self, cy=None, x_dis=None, y_dis=None):
+        self.y_dis = int(y_dis if y_dis is not None else 260)
+        self.x_dis = int(x_dis if x_dis is not None else 500)
         self.board.bus_servo_set_position(0.5, [[25, self.gripper_open]])
-        if x_dis is not None:
-            self.x_dis = x_dis
-        if y_dis is not None:
-            self.y_dis = y_dis
-        self.found_x = self.x_dis
-        self.found_y = self.y_dis
-
-        if self.height_enabled and cy is not None and not self._cy_ok(cy):
-            ok, alarm = self.adjust_height(cy)
-            if alarm:
-                self.log.info('[grab] %s', action_msg(
-                    '高度未达标', reason='cy=%dpx 目标cy=%dpx' % (cy, self.cy_target),
-                    action='保持当前体态继续夹取'))
-
-        # 切回检测位（相机朝下 pitch -90），保证 pixel_to_arm_coord 的标定姿态一致
-        self.ak.setPitchRangeMoving((0, 15, 5), -90, -90, 100, 2)
-        time.sleep(2)
+        # 进入夹取时不再用 IK 切检测位，保持寻路/24扫描给出的相机角度
+        self.board.bus_servo_set_position(0.5, [[24, self.y_dis], [21, self.x_dis]])
+        time.sleep(1)
 
         for attempt in range(self.attempts):
             self.log.debug('[grab] %s', action_msg('夹取尝试', action='第 %d/%d 次' % (attempt + 1, self.attempts)))
             self._status(2)
-            center = self._stable()
-            if center is None:
-                self.log.info('[grab] %s', action_msg('未检测到目标', reason='稳定检测未找到目标'))
-                continue
 
-            x, y = self._coord(center)
-            self.log.debug('[grab] %s', action_msg('坐标计算', action='像素=%s x=%.1fcm y=%.1fcm' % (center, x, y)))
-
-            # 对齐微调：y 偏离 y_ref 则前进/后退
-            for _ in range(20):
-                if self._aligned(x, y):
-                    break
-                r = self.detect()
+            r = self._stable()
+            if r is None:
+                self.log.info('[grab] %s', action_msg('目标丢失，进入重扫'))
+                r = self._rescan()
                 if r is None:
+                    self.log.info('[grab] %s', action_msg('重扫后仍未找到目标'))
+                    continue
+
+            x, y = self._coord(r['center'])
+            self.log.debug('[grab] %s', action_msg('坐标计算', action='像素=%s x=%.1fcm y=%.1fcm' % (r['center'], x, y)))
+
+            x, y, z = self._target_xyz(r['center'], r.get('area', 0))
+            self.log.debug('[grab] %s', action_msg('目标xyz', action='x=%.1f y=%.1f z=%.1f' % (x, y, z)))
+
+            # 真实六足微调：y 太大就前进，y 太小就后退，直到 y 进入 [grab_y_min, grab_y_max]
+            for _ in range(self.align_iter):
+                if self.grab_y_min <= y <= self.grab_y_max:
                     break
-                x, y = self._coord(r['center'])
-                if y > self.y_ref + self.align_y_cm:
-                    self.log.debug('[grab] %s', action_msg('对齐', reason='y=%.1fcm 偏远' % y, action='前进 12mm'))
-                    go_forward(self.ik, 12, 50)
-                elif y < self.y_ref - self.align_y_cm:
-                    self.log.debug('[grab] %s', action_msg('对齐', reason='y=%.1fcm 偏近' % y, action='后退 12mm'))
-                    go_back(self.ik, 12, 50)
+                r2 = self.detect()
+                if r2 is None:
+                    break
+                x, y, z = self._target_xyz(r2['center'], r2.get('area', 0))
+                if y > self.grab_y_max:
+                    self.log.debug('[grab] %s', action_msg('六足微调', reason='y=%.1f>%.1f 偏远' % (y, self.grab_y_max), action='前进 %dmm' % self.fine_step_mm))
+                    go_forward(self.ik, self.fine_step_mm, 50)
+                elif y < self.grab_y_min:
+                    self.log.debug('[grab] %s', action_msg('六足微调', reason='y=%.1f<%.1f 偏近' % (y, self.grab_y_min), action='后退 %dmm' % self.fine_step_mm))
+                    go_back(self.ik, self.fine_step_mm, 50)
                 time.sleep(0.4)
 
-            if abs(x) > self.reach_x or y > self.reach_y or y < 0:
-                self.log.info('[grab] %s', action_msg('超出可及范围', reason='x=%.1fcm y=%.1fcm' % (x, y), action='中止本次'))
+            if not self._grab_once(x, y, z):
+                self.log.info('[grab] %s', action_msg('夹取失败', reason='逆运动学无解'))
                 continue
-
-            if not self._grab_once(x, y):
-                self.log.info('[grab] %s', action_msg('夹取失败', reason='逆运动学无解', action='中止本次'))
-                continue
-
-            if self._verify(center):
-                self._status(3)
-                self.log.info('[grab] %s', action_msg('夹取成功', reason='目标消失或明显位移'))
-                return True
-            self.log.info('[grab] %s', action_msg('未夹到', reason='目标未移动', action='回到靠近位置'))
-            self.set_body(0)
-            self.ak.setPitchRangeMoving((0, 15, 5), -90, -90, 100, 2)
-            time.sleep(1.5)
+            self._status(3)
+            self.log.info('[grab] %s', action_msg('夹取完成', reason='已执行 IK 夹取动作'))
+            return True
 
         return False
