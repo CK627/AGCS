@@ -42,13 +42,17 @@ class ColorTracker:
     def _update(self, r):
         cx, cy = r['center']
         old_x, old_y = self.x_dis, self.y_dis
-        self.x_pid.SetPoint = 320
-        self.x_pid.update(cx)
-        self.y_pid.SetPoint = 240
-        self.y_pid.update(cy)
-
-        self.x_dis = max(self.pan_min, min(self.pan_max, self.x_dis + int(self.x_pid.output)))
-        self.y_dis = max(self.tilt_min, min(self.tilt_max, self.y_dis + int(self.y_pid.output)))
+        # 死区：目标已居中就不更新 PID，并清积分，避免积分累积过冲把目标追出画面
+        if abs(cx - 320) < self.dead_x and abs(cy - 240) < self.dead_y:
+            self.x_pid.clear()
+            self.y_pid.clear()
+        else:
+            self.x_pid.SetPoint = 320
+            self.x_pid.update(cx)
+            self.y_pid.SetPoint = 240
+            self.y_pid.update(cy)
+            self.x_dis = max(self.pan_min, min(self.pan_max, self.x_dis + int(self.x_pid.output)))
+            self.y_dis = max(self.tilt_min, min(self.tilt_max, self.y_dis + int(self.y_pid.output)))
         if old_x != self.x_dis or old_y != self.y_dis:
             self.log.debug('[track] %s', action_msg(
                 '云台调整', action='21号 %d->%d，24号 %d->%d' % (old_x, self.x_dis, old_y, self.y_dis)))

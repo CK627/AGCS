@@ -60,6 +60,8 @@ class Searcher:
         self.radius_per_pulse = float(gf.get('radius_per_pulse', 0.0273))
         self.stop_pulse_min = float(gf.get('stop_pulse_min', 120.0))
         self.slow_radius = float(gf.get('slow_radius', 35.0))
+        # 逼近停止面积阈值：面积到该值视为目标够近，停止逼近交给夹取
+        self.approach_area_threshold = float(params.get('grab', {}).get('approach_area_threshold', 1400.0))
         self.stop_y = float(gf.get('stop_y', 20.0))
         self.pan_band = int(gf.get('pan_band', 80))
         self.pan_turn_deg = int(gf.get('pan_turn_deg', 5))
@@ -225,7 +227,11 @@ class Searcher:
             time.sleep(0.1)
 
     def _vertical_sweep(self, x):
-        """固定 21 号脉宽为 x，让 24 号平滑扫一遍；找到返回 dict，否则 None。"""
+        """固定 21 号脉宽为 x，24 号从 200 平滑扫到 1000（步长 200 档）。"""
+        # 先把 24 号复位到起始档位，保证每次扫描都从同一起点开始
+        self.y_dis = self.tilt_pulses[0]
+        self.board.bus_servo_set_position(0.3, [[24, self.y_dis], [21, int(x)]])
+        time.sleep(self.settle)
         for y in self.tilt_pulses:
             r = self._smooth_tilt_to(x, y)
             if r is not None:
@@ -254,6 +260,10 @@ class Searcher:
             if x == 500:
                 continue
             self.log.info('[search] %s', action_msg('扫描', action='21号脉宽=%d，24号上下扫描' % x))
+            # 转 21 号之前，先把 24 号复位到起始档位，避免带着上一次的 1000 一起转
+            self.y_dis = self.tilt_pulses[0]
+            self.board.bus_servo_set_position(0.3, [[24, self.y_dis], [21, int(self.x_dis)]])
+            time.sleep(self.settle)
             r = self._smooth_pan_to(x)
             if r is not None:
                 return r
@@ -263,30 +273,38 @@ class Searcher:
         return None
 
     def _approach(self, det):
-        """找到目标后：先转身体对准，再启动跟踪线程持续锁定并逼近。"""
+        """找到目标后：追踪线程贯穿转身 + 逼近，面积到阈值停止交给夹取。"""
         cx, cy = det['center']
         self.log.info('[search] %s', action_msg(
             '找到目标', action='云台水平=%d脉宽 云台俯仰=%d脉宽 中心x=%dpx 中心y=%dpx 面积=%d像素'
             % (self.x_dis, self.y_dis, cx, cy, det['area'])))
 
-        # 按云台水平偏移 + 画面水平偏移，把六足身体转到目标方向
-        target_dir = (self.x_dis - 500) / 4.1667 + (320 - cx) / self.px_per_deg
-        deg = target_dir * self.turn_sign
-        remaining = abs(deg)
-        while remaining > 3:
-            step = min(self.turn_deg, remaining)
-            self._turn_body(step if deg > 0 else -step)
-            remaining -= step
-            time.sleep(0.5)
-
-        # 身体对准后，21 回中；24 保持找到目标时的俯仰，交给跟踪线程持续锁定
-        self._set_cam(500, self.y_dis)
-        self.tracker.start(500, self.y_dis)
+        # 先启动追踪线程（贯穿转身 + 逼近），让 21/24 持续追踪目标居中
+        self.tracker.start(self.x_dis, self.y_dis)
         self._stop_event.clear()
         self._obstacle_thread = threading.Thread(
             target=self._obstacle_monitor, name='obstacle-monitor', daemon=True)
         self._obstacle_thread.start()
 
+        # 转身对准：追踪线程让 21 号跟着目标，转身体让 21 号回中（身体朝目标）
+        for _ in range(self.max_approach):
+            if self._stop_event.is_set():
+                self.log.info('[search] %s', action_msg('停止寻路', reason='检测到障碍物'))
+                return None, None
+            r = self.tracker.latest()
+            if r is None:
+                time.sleep(0.05)
+                continue
+            dx = int(r['x_dis']) - 500
+            if abs(dx) <= self.pan_band:
+                break  # 21 接近 500，身体已对准目标
+            if dx > 0:
+                self._turn_body(self.pan_turn_deg)
+            else:
+                self._turn_body(-self.pan_turn_deg)
+            time.sleep(0.4)
+
+        # 逼近：前进 + 面积到阈值停止
         for step in range(self.max_approach):
             if self._stop_event.is_set():
                 self.log.info('[search] %s', action_msg('停止寻路', reason='检测到障碍物'))
@@ -302,44 +320,34 @@ class Searcher:
 
             cx, cy = r['center']
             radius = max(int(r.get('radius', 20)), 1)
-            pulse = int(r.get('y_dis', self.base_pulse))
+            area = int(r.get('area', 0))
             dx = int(r['x_dis']) - 500
-            target_radius = max(5.0, self.near_radius - self.radius_per_pulse * (pulse - self.base_pulse))
 
             self.log.info('[search] %s', action_msg(
                 '追踪 #%d' % (step + 1),
-                action='云台水平=%d脉宽 云台俯仰=%d脉宽 中心x=%dpx 中心y=%dpx 半径=%dpx 目标半径=%.1fpx 21偏移=%+d'
-                % (r['x_dis'], pulse, cx, cy, radius, target_radius, dx)))
+                action='云台水平=%d脉宽 云台俯仰=%d脉宽 中心x=%dpx 中心y=%dpx 半径=%dpx 21偏移=%+d 面积=%d'
+                % (r['x_dis'], r.get('y_dis', self.base_pulse), cx, cy, radius, dx, area)))
 
-            # 地面目标逼近到脚下时，24 号会往下压；低于阈值就停，避免走过丢目标
-            if pulse < self.stop_pulse_min:
+            # 面积到阈值：目标够近，停止逼近交给夹取
+            if area >= self.approach_area_threshold:
                 self.log.info('[search] %s', action_msg(
-                    '到位(24过低)', reason='pulse=%d < %d' % (pulse, self.stop_pulse_min),
-                    action='停止逼近'))
+                    '到位(面积阈值)', reason='面积=%d >= %d' % (area, self.approach_area_threshold),
+                    action='停止逼近交给夹取'))
                 return (cx, cy), cy
 
-            d = dist_cm(self.ultrasonic)
-            if 0 < d <= self.stop_y:
-                self.log.info('[search] %s', action_msg(
-                    '到位(超声y)', reason='y=%.1fcm <= %.1fcm' % (d, self.stop_y),
-                    action='停止逼近'))
-                return (cx, cy), cy
-
-            # 21 号偏离 500 太多：动六足把摄像头方向拉回朝前，而不是让云台顶到边界
+            # 21 号偏离 500 太多：转身体把摄像头方向拉回朝前（方向与转身对准循环一致）
             if dx > self.pan_band:
-                self.log.info('[search] %s', action_msg('摄像头偏右', action='身体右转 %d° 让21回中' % self.pan_turn_deg))
-                self._turn_body(-self.pan_turn_deg)
-                time.sleep(0.4)
-                continue
-            if dx < -self.pan_band:
-                self.log.info('[search] %s', action_msg('摄像头偏左', action='身体左转 %d° 让21回中' % self.pan_turn_deg))
+                self.log.info('[search] %s', action_msg('摄像头偏右', action='身体左转 %d° 让21回中' % self.pan_turn_deg))
                 self._turn_body(self.pan_turn_deg)
                 time.sleep(0.4)
                 continue
+            if dx < -self.pan_band:
+                self.log.info('[search] %s', action_msg('摄像头偏左', action='身体右转 %d° 让21回中' % self.pan_turn_deg))
+                self._turn_body(-self.pan_turn_deg)
+                time.sleep(0.4)
+                continue
 
-            if radius >= target_radius:
-                return (cx, cy), cy
-
+            # 前进逼近
             if radius >= self.slow_radius:
                 self.log.debug('[search] %s', action_msg(
                     '接近中', reason='半径 %dpx >= %dpx 慢速' % (radius, self.slow_radius),
@@ -361,8 +369,12 @@ class Searcher:
             self.log.info('[search] %s', action_msg('目标未在附近', reason='21/24 全范围扫描后未发现目标'))
             return None, None
         result = self._approach(det)
+        # 追踪线程和避障线程贯穿到夹取阶段，这里不 stop（由上层在夹取结束后清理）
+        return result
+
+    def stop(self):
+        """夹取结束后清理：停止追踪线程和避障线程。"""
         self._stop_event.set()
         if self._obstacle_thread is not None and self._obstacle_thread.is_alive():
             self._obstacle_thread.join(timeout=1.0)
         self.tracker.stop()
-        return result

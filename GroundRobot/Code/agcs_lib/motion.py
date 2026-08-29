@@ -23,6 +23,15 @@ def move_body(ik, dz, speed=300):
     return dz
 
 
+def move_body_xyz(ik, dx=0, dy=0, dz=0, speed=100):
+    """六足 IK 精确平移（相对初始站姿的绝对偏移，单位 mm）。
+
+    坐标：dx 负=前进、dx 正=后退；dy 正=右移；dz 正=升高。
+    比步态走（go_forward）快且精确，适合夹取前的 mm 级微调。
+    """
+    ik.moveBody(ik.initial_pos, [int(dx), int(dy), int(dz)], [0, 0, 0], speed)
+
+
 def turn_left(ik, angle=10, speed=60):
     ik.turn_left(ik.initial_pos, 2, angle, speed, 1)
 

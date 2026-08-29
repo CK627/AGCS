@@ -56,7 +56,7 @@ def get_area_max_contour(contours, min_area=100):
     return area_max_contour, max_area
 
 
-def detect_color(img, lab_data, color='red', size=(640, 480), min_area=500):
+def detect_color(img, lab_data, color='red', size=(320, 240), min_area=50):
     """在 img 中检测指定颜色目标（LAB 阈值），返回 dict(center, radius, area, color, contour)。"""
     img_copy = img.copy()
     img_h, img_w = img.shape[:2]
@@ -67,7 +67,7 @@ def detect_color(img, lab_data, color='red', size=(640, 480), min_area=500):
     cv2.merge(_ch, _ycrcb)
     img_copy = cv2.cvtColor(_ycrcb, cv2.COLOR_YCR_CB2BGR)
     frame_resize = cv2.resize(img_copy, size, interpolation=cv2.INTER_NEAREST)
-    frame_gb = cv2.GaussianBlur(frame_resize, (3, 3), 3)
+    frame_gb = cv2.GaussianBlur(frame_resize, (5, 5), 5)
     frame_lab = cv2.cvtColor(frame_gb, cv2.COLOR_BGR2LAB)
     frame_mask = cv2.inRange(
         frame_lab,

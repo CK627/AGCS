@@ -48,10 +48,10 @@ arm:
   reset_pulses: {21: 500, 22: 705, 23: 90, 24: 330, 25: 700}  # 复位/检测位各舵机脉宽（官方默认）
 
 search:
-  pan_pulses: [0, 200, 400, 600, 800, 1000]  # 底座(21)水平扫描档位：从0开始每次+200到1000
+  pan_pulses: [300, 200, 700, 900, 1000]  # 底座(21)水平扫描档位：500向左300→200，再向右700→900→1000
   tilt_scan_step: 20        # 24号平滑扫描每一步的脉宽增量
   pan_step_ms: 350           # 每档转动时间 ms
-  tilt_pulses: [0, 200, 400, 600, 800, 1000]  # 相机俯仰(24)扫描档位：从0开始每次+200到1000
+  tilt_pulses: [200, 400, 600, 800, 1000]  # 相机俯仰(24)扫描档位：200-1000 每次+200
   tilt_step_ms: 350          # 每档转动时间 ms
   align_tol: 50              # 目标中心距画面中心容差 px
   align_step: 40             # 对齐微调步长脉宽
@@ -134,6 +134,7 @@ grab:
   align_x_cm: 0.5          # 夹中对齐 x 阈值 cm
   align_y_cm: 2.0          # 夹中对齐 y 阈值 cm（相对 y_ref）
   y_ref: 15.0              # 检测位前向参考 cm
+  y_forward: 0.0           # 夹取点前伸补偿 cm（正=更靠前；官方+2已过度，改0待标定）
   grab_y_min: 6.0          # 夹取前实际 y 下限 cm
   grab_y_max: 22.0         # 夹取前实际 y 上限 cm
   fine_step_mm: 10         # 夹取前六足前后微调步长 mm
@@ -152,16 +153,34 @@ grab:
   body_lift_min: 0         # 体态升降下限 mm（默认 0，不用负姿态；特殊低处才改负值）
   height_max_iter: 12      # 高度调整迭代上限
   # ---- 倾斜闭环（高处平台路线，官方 grab_blocks.py 同款）----
-  tilt_pose: [0, 15, 18]   # 倾斜位机械臂姿态 (x,y,z) cm
-  tilt_pitch: -35          # 倾斜位相机俯仰 deg（抬头看，能看见与机身同高的方块）
+  tilt_pose: [0, 17, 9]    # 倾斜位机械臂姿态 (x,y,z) cm（目标前方17cm、垫高9cm）
+  tilt_pitch: -60          # 倾斜位相机俯仰 deg（朝前下方看 9cm 高目标）
   tilt_cy_min: 180         # 就绪窗口 cy 下限（以跟踪中心 240 为基准）
-  tilt_cy_max: 300         # 就绪窗口 cy 上限
+  tilt_cy_max: 420         # 就绪窗口 cy 上限（放宽，目标偏下 cy~400）
   tilt_cx_min: 250         # 倾斜位 cx 居中窗口下限
   tilt_cx_max: 390         # 倾斜位 cx 居中窗口上限
   tilt_turn_deg: 4         # 倾斜闭环每次转身角度 deg
   tilt_rounds: 12          # 倾斜闭环最大轮数
-  fixed_grab: [0, 25]      # 倾斜位验收后的固定夹取点 (x, y) cm（现场标定：实测还差 5cm，20->25）
-  fixed_grab_z: 0.5        # 固定夹取点 z cm（夹子偏高就先往下调）
+  fixed_grab: [0, 17]      # 倾斜位验收后的固定夹取点 (x, y) cm（目标前方17cm）
+  fixed_grab_z: 9          # 固定夹取点 z cm（目标垫高9cm）
+  # ---- 视觉伺服夹取（面积近大远小 + 囊括判断）----
+  servo_pitch: 0           # 夹取俯仰角 deg（水平朝前，目标在正前方）
+  servo_z: 9               # 夹取高度 cm
+  servo_y_start: 8         # 前伸起始 y cm
+  servo_y_max: 22          # 前伸最大 y cm
+  servo_step_cm: 1         # 前伸步长 cm
+  servo_min_area: 5000     # 峰值判断最小面积门槛（面积<此值不判峰值）
+  servo_fall_ratio: 0.85   # 面积回落比例（面积<峰值*此值=到峰值夹取）
+  servo_fall_frames: 3     # 连续回落帧数（判峰值）
+  approach_area_threshold: 1400  # 寻路停止面积阈值（目标够近就停，交给夹取）
+  servo_area_threshold: 1500  # 精夹取面积阈值（320x240 检测，贴近夹爪）
+  servo_z_step: 0.5           # 精夹取下调 z 步长 cm
+  servo_z_tries: 10           # 精夹取最大下调次数
+  # ---- 红外(VL53L0X)算 z 高度 ----
+  tof_height: 13.5         # 红外离地高度 cm
+  tof_forward: 30.0        # 红外到夹爪水平距离 cm（机械臂伸直）
+  servo_raise_z: 15        # 夹取后抬起 z cm
+  servo_place_pulse: 800   # 转 21 放置脉宽
   cam_offset_x: 0.0        # 摄像头相对夹爪的水平补偿 cm
   cam_offset_y: 0.0        # 摄像头相对夹爪的前后补偿 cm
   cam_offset_z: -2.0       # 摄像头相对夹爪的高度补偿 cm（自动降点测得的稳定值）
@@ -177,7 +196,7 @@ grab:
   grab_radius: 60          # 半径达到此值且 cx/cy 进窗口，开始夹取
   high_pulse_threshold: 280  # 24号脉宽超过此值走高处夹取，否则走低处 pixel_to_arm_coord
   cy_ref: 240             # 高度补偿基准 cy
-  height_gain: 0.05       # cy 每偏离基准 1px，z 调整 cm
+  height_gain: 0.0        # cy 每偏离基准 1px，z 调整 cm（未标定，先 0 禁用；标定后填符号+大小）
   ultra_weight: 0.0       # 超声波与视觉 y 融合权重（先用0，避免把y拉偏）
   ultra_max_cm: 30        # 超声波参与融合的最大距离 cm
   base_pulse: 220         # 高度补偿基准 24 号脉宽

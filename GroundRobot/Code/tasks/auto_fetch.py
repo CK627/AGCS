@@ -24,7 +24,7 @@ def main():
         capture, stand,
     )
     from agcs_lib.search import Searcher
-    from agcs_lib.grab_official import official_color_grab
+    from agcs_lib.grab import Grabber
     from agcs_lib.sensors import show_status
 
     parser = argparse.ArgumentParser()
@@ -81,18 +81,22 @@ def main():
         show_status(display, 0)
         return
 
-    # 寻路刚停，等机器人站稳后再进入官方夹取，避免把未停稳的数据传给 IK。
+    # 寻路刚停，停止追踪（夹取阶段不再调 21/24 居中，只判断面积夹取，避免 21 号抽搐）
+    searcher.tracker.stop()
     time.sleep(1)
-    ok = official_color_grab(
-        board, ak, params, detect, K, R, T,
-        display=display,
-        min_area=int(params['vision'].get('min_area', 500)),
-        attempts=int(params['grab'].get('attempts', 3)),
-    )
+    grabber = Grabber(board, ik, ak, params, K, R, T, detect, display, ultrasonic=ultrasonic)
+    ok = grabber.run(cy=cy, x_dis=searcher.x_dis, y_dis=searcher.y_dis)
+    searcher.stop()  # 夹取结束，清理追踪线程 + 避障线程
+
+    # 归位到官方初始位置（机械臂复位 + 夹爪张开）
+    arm_pulses = params['arm']['reset_pulses']
+    board.bus_servo_set_position(1.5, [[sid, arm_pulses[sid]] for sid in [21, 22, 23, 24]])
+    board.bus_servo_set_position(1.0, [[25, int(params['arm'].get('gripper_open', 120))]])
+    time.sleep(1.5)
 
     cam.camera_close()
     if ok:
-        logger.info('[grab-official] %s', action_msg('完成', action='%s 已夹取' % color))
+        logger.info('[grab] %s', action_msg('完成', action='%s 已夹取' % color))
         show_status(display, 3)
         time.sleep(5)
         show_status(display, 0)
