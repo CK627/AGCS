@@ -32,7 +32,7 @@ from agcs_lib import (
     capture, correct_camera,
 )
 from agcs_lib.logs import setup_logger
-from agcs_lib.search import Searcher
+from agcs_lib.restore import Restore
 
 try:
     from communication import task_server
@@ -112,16 +112,16 @@ def main():
     logger.info('[2] 等待 5 秒…')
     time.sleep(5)
 
-    # ---------------- 3) 调用 search.py 恢复初始状态 + 摄像头启动 ----------------
-    searcher = Searcher(board, ik, ak, params, detect=lambda: None)
+    # ---------------- 3) 调用 Restore 恢复初始状态 + 摄像头启动 ----------------
+    restore = Restore(board, ik, ak, params)
     try:
-        searcher.restore_initial_state()
+        restore.restore_initial_state()
         logger.info('[3] PASS 恢复初始状态')
     except Exception as e:
         logger.error('[3] FAIL 恢复初始状态: %s', e)
         return 1
     try:
-        cam, mapx, mapy, rotate = searcher.start_camera()
+        cam, mapx, mapy, rotate = restore.start_camera()
         logger.info('[3] PASS 摄像头启动（取帧正常，畸变校正映射已加载）')
     except Exception as e:
         logger.error('[3] FAIL 摄像头启动: %s', e)
@@ -140,7 +140,7 @@ def main():
     except EOFError:
         time.sleep(2)
     stop_video.set()
-    searcher.close_camera()
+    restore.close_camera()
     logger.info('[4] 结束：摄像头已关闭')
     return 0
 
