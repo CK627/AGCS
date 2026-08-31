@@ -15,7 +15,7 @@ BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$BASE/../.." && pwd)"
 REMOTE=/home/pi/spiderpi
 
-BRANCH="$(git -C "$REPO_ROOT" branch --show-current)"
+BRANCH="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)"
 if [[ -z "$BRANCH" ]]; then
     echo "无法确定当前 Git 分支" >&2
     exit 1
