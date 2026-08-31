@@ -57,6 +57,9 @@ class Searcher:
         self.px_per_deg = float(gf.get('px_per_deg', 10.7))
         self.turn_deg = int(gf.get('turn_deg', 10))
         self.turn_sign = int(gf.get('turn_sign', 1))
+        self.tilt_sign = int(gf.get('tilt_sign', 1))      # 俯仰方向符号（本机实测 -1）
+        self.track_settle_ms = float(gf.get('track_settle_ms', 120)) / 1000.0  # 跟踪到位等待
+        self.lost_limit = int(gf.get('lost_limit_frames', 15))  # 连续丢帧超过该值才放弃逼近
         self.max_approach = int(gf.get('max_approach', 12))
         self.near_radius = float(gf.get('near_radius', 65.0))
         self.base_pulse = float(gf.get('base_pulse', 220.0))
@@ -89,7 +92,8 @@ class Searcher:
         self.tracker = ColorTracker(
             board, detect,
             dead_x=self.track_dead_x, dead_y=self.track_dead_y,
-            start_x=self.x_dis, start_y=self.y_dis)
+            start_x=self.x_dis, start_y=self.y_dis,
+            tilt_sign=self.tilt_sign, settle=self.track_settle_ms)
         self._stop_event = threading.Event()
         self._obstacle_thread = None
 
@@ -172,7 +176,8 @@ class Searcher:
             self.log.info('[search] %s', action_msg(
                 '锁定目标', action='目标中心x=%dpx y=%dpx 偏离画面中心，云台转向居中' % (cx, cy)))
             self.x_dis = max(0, min(1000, int(self.x_dis + 0.2 * (320 - cx))))
-            self.y_dis = max(0, min(1000, int(self.y_dis + 0.2 * (240 - cy))))
+            # tilt_sign：俯仰修正方向按本机实际方向取反
+            self.y_dis = max(0, min(1000, int(self.y_dis + self.tilt_sign * 0.2 * (240 - cy))))
             self._cam()
             time.sleep(self.settle)
             det = self.detect()
@@ -373,7 +378,7 @@ class Searcher:
                 return None, None
             r = self.tracker.latest()
             if r is None:
-                if self.tracker.lost_frames() >= 3:
+                if self.tracker.lost_frames() >= self.lost_limit:
                     self.log.info('[search] %s', action_msg('连续丢失目标'))
                     return None, None
                 self.log.debug('[search] %s', action_msg('目标暂不可见', action='跟踪线程继续寻找'))

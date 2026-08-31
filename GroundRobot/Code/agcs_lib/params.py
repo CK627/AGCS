@@ -85,6 +85,8 @@ def summarize(params):
         'gimbal.scan_move=%sms/settle=%sms pan_move=%sms/settle=%sms'
         % (gf.get('scan_move_ms'), gf.get('scan_settle_ms'),
            gf.get('pan_move_ms'), gf.get('pan_settle_ms')),
+        'gimbal.tilt_sign=%s track_settle=%sms lost_limit=%s帧'
+        % (gf.get('tilt_sign'), gf.get('track_settle_ms'), gf.get('lost_limit_frames')),
         'grab.approach_area_threshold=%s(320x240) grab_area_ratio=%s'
         % (g.get('approach_area_threshold'), g.get('grab_area_ratio')),
         'grab.reach_y_start=%s reach_y_max=%s max_reach_steps=%s'

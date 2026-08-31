@@ -16,7 +16,8 @@ from agcs_lib.logs import get_logger, action_msg
 class ColorTracker:
     def __init__(self, board, detect, dead_x=40, dead_y=60,
                  pan_min=0, pan_max=1000, tilt_min=0, tilt_max=1000,
-                 start_x=500, start_y=260, interval=0.03, tilt_fixed=False):
+                 start_x=500, start_y=260, interval=0.03, tilt_fixed=False,
+                 tilt_sign=1, settle=0.12):
         self.board = board
         self.detect = detect
         self.dead_x = int(dead_x)
@@ -27,6 +28,8 @@ class ColorTracker:
         self.tilt_max = int(tilt_max)
         self.interval = float(interval)
         self.tilt_fixed = tilt_fixed  # True=24 号固定不追踪俯仰，只动 21 号水平转
+        self.tilt_sign = int(tilt_sign)  # 俯仰方向符号：本机实测为 -1（上下反）
+        self.settle = float(settle)      # 舵机移动后到位等待，避免运动模糊丢帧
 
         self.x_dis = int(start_x)
         self.y_dis = int(start_y)
@@ -59,11 +62,14 @@ class ColorTracker:
             else:
                 self.y_pid.SetPoint = 240
                 self.y_pid.update(cy)
-                self.y_dis = max(self.tilt_min, min(self.tilt_max, self.y_dis + int(self.y_pid.output)))
-        if old_x != self.x_dis or old_y != self.y_dis:
+                # tilt_sign：修正方向按本机实际俯仰方向取反
+                self.y_dis = max(self.tilt_min, min(
+                    self.tilt_max, self.y_dis + int(self.tilt_sign * self.y_pid.output)))
+        moved = old_x != self.x_dis or old_y != self.y_dis
+        if moved:
             self.log.debug('[track] %s', action_msg(
                 '云台调整', action='21号 %d->%d，24号 %d->%d' % (old_x, self.x_dis, old_y, self.y_dis)))
-        self.board.bus_servo_set_position(0.02, [[24, self.y_dis], [21, self.x_dis]])
+            self.board.bus_servo_set_position(0.02, [[24, self.y_dis], [21, self.x_dis]])
 
         with self._lock:
             self._latest = {
@@ -74,6 +80,7 @@ class ColorTracker:
                 'y_dis': self.y_dis,
             }
             self._lost_frames = 0
+        return moved
 
     def _run(self):
         while not self._stop.is_set():
@@ -83,7 +90,10 @@ class ColorTracker:
                     self._latest = None
                     self._lost_frames += 1
             else:
-                self._update(r)
+                moved = self._update(r)
+                if moved:
+                    # 舵机刚被移动：等到位再取下一帧，避免运动模糊导致误丢目标
+                    time.sleep(self.settle)
             time.sleep(self.interval)
 
     def start(self, x_dis=None, y_dis=None):

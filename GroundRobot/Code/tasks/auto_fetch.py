@@ -92,6 +92,8 @@ def main():
     center, _ = searcher.run()
     if center is None:
         logger.info('[search] %s', action_msg('未找到目标', reason='颜色=%s' % color))
+        # 先停掉可能还在跑的追踪/避障线程，避免它们和复位抢舵机
+        searcher.stop()
         # 恢复官方初始机器姿态：云台回中 + 机械臂复位 + 立正
         searcher.reset_pose()
         arm_pulses = params['arm']['reset_pulses']
