@@ -133,6 +133,11 @@ class ColorTracker:
                 with self._lock:
                     self._latest = None
                     self._lost_frames += 1
+                    if self._lost_frames >= 10:
+                        # 目标丢失一段时间：重置滤波器，重新出现时从头初始化，
+                        # 避免旧速度/位置把新目标带偏
+                        self.kx.first = True
+                        self.ky.first = True
             else:
                 moved = self._update(r)
                 if moved:
