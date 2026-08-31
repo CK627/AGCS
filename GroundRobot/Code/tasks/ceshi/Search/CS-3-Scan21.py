@@ -1,15 +1,16 @@
 #!/usr/bin/python3
 # coding=utf8
-"""CS-2-Scan24：24号舵机上下扫描目标检测测试。
+"""CS-3-Scan21：21号舵机水平扫描 + 每档调用24号上下扫描 目标检测测试。
 
 只调用 Restore 的摄像头启动；默认颜色 blue。
 流程：
     1) Restore.start_camera() 启动摄像头 + 推流；
-    2) 24号按 500-400-300-200-600-700-800 扫描，每档检测，有目标就停下；
+    2) 21号按 500-300-200-700-800 扫描，每档调用 24号上下扫描，
+       发现目标就停下；找不到则 21号回 500、24号回 260；
     3) 看到目标确认后，回车结束（关闭摄像头）。
 
 用法（树莓派，先 sudo systemctl stop spiderpi）：
-    python3 tasks/ceshi/Search/CS-2-Scan24.py
+    python3 tasks/ceshi/Search/CS-3-Scan21.py
 """
 import os
 import socket
@@ -63,13 +64,13 @@ def _publish_loop(cam, mapx, mapy, rotate, stop_event):
 
 
 def main():
-    logger = setup_logger('CS-2-Scan24')
+    logger = setup_logger('CS-3-Scan21')
     params = load_params()
     color = 'blue'   # 默认颜色
 
     if task_server is not None:
         task_server.start_server()
-        task_server.set_status(state='CS-2-Scan24', message='24号扫描目标检测')
+        task_server.set_status(state='CS-3-Scan21', message='21号+24号扫描目标检测')
 
     board = make_board()
     ik = make_ik(board)
@@ -95,11 +96,11 @@ def main():
         return detect_color(f, lab, color, min_area=150)
 
     searcher = Searcher(board, ik, ak, params, detect)
-    r = searcher.ScanNumberTwentyFour()
+    r = searcher.ScanNumberTwentyOne()
     if r is not None:
-        logger.info('[scan24] PASS 找到目标 center=%s area=%d', r['center'], r.get('area', 0))
+        logger.info('[scan21] PASS 找到目标 center=%s area=%d', r['center'], r.get('area', 0))
     else:
-        logger.info('[scan24] 未找到目标')
+        logger.info('[scan21] 未找到目标')
 
     try:
         input('看到目标确认后，按回车结束…')
