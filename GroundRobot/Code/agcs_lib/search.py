@@ -38,7 +38,7 @@ class Searcher:
         self.ultrasonic = ultrasonic
         self.display = display
         self.tof = tof
-        self.log = get_logger('search')
+        self.log = get_logger('search', console=True)
         self._stop_event = threading.Event()
         # 当前云台位置（21 水平 / 24 俯仰），扫描与追踪共用起点
         self.x_dis = 500
@@ -47,7 +47,7 @@ class Searcher:
     # ---------------- 模块：24号舵机上下扫描 ----------------
     def ScanNumberTwentyFour(self, pulses=(500, 400, 300, 200, 100, 500, 600, 700),
                              wait=1.0):
-        """24号按脉宽序列上下扫描：每档等 24号 实际到位（读反馈）后再检测，
+        """24号按脉宽序列上下扫描：每档按移动时长(wait)到位后检测，
         有目标就停下；找不到恢复 24号=260。
 
         返回 Detection（dict）或 None。
@@ -55,7 +55,7 @@ class Searcher:
         for p in pulses:
             self.y_dis = p
             self.board.bus_servo_set_position(wait, [[24, p]])
-            self._wait_servo_arrived(24, p)
+            time.sleep(wait)   # 24号按移动时长到位；读反馈会间歇失败拖慢扫描，故不用
             r = self.detect()
             if r is not None:
                 self.log.info('[scan24] 24号=%d 检测到目标 center=%s area=%d',
@@ -65,7 +65,7 @@ class Searcher:
         # 找不到：24号 恢复回官方初始位置 260（硬编码，官方 color_track 相机初始位）
         self.y_dis = 260
         self.board.bus_servo_set_position(wait, [[24, 260]])
-        self._wait_servo_arrived(24, 260)
+        time.sleep(wait)
         self.log.info('[scan24] 未找到目标，24号恢复回官方初始位置 260')
         return None
 
