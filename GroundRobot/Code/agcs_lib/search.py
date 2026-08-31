@@ -7,8 +7,8 @@
                              （序列 500-400-300-200-600-700-800，每档检测，有目标就停下；
                                找不到恢复 24号=260）
     ScanNumberTwentyOne()    21号舵机水平扫描
-                             （序列 500-300-200-700-800，每档先等 21号 按移动时长
-                               到位（完成信号），再调用 24号扫描；
+                             （序列 500-300-200-700-800，每档读 21号实际脉宽
+                               确认到位（完成信号）后再调用 24号扫描；
                                找不到恢复 21号=500、24号=260）
 待实现：
     run() 完整搜索/逼近（当前占位，返回未找到）
@@ -45,15 +45,17 @@ class Searcher:
         self.y_dis = 260
 
     # ---------------- 模块：24号舵机上下扫描 ----------------
-    def ScanNumberTwentyFour(self, pulses=(500, 400, 300, 200, 100, 500, 600, 700), wait=1.0):
-        """24号按脉宽序列上下扫描，每档检测，有目标就停下；找不到恢复 24号=260。
+    def ScanNumberTwentyFour(self, pulses=(500, 400, 300, 200, 100, 500, 600, 700),
+                             wait=1.0, tolerance=15, timeout=3.0):
+        """24号按脉宽序列上下扫描：每档等 24号 实际到位（读反馈）后再检测，
+        有目标就停下；找不到恢复 24号=260。
 
         返回 Detection（dict）或 None。
         """
         for p in pulses:
             self.y_dis = p
             self.board.bus_servo_set_position(wait, [[24, p]])
-            time.sleep(wait)
+            self._wait_servo_arrived(24, p, tolerance=tolerance, timeout=timeout)
             r = self.detect()
             if r is not None:
                 self.log.info('[scan24] 24号=%d 检测到目标 center=%s area=%d',
@@ -63,28 +65,30 @@ class Searcher:
         # 找不到：24号 恢复回官方初始位置 260（硬编码，官方 color_track 相机初始位）
         self.y_dis = 260
         self.board.bus_servo_set_position(wait, [[24, 260]])
-        time.sleep(wait)
+        self._wait_servo_arrived(24, 260, tolerance=tolerance, timeout=timeout)
         self.log.info('[scan24] 未找到目标，24号恢复回官方初始位置 260')
         return None
 
     # ---------------- 模块：21号舵机水平扫描 ----------------
     def ScanNumberTwentyOne(self, pan_pulses=(500, 300, 200, 700, 800),
-                            move_s=1.5, settle_s=0.5):
-        """21号按脉宽序列扫描：每档先等 21号 到位（完成信号），再调用 24号扫描。
+                            wait=0.5, tolerance=15, timeout=4.0):
+        """21号按脉宽序列扫描：每档读 21号实际脉宽确认到位（完成信号），
+        再调用 24号扫描；发现目标即停。
 
         找不到则 21号回 500、24号回 260。返回 Detection（dict）或 None。
 
-        说明：总线舵机不支持读实际位置（实测返回 None），到位判定用
-        "移动时长 + 余量"实现——控制器按 move_s 驱动 21号（覆盖最大 500 脉宽
-        跨度），等 move_s+settle_s 走完即视为到位，之后 24号 才启动，
+        完成信号：make_board 已开启 enable_reception()，此处轮询
+        bus_servo_read_position(21) 直到实际脉宽接近目标值，24号 才启动，
         保证 24 不会抢在 21 到位前运行。
         """
         for p in pan_pulses:
             self.x_dis = p
-            self.board.bus_servo_set_position(move_s, [[21, p]])
-            # 等 21号 真正到位：移动时长 + 余量（完成信号），之后 24号 才启动
-            time.sleep(move_s + settle_s)
-            self.log.info('[scan21] 21号 -> %d（等 %.1fs 到位）', p, move_s + settle_s)
+            self.board.bus_servo_set_position(wait, [[21, p]])
+            # 等 21号 实际到位（完成信号），之后 24号 才启动
+            if self._wait_servo_arrived(21, p, tolerance=tolerance, timeout=timeout):
+                self.log.info('[scan21] 21号=%d 已到位（读反馈）', p)
+            else:
+                self.log.warning('[scan21] 21号=%d 到位超时/读取失败，仍继续', p)
             r = self.ScanNumberTwentyFour()
             if r is not None:
                 self.log.info('[scan21] 21号=%d 找到目标 center=%s area=%d',
@@ -94,10 +98,27 @@ class Searcher:
         # 找不到：21号回 500，24号回 260
         self.x_dis = 500
         self.y_dis = 260
-        self.board.bus_servo_set_position(move_s, [[21, 500], [24, 260]])
-        time.sleep(move_s + settle_s)
+        self.board.bus_servo_set_position(wait, [[21, 500], [24, 260]])
+        self._wait_servo_arrived(21, 500, tolerance=tolerance, timeout=timeout)
         self.log.info('[scan21] 未找到目标，21号恢复 500，24号恢复 260')
         return None
+
+    def _wait_servo_arrived(self, servo_id, target, tolerance=15, timeout=4.0, poll=0.1):
+        """轮询总线舵机实际脉宽直到接近 target，返回 True=已到位（完成信号）。
+
+        读取失败/超时返回 False（调用方自行决定是否继续）。
+        前置：make_board 已调用 enable_reception()，否则读取全部返回 None。
+        """
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                pos = self.board.bus_servo_read_position(servo_id)
+                if pos is not None and abs(pos[0] - target) <= tolerance:
+                    return True
+            except Exception:
+                pass
+            time.sleep(poll)
+        return False
 
     # ---------------- 模块：颜色追踪（目标锁定 + 画面居中，不走动） ----------------
     def TrackColor(self):
