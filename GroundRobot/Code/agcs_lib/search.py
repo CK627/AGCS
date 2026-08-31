@@ -4,11 +4,10 @@
 
 已实现模块：
     ScanNumberTwentyFour()   24号舵机上下扫描目标检测
-                             （序列 500-400-300-200-600-700-800，每档检测，有目标就停下；
+                             （序列 500-400-300-200-100-500-600-700，每档检测，有目标就停下；
                                找不到恢复 24号=260）
     ScanNumberTwentyOne()    21号舵机水平扫描
-                             （序列 500-300-200-700-800，每档读 21号实际脉宽
-                               确认到位（完成信号）后再调用 24号扫描；
+                             （序列 500-300-200-700-800，每档按移动时长到位后调用 24号扫描；
                                找不到恢复 21号=500、24号=260）
 待实现：
     run() 完整搜索/逼近（当前占位，返回未找到）
@@ -72,21 +71,15 @@ class Searcher:
     # ---------------- 模块：21号舵机水平扫描 ----------------
     def ScanNumberTwentyOne(self, pan_pulses=(500, 300, 200, 700, 800),
                             wait=0.5):
-        """21号按脉宽序列扫描：每档读 21号实际脉宽确认到位（完成信号），
-        再调用 24号扫描；发现目标即停。
+        """21号按脉宽序列扫描：每档按移动时长到位后调用 24号扫描；发现目标即停。
 
         找不到则 21号回 500、24号回 260。返回 Detection（dict）或 None。
-
-        完成信号：make_board 已开启 enable_reception()，此处轮询
-        bus_servo_read_position(21) 直到实际脉宽接近目标值，24号 才启动，
-        保证 24 不会抢在 21 到位前运行。
         """
         for p in pan_pulses:
             self.x_dis = p
             self.board.bus_servo_set_position(wait, [[21, p]])
-            # 等 21号 实际到位（完成信号），之后 24号 才启动
-            self._wait_servo_arrived(21, p)
-            self.log.info('[scan21] 21号=%d 已到位（读反馈）', p)
+            time.sleep(wait)   # 21号按移动时长到位，之后 24号 才开始
+            self.log.info('[scan21] 21号=%d', p)
             r = self.ScanNumberTwentyFour()
             if r is not None:
                 self.log.info('[scan21] 21号=%d 找到目标 center=%s area=%d',
@@ -97,17 +90,9 @@ class Searcher:
         self.x_dis = 500
         self.y_dis = 260
         self.board.bus_servo_set_position(wait, [[21, 500], [24, 260]])
-        self._wait_servo_arrived(21, 500)
+        time.sleep(wait)
         self.log.info('[scan21] 未找到目标，21号恢复 500，24号恢复 260')
         return None
-
-    def _wait_servo_arrived(self, servo_id, target):
-        """轮询读舵机实际脉宽，到位（±5 脉宽内）才返回。"""
-        while True:
-            pos = self.board.bus_servo_read_position(servo_id)
-            if pos is not None and abs(pos[0] - target) <= 5:
-                return
-            time.sleep(0.1)
 
     # ---------------- 模块：颜色追踪（目标锁定 + 画面居中，不走动） ----------------
     def TrackColor(self):
