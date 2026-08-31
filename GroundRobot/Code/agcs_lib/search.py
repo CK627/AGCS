@@ -7,7 +7,8 @@
                              （序列 500-400-300-200-600-700-800，每档检测，有目标就停下；
                                找不到恢复 24号=260）
     ScanNumberTwentyOne()    21号舵机水平扫描
-                             （序列 500-300-200-700-800，每档调用 24号扫描；
+                             （序列 500-300-200-700-800，每档先等 21号 按移动时长
+                               到位（完成信号），再调用 24号扫描；
                                找不到恢复 21号=500、24号=260）
 待实现：
     run() 完整搜索/逼近（当前占位，返回未找到）
@@ -67,15 +68,23 @@ class Searcher:
         return None
 
     # ---------------- 模块：21号舵机水平扫描 ----------------
-    def ScanNumberTwentyOne(self, pan_pulses=(500, 300, 200, 700, 800), wait=0.5):
-        """21号按脉宽序列扫描，每档调用 24号上下扫描；发现目标即停。
+    def ScanNumberTwentyOne(self, pan_pulses=(500, 300, 200, 700, 800),
+                            move_s=1.5, settle_s=0.5):
+        """21号按脉宽序列扫描：每档先等 21号 到位（完成信号），再调用 24号扫描。
 
         找不到则 21号回 500、24号回 260。返回 Detection（dict）或 None。
+
+        说明：总线舵机不支持读实际位置（实测返回 None），到位判定用
+        "移动时长 + 余量"实现——控制器按 move_s 驱动 21号（覆盖最大 500 脉宽
+        跨度），等 move_s+settle_s 走完即视为到位，之后 24号 才启动，
+        保证 24 不会抢在 21 到位前运行。
         """
         for p in pan_pulses:
             self.x_dis = p
-            self.board.bus_servo_set_position(wait, [[21, p]])
-            time.sleep(wait)
+            self.board.bus_servo_set_position(move_s, [[21, p]])
+            # 等 21号 真正到位：移动时长 + 余量（完成信号），之后 24号 才启动
+            time.sleep(move_s + settle_s)
+            self.log.info('[scan21] 21号 -> %d（等 %.1fs 到位）', p, move_s + settle_s)
             r = self.ScanNumberTwentyFour()
             if r is not None:
                 self.log.info('[scan21] 21号=%d 找到目标 center=%s area=%d',
@@ -85,8 +94,8 @@ class Searcher:
         # 找不到：21号回 500，24号回 260
         self.x_dis = 500
         self.y_dis = 260
-        self.board.bus_servo_set_position(wait, [[21, 500], [24, 260]])
-        time.sleep(wait)
+        self.board.bus_servo_set_position(move_s, [[21, 500], [24, 260]])
+        time.sleep(move_s + settle_s)
         self.log.info('[scan21] 未找到目标，21号恢复 500，24号恢复 260')
         return None
 
