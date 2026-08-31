@@ -9,8 +9,40 @@
 import threading
 import time
 
+import numpy as np
+
 from common.pid import PID
 from agcs_lib.logs import get_logger, action_msg
+
+
+class _Kalman1D:
+    """一维常速度卡尔曼滤波：平滑位置，并用速度项预测、提前响应运动。"""
+
+    def __init__(self, process_noise=0.2, measure_noise=1.0):
+        self.x = np.zeros((2, 1), dtype=np.float64)   # [位置, 速度]
+        self.P = np.eye(2, dtype=np.float64)
+        self.F = np.array([[1.0, 1.0], [0.0, 1.0]], dtype=np.float64)
+        self.H = np.array([[1.0, 0.0]], dtype=np.float64)
+        self.Q = np.eye(2, dtype=np.float64) * process_noise
+        self.R = np.array([[measure_noise]], dtype=np.float64)
+        self.first = True
+
+    def update(self, z):
+        """预测 + 校正，返回平滑后的位置。"""
+        if self.first:
+            self.x[0, 0] = z
+            self.first = False
+            return float(z)
+        # 预测
+        self.x = self.F @ self.x
+        self.P = self.F @ self.P @ self.F.T + self.Q
+        # 校正
+        innovation = z - float((self.H @ self.x)[0, 0])
+        S = float((self.H @ self.P @ self.H.T)[0, 0]) + float(self.R[0, 0])
+        K = (self.P @ self.H.T) / S
+        self.x = self.x + K * innovation
+        self.P = (np.eye(2) - K @ self.H) @ self.P
+        return float(self.x[0, 0])
 
 
 class ColorTracker:
@@ -41,6 +73,10 @@ class ColorTracker:
         self.x_pid = PID(P=self.p_gain, I=0.0, D=0.0)
         self.y_pid = PID(P=self.p_gain, I=0.0, D=0.0)
 
+        # x/y 各自一个卡尔曼滤波器：控制用滤波后的位置，不直接用原始检测值
+        self.kx = _Kalman1D()
+        self.ky = _Kalman1D()
+
         self._lock = threading.Lock()
         self._latest = None
         self._lost_frames = 0
@@ -50,6 +86,9 @@ class ColorTracker:
 
     def _update(self, r):
         cx, cy = r['center']
+        # 卡尔曼滤波：平滑抖动 + 速度预测提前响应，不直接用原始检测值
+        cx = int(self.kx.update(float(cx)))
+        cy = int(self.ky.update(float(cy)))
         old_x, old_y = self.x_dis, self.y_dis
         # 21 号水平追踪（死区内清积分，否则更新）
         if abs(cx - 320) < self.dead_x:
