@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>无人机电脑端</title>
+<link rel="stylesheet" href="/common.css">
+</head>
+<body>
+  <h1>无人机电脑端 <span id="status" class="bad">未连接</span></h1>
+  <div class="hint">视频画面 + 无人机数据（SDK）监控；自动任务请在 OpenFly 图形化编程中设置。</div>
+
+  <div class="wrap">
+    <div class="box">
+      <div class="box-head">
+        <h2>图传画面（EWRF 接收机）</h2>
+        <button class="fsbtn" id="fsBtn">⛶ 全屏</button>
+      </div>
+      <div id="videoBox">
+        {% if video_enabled %}
+        <img id="video" src="/video_feed" alt="视频未连接" onerror="this.style.display='none'; document.getElementById('videoBox').innerHTML='视频未连接（检查 EWRF 图传接收机 USB / data/config.yaml 的 drone.camera 与 drone.video）'">
+        {% else %}
+        <div style="color:#64748b;font-size:13px">视频已关闭（data/config.yaml 的 drone.video=false）</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="box">
+      <h2>实时监控（SDK 串口数据）</h2>
+      <div class="grid">
+        <div class="card"><h2>数据源</h2><div class="v" id="src">-</div><div class="s" id="src2">-</div></div>
+        <div class="card"><h2>姿态 r/p/y</h2><div class="v" id="att">-</div><div class="s">单位：度</div></div>
+        <div class="card"><h2>位置 x/y/z</h2><div class="v" id="pos">-</div><div class="s" id="alt">高度 - m</div></div>
+        <div class="card"><h2>定位误差 x/y/z</h2><div class="v" id="errVal">-</div><div class="s">单位：cm</div></div>
+        <div class="card"><h2>电池</h2><div class="v" id="bat">-</div><div class="s" id="bat2">-</div></div>
+        <div class="card"><h2>避障 前/后/左/右</h2><div class="v" id="obs">-</div><div class="s">单位：cm</div></div>
+        <div class="card"><h2>遥控器按键</h2><div class="v" id="key">-</div><div class="s">是否按下</div></div>
+        <div class="card"><h2>计时器</h2><div class="v" id="timer">-</div><div class="s">单位：秒</div></div>
+        <div class="card"><h2>消息</h2><div class="v txt" id="news">-</div><div class="s" id="newsId">-</div></div>
+      </div>
+      <canvas id="attChart"></canvas>
+      <canvas id="altChart"></canvas>
+    </div>
+  </div>
+
+<script>
+const statusEl = document.getElementById('status');
+
+// 全屏显示画面
+document.getElementById('fsBtn').onclick = () => {
+  const box = document.getElementById('videoBox');
+  if (!document.fullscreenElement) {
+    (box.requestFullscreen || box.webkitRequestFullscreen).call(box);
+  } else {
+    document.exitFullscreen();
+  }
+};
+document.addEventListener('fullscreenchange', () => {
+  document.getElementById('fsBtn').textContent =
+    document.fullscreenElement ? '✕ 退出全屏' : '⛶ 全屏';
+});
+
+function setStatus(ok) {
+  statusEl.textContent = ok ? '已连接' : '未连接';
+  statusEl.className = ok ? 'ok' : 'bad';
+}
+
+async function refreshTelemetry() {
+  try {
+    const d = await (await fetch('/api/telemetry')).json();
+    setStatus(d.connected);
+    const isSdk = d.source === 'sdk';
+    document.getElementById('src').textContent = isSdk ? 'SDK 链路' : (d.source || '-');
+    document.getElementById('src2').textContent =
+      (isSdk && d.sdk && d.sdk.serial ? '串口 ' + d.sdk.serial : (d.error || ''));
+    document.getElementById('att').textContent =
+      d.roll == null ? '-' : d.roll.toFixed(1) + ' / ' + d.pitch.toFixed(1) + ' / ' + d.yaw.toFixed(1);
+    document.getElementById('pos').textContent =
+      d.loc_x == null ? '-' : d.loc_x.toFixed(0) + ', ' + d.loc_y.toFixed(0) + ', ' + d.loc_z.toFixed(0) + ' cm';
+    document.getElementById('alt').textContent =
+      '高度 ' + (d.loc_z == null ? '-' : (d.loc_z / 100).toFixed(1)) + ' m';
+    const hasErr = [d.err_x, d.err_y, d.err_z].some(v => v != null && Number(v) !== 0);
+    document.getElementById('errVal').textContent =
+      hasErr ? d.err_x + ', ' + d.err_y + ', ' + d.err_z : '-';
+    document.getElementById('bat').textContent =
+      d.volt == null ? '-' : d.volt.toFixed(2) + ' V';
+    document.getElementById('bat2').textContent = '单位：伏';
+    document.getElementById('obs').textContent =
+      d.obs_f == null ? '-' : d.obs_f + ' / ' + d.obs_b + ' / ' + d.obs_l + ' / ' + d.obs_r;
+    document.getElementById('key').textContent =
+      d.key_press ? '按下' : '-';
+    document.getElementById('timer').textContent =
+      d.timer == null ? '-' : d.timer.toFixed(1);
+    document.getElementById('news').textContent = (d.role_news || '-');
+    document.getElementById('newsId').textContent =
+      d.role_news ? ('消息序号 ' + d.role_news_id) : '';
+  } catch (e) {
+    setStatus(false);
+  }
+}
+
+function drawChart(canvas, series, label) {
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const cw = canvas.clientWidth, ch = canvas.clientHeight;
+  if (!cw || !ch) return;  // 布局还没就绪：跳过本次，等下一次重画，避免画到 1px 上
+  const W = canvas.width = cw * dpr;
+  const H = canvas.height = ch * dpr;
+  ctx.clearRect(0, 0, W, H);
+  const pad = 8 * dpr;
+  const left = 30 * dpr; // 左侧给 y 轴刻度留位置
+  const top = 22 * dpr;  // 顶部标题区，曲线不会画进来
+  const n = series[0].values.length;
+
+  let min = Infinity, max = -Infinity;
+  series.forEach(s => s.values.forEach(v => {
+    const x = Number(v);
+    if (!isNaN(x)) { min = Math.min(min, x); max = Math.max(max, x); }
+  }));
+  if (!isFinite(min)) { min = 0; max = 0; }
+  if (max === min) { min -= 1; max += 1; }
+
+  // 标题底色 + 标题文字：标题始终显示（即使还没数据/没线）
+  ctx.fillStyle = '#0b1220';
+  ctx.fillRect(0, 0, W, top);
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = (11 * dpr) + 'px sans-serif';
+  if (n === 0) {
+    ctx.fillText(label + '：等待数据…', pad, 14 * dpr);
+  } else {
+    ctx.fillText(label + ' 范围 ' + min.toFixed(1) + ' ~ ' + max.toFixed(1), pad, 14 * dpr);
+  }
+  const plotTop = top + 6 * dpr;
+  const plotBottom = H - pad;
+  const plotH = plotBottom - plotTop;
+  const plotW = W - pad - left;
+
+  // 横向网格 + 左侧刻度：坐标轴一打开就可见（即使还没数据）
+  ctx.strokeStyle = '#1a2740';
+  ctx.lineWidth = 1 * dpr;
+  for (let gi = 0; gi <= 4; gi++) {
+    const gy = plotTop + (gi / 4) * plotH;
+    ctx.beginPath();
+    ctx.moveTo(left, gy);
+    ctx.lineTo(W - pad, gy);
+    ctx.stroke();
+    const gv = max - (max - min) * (gi / 4);
+    ctx.fillStyle = '#475569';
+    ctx.font = (9 * dpr) + 'px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(gv.toFixed(1), left - 4 * dpr, gy);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+  }
+
+  // 0 基线：页面一开就有可看的网格参照线
+  const zeroY = plotTop + (1 - (0 - min) / (max - min)) * plotH;
+  ctx.strokeStyle = '#334155';
+  ctx.lineWidth = 1 * dpr;
+  ctx.beginPath();
+  ctx.moveTo(left, zeroY);
+  ctx.lineTo(W - pad, zeroY);
+  ctx.stroke();
+
+  if (n === 0) return;
+
+  const yOf = v => plotTop + (1 - (v - min) / (max - min)) * plotH;
+  const xOf = i => n === 1 ? left + plotW / 2 : left + (i / (n - 1)) * plotW;
+  series.forEach(s => {
+    ctx.beginPath(); ctx.strokeStyle = s.color; ctx.lineWidth = 1.5 * dpr;
+    if (n === 1) {
+      // 只有一个点：直接画一小段线 + 圆点，让曲线“一开始就有”，后续再推进
+      const v = Number(s.values[0]);
+      if (!isNaN(v)) {
+        const y = yOf(v);
+        ctx.moveTo(left, y);
+        ctx.lineTo(left + plotW, y);
+        ctx.stroke();
+        ctx.fillStyle = s.color;
+        ctx.beginPath();
+        ctx.arc(left + plotW / 2, y, 2.5 * dpr, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+      return;
+    }
+    let started = false;
+    for (let i = 0; i < n; i++) {
+      const v = Number(s.values[i]);
+      if (isNaN(v)) continue;
+      const x = xOf(i), y = yOf(v);
+      if (!started) { ctx.moveTo(x, y); started = true; }
+      else ctx.lineTo(x, y);
+    }
+    if (started) ctx.stroke();
+  });
+}
+
+async function refreshHistory() {
+  try {
+    const h = await (await fetch('/api/history')).json();
+    drawChart(document.getElementById('attChart'),
+      [{name:'roll', color:'#f87171', values:h.roll},
+       {name:'pitch', color:'#4ade80', values:h.pitch},
+       {name:'yaw', color:'#60a5fa', values:h.yaw}], '姿态(°)');
+    drawChart(document.getElementById('altChart'),
+      [{name:'alt', color:'#22d3ee', values:h.alt}], '高度(m)');
+  } catch (e) {}
+}
+
+refreshTelemetry();
+refreshHistory();
+requestAnimationFrame(() => refreshHistory());  // 首帧布局完成后立即重画
+setTimeout(refreshHistory, 200);          // 兜底：布局就绪后再画一次
+window.addEventListener('load', refreshHistory);
+window.addEventListener('resize', refreshHistory);  // 窗口变化时自适应重画
+setInterval(refreshTelemetry, 1000);
+setInterval(refreshHistory, 2000);
+</script>
+</body>
+</html>

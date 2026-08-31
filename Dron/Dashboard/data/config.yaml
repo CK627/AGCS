@@ -1,0 +1,16 @@
+# 无人机电脑端仪表盘配置（Dorn/Dashboard/data/config.yaml）
+# 保存即热重载生效（端口除外：端口修改后需重启服务）
+
+# ---------- 无人机图传 ----------
+drone:
+  # EWRF 图传接收机的 USB 摄像头序号。
+  # 不确定时先运行：python 外接图传录制程序/capture_external_camera.py --list
+  camera: 0
+  # 无人机画面开关
+  video: true
+  # 画面顶部裁剪像素数：去掉图传画面左上角的 OSD 坐标文字（如 0,0,0），0 表示不裁剪
+  video_crop_top: 60
+
+# ---------- 仪表盘端口 ----------
+dashboard:
+  drone_port: 20000   # 无人机电脑端仪表盘端口
