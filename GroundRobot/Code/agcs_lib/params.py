@@ -82,6 +82,9 @@ def summarize(params):
         'gimbal.pan_band=%s pan_band_fine=%s track_dead=%s/%s max_approach=%s'
         % (gf.get('pan_band', 80), gf.get('pan_band_fine', 20),
            gf.get('track_dead_cx', 40), gf.get('track_dead_cy', 60), gf.get('max_approach', 12)),
+        'gimbal.scan_move=%sms/settle=%sms pan_move=%sms/settle=%sms'
+        % (gf.get('scan_move_ms'), gf.get('scan_settle_ms'),
+           gf.get('pan_move_ms'), gf.get('pan_settle_ms')),
         'grab.approach_area_threshold=%s(320x240) grab_area_ratio=%s'
         % (g.get('approach_area_threshold'), g.get('grab_area_ratio')),
         'grab.reach_y_start=%s reach_y_max=%s max_reach_steps=%s'

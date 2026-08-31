@@ -92,6 +92,13 @@ def main():
     center, _ = searcher.run()
     if center is None:
         logger.info('[search] %s', action_msg('未找到目标', reason='颜色=%s' % color))
+        # 恢复官方初始机器姿态：云台回中 + 机械臂复位 + 立正
+        searcher.reset_pose()
+        arm_pulses = params['arm']['reset_pulses']
+        board.bus_servo_set_position(1.5, [[sid, arm_pulses[sid]] for sid in [21, 22, 23, 24]])
+        board.bus_servo_set_position(1.0, [[25, int(params['arm'].get('gripper_open', 120))]])
+        time.sleep(1.5)
+        stand(ik)
         cam.camera_close()
         show_status(display, 0)
         return

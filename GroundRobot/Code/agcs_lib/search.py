@@ -45,9 +45,11 @@ class Searcher:
         self.settle = float(gf.get('settle_ms', 280)) / 1000.0
         self.tilt_scan_step = int(sc.get('tilt_scan_step', 20))
         self.scan_move_ms = float(gf.get('scan_move_ms', 50)) / 1000.0
+        self.scan_settle_ms = float(gf.get('scan_settle_ms', 60)) / 1000.0  # 每步到位等待（防运动模糊）
         self.detect_interval = float(gf.get('detect_interval_ms', 30)) / 1000.0
         self.pan_scan_step = int(gf.get('pan_scan_step', 20))
         self.pan_move_ms = float(gf.get('pan_move_ms', 1)) / 1000.0
+        self.pan_settle_ms = float(gf.get('pan_settle_ms', 60)) / 1000.0   # 每步到位等待（防运动模糊）
         self.pan_detect_interval = float(gf.get('pan_detect_interval_ms', 30)) / 1000.0
 
         # 追踪/逼近参数
@@ -129,8 +131,11 @@ class Searcher:
                 '云台调整', action='舵机21 %d->%d脉宽，舵机24 %d->%d脉宽'
                 % (old_x, self.x_dis, old_y, self.y_dis)))
 
-    def _confirm(self, tries=3, need_hits=2):
-        """目标连续出现若干帧、且在画面中部，才确认，避免把边缘/噪声当目标。"""
+    def _confirm(self, tries=4, need_hits=2):
+        """目标连续出现若干帧、且在画面中部，才确认，避免把边缘/噪声当目标。
+
+        确认失败时把原因打到 INFO，便于现场排查是“检测不到”还是“中心不在画面中部”。
+        """
         hits = 0
         last = None
         for _ in range(tries):
@@ -145,7 +150,14 @@ class Searcher:
                     hits += 1
                     last = r
             time.sleep(0.08)
-        return last if hits >= need_hits else None
+        if last is None or hits < need_hits:
+            if last is not None:
+                self.log.info('[search] %s', action_msg(
+                    '目标未锁定', reason='%d/%d 帧在画面中部，最后中心x=%dpx y=%dpx 面积=%d'
+                    % (hits, tries, last['center'][0], last['center'][1], last.get('area', 0)),
+                    action='继续扫描'))
+            return None
+        return last
 
     def _lock_on(self, det):
         """检测到目标后先把云台转向目标居中，再确认。居中即锁定，不再继续扫。
@@ -185,8 +197,8 @@ class Searcher:
     def _smooth_tilt_to(self, x, target_y):
         """把 21 移到 x，然后让 24 以小步平滑移动到 target_y，途中持续检测。
 
-        修复：检测与移动解耦——发移动指令后，在移动窗口内反复取帧；
-        不再用 sleep(整个检测间隔) 把唯一一次检测挡在窗外（旧实现每步只检测 1 帧）。
+        修复：每步 移动 → 等舵机真正到位 → 再检测。旧实现发移动指令后立即取帧，
+        舵机实际还在运动，画面模糊、目标中心跳动，导致锁定/确认失败。
         """
         self.x_dis = max(0, min(1000, int(x)))
         self.board.bus_servo_set_position(0.05, [[21, self.x_dis]])
@@ -202,22 +214,20 @@ class Searcher:
             self.y_dis = next_y
             self.board.bus_servo_set_position(
                 self.scan_move_ms, [[24, self.y_dis], [21, self.x_dis]])
+            # 等舵机真正到位再取帧：移动时间 + 到位余量
+            time.sleep(self.scan_move_ms + self.scan_settle_ms)
 
-            # 舵机移动的同时反复取帧检测，避免“跳一下停一下”
-            deadline = time.time() + self.scan_move_ms
-            while time.time() < deadline:
-                r = self.detect()
-                if r is not None:
-                    self.log.info('[search] %s', action_msg(
-                        '检测到目标', action='云台水平=%d脉宽 云台俯仰=%d脉宽' % (self.x_dis, self.y_dis)))
-                    cr = self._lock_on(r)
-                    if cr is not None:
-                        return cr
-                    self.log.debug('[search] %s', action_msg('检测到但未确认', action='继续扫描'))
-                remaining = deadline - time.time()
-                if remaining <= 0:
-                    break
-                time.sleep(min(self.detect_interval, remaining))
+            r = self.detect()
+            if r is not None:
+                self.log.info('[search] %s', action_msg(
+                    '检测到目标', action='云台水平=%d脉宽 云台俯仰=%d脉宽' % (self.x_dis, self.y_dis)))
+                cr = self._lock_on(r)
+                if cr is not None:
+                    return cr
+                self.log.info('[search] %s', action_msg(
+                    '检测到但未锁定', reason='中心x=%dpx y=%dpx 面积=%d'
+                    % (r['center'][0], r['center'][1], r.get('area', 0)),
+                    action='继续扫描'))
 
             if next_y == target_y:
                 break
@@ -226,7 +236,7 @@ class Searcher:
     def _smooth_pan_to(self, target_x):
         """让 21 号以小步平滑移动到 target_x，途中持续检测；找到返回 dict。
 
-        修复：与 _smooth_tilt_to 相同，检测不再被整段 sleep 挡在移动窗口外。
+        修复：与 _smooth_tilt_to 相同，每步等舵机到位后再检测。
         """
         target_x = max(0, min(1000, int(target_x)))
         step = self.pan_scan_step
@@ -239,21 +249,20 @@ class Searcher:
                 next_x = max(next_x, target_x)
             self.x_dis = next_x
             self.board.bus_servo_set_position(self.pan_move_ms, [[21, self.x_dis]])
+            # 等舵机真正到位再取帧：移动时间 + 到位余量
+            time.sleep(self.pan_move_ms + self.pan_settle_ms)
 
-            deadline = time.time() + self.pan_move_ms
-            while time.time() < deadline:
-                r = self.detect()
-                if r is not None:
-                    self.log.info('[search] %s', action_msg(
-                        '检测到目标', action='云台水平=%d脉宽 云台俯仰=%d脉宽' % (self.x_dis, self.y_dis)))
-                    cr = self._lock_on(r)
-                    if cr is not None:
-                        return cr
-                    self.log.debug('[search] %s', action_msg('检测到但未确认', action='继续扫描'))
-                remaining = deadline - time.time()
-                if remaining <= 0:
-                    break
-                time.sleep(min(self.pan_detect_interval, remaining))
+            r = self.detect()
+            if r is not None:
+                self.log.info('[search] %s', action_msg(
+                    '检测到目标', action='云台水平=%d脉宽 云台俯仰=%d脉宽' % (self.x_dis, self.y_dis)))
+                cr = self._lock_on(r)
+                if cr is not None:
+                    return cr
+                self.log.info('[search] %s', action_msg(
+                    '检测到但未锁定', reason='中心x=%dpx y=%dpx 面积=%d'
+                    % (r['center'][0], r['center'][1], r.get('area', 0)),
+                    action='继续扫描'))
 
             if next_x == target_x:
                 break
@@ -439,6 +448,18 @@ class Searcher:
         result = self._approach(det)
         # 追踪线程和避障线程贯穿到夹取阶段，这里不 stop（由上层在夹取结束后清理）
         return result
+
+    def reset_pose(self):
+        """恢复官方初始机器姿态：云台回中（21=500/24=260）。
+
+        机械臂复位与立正由调用方负责，这里只负责云台，避免寻路结束/失败后
+        摄像头停留在扫描末尾角度。
+        """
+        self.x_dis, self.y_dis = 500, 260
+        self.board.bus_servo_set_position(0.5, [[24, self.y_dis], [21, self.x_dis]])
+        time.sleep(self.settle)
+        self.log.info('[search] %s', action_msg(
+            '恢复云台初始位置', action='云台21=%d 云台24=%d' % (self.x_dis, self.y_dis)))
 
     def stop(self):
         """夹取结束后清理：停止追踪线程和避障线程。"""

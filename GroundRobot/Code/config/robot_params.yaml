@@ -78,9 +78,11 @@ gimbal_fetch:
   pan_max: 1000           # 舵机21 云台扫描上限脉宽（约240°）
   pan_step: 40            # 云台扫描步长脉宽
   pan_scan_step: 20         # 21号平滑扫描每一步的脉宽增量
-  pan_move_ms: 1            # 21号每小步的移动时间 ms
+  pan_move_ms: 100          # 21号每小步的移动时间 ms（调大：舵机平缓到位，画面稳定）
+  pan_settle_ms: 60         # 21号每小步到位等待 ms（防运动模糊导致漏检/锁定失败）
   pan_detect_interval_ms: 30  # 21号平滑扫描时的取帧间隔 ms
-  scan_move_ms: 10          # 24号每小步的移动时间 ms
+  scan_move_ms: 100         # 24号每小步的移动时间 ms（调大：舵机平缓到位，画面稳定）
+  scan_settle_ms: 60        # 24号每小步到位等待 ms（防运动模糊导致漏检/锁定失败）
   detect_interval_ms: 20    # 平滑扫描时的取帧间隔 ms
   cam_start: 330          # 舵机24 相机起始脉宽（≈检测位）
   cam_max: 1000           # 舵机24 相机上限脉宽
