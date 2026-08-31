@@ -44,7 +44,7 @@ class Searcher:
         self.y_dis = 260
 
     # ---------------- 模块：24号舵机上下扫描 ----------------
-    def ScanNumberTwentyFour(self, pulses=(500, 400, 300, 200, 600, 700, 800), wait=0.5):
+    def ScanNumberTwentyFour(self, pulses=(200, 500, 600, 700, 800), wait=0.5):
         """24号按脉宽序列上下扫描，每档检测，有目标就停下；找不到恢复 24号=260。
 
         返回 Detection（dict）或 None。
