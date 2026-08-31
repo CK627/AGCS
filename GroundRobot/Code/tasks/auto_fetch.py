@@ -69,7 +69,7 @@ def main():
         from functions.yolo_detect_onnx import YoloDetector
         detector = YoloDetector(args.model, conf=args.conf)
 
-    def detect(min_area=300):
+    def detect(min_area=150):
         f = capture(cam)
         if f is None:
             return None
