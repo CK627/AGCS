@@ -60,6 +60,7 @@ class Searcher:
         self.tilt_sign = int(gf.get('tilt_sign', 1))      # 俯仰方向符号（本机实测 -1）
         self.track_settle_ms = float(gf.get('track_settle_ms', 120)) / 1000.0  # 跟踪到位等待
         self.lost_limit = int(gf.get('lost_limit_frames', 15))  # 连续丢帧超过该值才放弃逼近
+        self.center_wait = float(gf.get('center_wait_ms', 800)) / 1000.0  # 每步走后等云台重新居中的时间窗
         self.max_approach = int(gf.get('max_approach', 12))
         self.near_radius = float(gf.get('near_radius', 65.0))
         self.base_pulse = float(gf.get('base_pulse', 220.0))
@@ -148,9 +149,9 @@ class Searcher:
                 cx, cy = r['center']
                 self.log.debug('[search] %s', action_msg(
                     '确认检测', action='中心x=%dpx 中心y=%dpx 面积=%d' % (cx, cy, r.get('area', 0))))
-                # 目标中心要在画面中部（不贴边）才计数：顶部/底部/左右边缘都不算，
+                # 目标中心要在画面中部（基本居中）才计数：x=中心320±120，y=中心240±140，
                 # 避免目标还在边缘（快移出画面）就确认，导致追踪时目标已丢失
-                if 60 <= cx <= 580 and 100 <= cy <= 380:
+                if 200 <= cx <= 440 and 120 <= cy <= 380:
                     hits += 1
                     last = r
             time.sleep(0.08)
@@ -171,7 +172,7 @@ class Searcher:
         """
         for _ in range(12):
             cx, cy = det['center']
-            if 60 <= cx <= 580 and 100 <= cy <= 380:
+            if 200 <= cx <= 440 and 120 <= cy <= 380:
                 return self._confirm()
             self.log.info('[search] %s', action_msg(
                 '锁定目标', action='目标中心x=%dpx y=%dpx 偏离画面中心，云台转向居中' % (cx, cy)))
@@ -371,24 +372,50 @@ class Searcher:
                 self._turn_body(-self.pan_turn_deg)
             time.sleep(0.4)
 
-        # 逼近：前进 + 面积到阈值停止
+        # 逼近：小步走 + 每步等云台把目标拉回画面中部，避免目标跑出视野丢跟踪
         for step in range(self.max_approach):
             if self._stop_event.is_set():
                 self.log.info('[search] %s', action_msg('停止寻路', reason='检测到障碍物'))
                 return None, None
-            r = self.tracker.latest()
+
+            # 1) 等 tracker 重新看到目标（走完一步后的恢复窗口）
+            r = self._wait_target(timeout=self.center_wait)
             if r is None:
                 if self.tracker.lost_frames() >= self.lost_limit:
-                    self.log.info('[search] %s', action_msg('连续丢失目标'))
-                    return None, None
-                self.log.debug('[search] %s', action_msg('目标暂不可见', action='跟踪线程继续寻找'))
-                time.sleep(0.05)
-                continue
+                    self.log.info('[search] %s', action_msg(
+                        '连续丢失目标', reason='跟踪线程已连续 %d 帧未检测到' % self.tracker.lost_frames()))
+                else:
+                    self.log.info('[search] %s', action_msg(
+                        '目标暂不可见', reason='等待 %.0fms 未重新出现' % (self.center_wait * 1000)))
+                return None, None
 
             cx, cy = r['center']
+            dx = int(r['x_dis']) - 500
+
+            # 2) 目标横向偏移大：转身体把云台拉回朝前（tracker 已把目标拉向画面中心）
+            if abs(dx) > self.pan_band:
+                self.log.info('[search] %s', action_msg(
+                    '摄像头偏%s' % ('右' if dx > 0 else '左'),
+                    action='身体%s转 %d°' % ('左' if dx > 0 else '右', self.pan_turn_deg)))
+                self._turn_body(self.pan_turn_deg if dx > 0 else -self.pan_turn_deg)
+                time.sleep(0.4)
+                continue
+
+            # 3) 目标被走路带偏（贴到画面上下边）：等云台拉回画面中部再走
+            if not (120 <= cy <= 380):
+                last_center = (cx, cy)
+                r = self._wait_centered(timeout=self.center_wait)
+                if r is None:
+                    self.log.info('[search] %s', action_msg(
+                        '目标未回到画面中部',
+                        reason='最后中心x=%dpx y=%dpx，等待 %.0fms 后仍偏离'
+                        % (last_center[0], last_center[1], self.center_wait * 1000)))
+                    return None, None
+                cx, cy = r['center']
+                dx = int(r['x_dis']) - 500
+
             radius = max(int(r.get('radius', 20)), 1)
             area = int(r.get('area', 0))
-            dx = int(r['x_dis']) - 500
 
             self.log.info('[search] %s', action_msg(
                 '追踪 #%d' % (step + 1),
@@ -417,32 +444,39 @@ class Searcher:
                     time.sleep(0.4)
                 return (cx, cy), cy
 
-            # 21 号偏离 500 太多：转身体把摄像头方向拉回朝前（方向与转身对准循环一致）
-            if dx > self.pan_band:
-                self.log.info('[search] %s', action_msg('摄像头偏右', action='身体左转 %d° 让21回中' % self.pan_turn_deg))
-                self._turn_body(self.pan_turn_deg)
-                time.sleep(0.4)
-                continue
-            if dx < -self.pan_band:
-                self.log.info('[search] %s', action_msg('摄像头偏左', action='身体右转 %d° 让21回中' % self.pan_turn_deg))
-                self._turn_body(-self.pan_turn_deg)
-                time.sleep(0.4)
-                continue
-
-            # 前进逼近
-            if radius >= self.slow_radius:
-                self.log.debug('[search] %s', action_msg(
-                    '接近中', reason='半径 %dpx >= %dpx 慢速' % (radius, self.slow_radius),
-                    action='前进 %dmm x1' % self.walk_mm))
-                go_forward(self.ik, self.walk_mm, self.walk_speed, 1)
-            else:
-                self.log.debug('[search] %s', action_msg(
-                    '接近中', reason='半径 %dpx < %dpx 快速' % (radius, self.slow_radius),
-                    action='前进 %dmm x2' % self.fast_walk_mm))
-                go_forward(self.ik, self.fast_walk_mm, self.fast_speed, 2)
-            time.sleep(0.1)
+            # 4) 走一小步（40mm×1 慢速），下一步前再等 tracker 重新居中
+            self.log.debug('[search] %s', action_msg(
+                '接近中', action='前进 %dmm x1' % self.walk_mm))
+            go_forward(self.ik, self.walk_mm, self.walk_speed, 1)
+            time.sleep(0.05)
 
         return None, None
+
+    def _wait_target(self, timeout):
+        """等 tracker 重新检测到目标；返回最新 Detection 或 None（超时/停止）。"""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self._stop_event.is_set():
+                return None
+            r = self.tracker.latest()
+            if r is not None:
+                return r
+            time.sleep(0.03)
+        return None
+
+    def _wait_centered(self, timeout):
+        """等云台把目标拉回画面中部（横向基本朝前 + 纵向不贴边）；超时返回 None。"""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self._stop_event.is_set():
+                return None
+            r = self.tracker.latest()
+            if r is not None:
+                cx, cy = r['center']
+                if abs(int(r['x_dis']) - 500) <= self.pan_band and 120 <= cy <= 380:
+                    return r
+            time.sleep(0.03)
+        return None
 
     def run(self):
         self._status(1)

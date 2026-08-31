@@ -137,7 +137,12 @@ def main():
 
     # 夹住保持，人工确认夹稳后再松开（测试阶段：回车前一直夹紧）
     if ok:
-        input('已夹住，保持夹紧。敲回车松开夹爪并复位...')
+        try:
+            input('已夹住，保持夹紧。敲回车松开夹爪并复位...')
+        except EOFError:
+            # 非交互运行（SSH 自动化测试）：2 秒后自动松开，避免卡住
+            logger.info('非交互运行，2 秒后自动松开夹爪并复位')
+            time.sleep(2)
 
     # 归位到官方初始位置（机械臂复位 + 夹爪张开）
     arm_pulses = params['arm']['reset_pulses']

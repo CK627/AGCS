@@ -35,8 +35,9 @@ class ColorTracker:
         self.y_dis = int(start_y)
         # 纯比例控制：目标静止色块、慢速逼近，不需要 I（积分累积会抬头过冲）
         # 也不需要 D（clear 后 last_error=0 导致微分突跳）。只留 P。
-        self.x_pid = PID(P=0.1, I=0.0, D=0.0)
-        self.y_pid = PID(P=0.1, I=0.0, D=0.0)
+        # P=0.2：走路时目标在画面里移动快，P 太小云台跟不上（0.1 实测丢目标）
+        self.x_pid = PID(P=0.2, I=0.0, D=0.0)
+        self.y_pid = PID(P=0.2, I=0.0, D=0.0)
 
         self._lock = threading.Lock()
         self._latest = None
