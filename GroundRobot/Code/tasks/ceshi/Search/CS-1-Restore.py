@@ -3,9 +3,8 @@
 """CS-1-Restore：随机安全姿态打乱 → 等5s → 恢复初始状态+摄像头启动 → 回车结束。
 
 流程：
-    1) 随机打乱一组预校验的安全姿态/动作，逐个"先算后动"执行
-       （每个机械臂姿态先用 setPitchRange 校验有解才发指令，无解直接跳过，
-         保证不会发出逆运动学无解的动作）；
+    1) 只做一个随机机械臂姿态：先 setPitchRange 校验，无解就重选，
+       多次无解则跳过该环节直接继续（保证不会发出逆运动学无解的动作）；
     2) 等 5 秒（观察随机动作效果）；
     3) 调用 search.py 的 restore_initial_state() + start_camera()；
        同时启动视频推流，浏览器打开 http://<机器人IP>:5000/video.mjpeg
@@ -40,15 +39,12 @@ try:
 except ImportError:
     task_server = None
 
-# 预校验的安全机械臂姿态（x,y,z cm）
+# 安全机械臂姿态池（x,y,z cm），随机取一个
 SAFE_ARM_POSES = [
     (0, 15, 5), (12, 24, 5), (0, 10, 15), (5, 18, 8),
     (-8, 20, 6), (0, 15, 12), (8, 14, 4), (-5, 12, 10),
     (0, 18, 8), (10, 20, 10), (-10, 18, 6), (0, 22, 12),
 ]
-
-# 安全的机身动作（体态升降 dz mm，正=升负=降）
-SAFE_BODY_ACTIONS = [10, -5, 15, 0]
 
 
 def lan_ip():
@@ -94,31 +90,23 @@ def main():
 
     stand(ik, t=500)
     time.sleep(0.5)
-    logger.info('[0] 立正完成，开始随机姿态打乱')
+    logger.info('[0] 立正完成，开始随机姿态')
 
-    # ---------------- 1) 随机打乱安全姿态/动作，逐个"先算后动" ----------------
-    actions = [('arm', x, y, z) for x, y, z in SAFE_ARM_POSES] + \
-              [('body', dz) for dz in SAFE_BODY_ACTIONS]
-    random.shuffle(actions)
-    moved = 0
-    skipped = 0
-    for act in actions:
-        if act[0] == 'arm':
-            _, x, y, z = act
-            # 先校验是否有解（setPitchRange 只计算，不动作）
-            if ak.setPitchRange((x, y, z), alpha1, alpha2) is False:
-                logger.info('[1] 跳过无解姿态 (%.0f, %.0f, %.0f)', x, y, z)
-                skipped += 1
-                continue
-            ak.setPitchRangeMoving((x, y, z), pitch, alpha1, alpha2, 1)
-            logger.info('[1] 动作：机械臂 -> (%.0f, %.0f, %.0f)', x, y, z)
-        else:
-            dz = act[1]
-            ik.moveBody(ik.initial_pos, [0, 0, dz], [0, 0, 0], 300)
-            logger.info('[1] 动作：机身升降 %+d mm', dz)
-        moved += 1
-        time.sleep(1.0)
-    logger.info('[1] 随机姿态打乱完成：执行 %d 个，跳过无解 %d 个', moved, skipped)
+    # ---------------- 1) 只做一个随机机械臂姿态：无解就重选 ----------------
+    moved = False
+    for _ in range(10):
+        x, y, z = random.choice(SAFE_ARM_POSES)
+        # 先校验是否有解（setPitchRange 只计算，不动作）
+        if ak.setPitchRange((x, y, z), alpha1, alpha2) is False:
+            logger.info('[1] 姿态 (%.0f, %.0f, %.0f) 无解，重选', x, y, z)
+            continue
+        ak.setPitchRangeMoving((x, y, z), pitch, alpha1, alpha2, 1)
+        logger.info('[1] 随机姿态 -> (%.0f, %.0f, %.0f)', x, y, z)
+        moved = True
+        break
+    if not moved:
+        logger.info('[1] 多次重选仍无解，跳过随机姿态直接继续')
+    time.sleep(1.0)
 
     # ---------------- 2) 等 5 秒 ----------------
     logger.info('[2] 等待 5 秒…')
