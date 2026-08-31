@@ -65,7 +65,7 @@ def _publish_loop(cam, mapx, mapy, rotate, stop_event):
 
 
 def main():
-    logger = setup_logger('CS-2-Scan24', console=False)   # 只写日志文件，终端不输出
+    logger = setup_logger('CS-2-Scan24')   # 终端显示流程，详细日志进文件
     params = load_params()
     color = 'blue'   # 默认颜色
 

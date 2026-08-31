@@ -75,7 +75,7 @@ def _publish_loop(cam, mapx, mapy, rotate, stop_event):
 
 
 def main():
-    logger = setup_logger('CS-1-Restore', console=False)   # 只写日志文件，终端不输出
+    logger = setup_logger('CS-1-Restore')   # 终端显示流程，详细日志进文件
     params = load_params()
     arm = params['arm']
     pitch = arm.get('pitch', -90)

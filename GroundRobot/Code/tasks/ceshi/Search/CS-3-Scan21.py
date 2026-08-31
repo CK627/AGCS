@@ -66,7 +66,7 @@ def _publish_loop(cam, mapx, mapy, rotate, stop_event):
 
 
 def main():
-    logger = setup_logger('CS-3-Scan21', console=False)   # 只写日志文件，终端不输出
+    logger = setup_logger('CS-3-Scan21')   # 终端显示流程，详细日志进文件
     params = load_params()
     color = 'blue'   # 默认颜色
 
@@ -98,6 +98,7 @@ def main():
         return detect_color(f, lab, color, min_area=150)
 
     searcher = Searcher(board, ik, ak, params, detect)
+    logger.info('[scan] 开始扫描（21号+24号）…')
     r = searcher.ScanNumberTwentyOne()
     if r is not None:
         logger.info('[scan21] PASS 找到目标 center=%s area=%d', r['center'], r.get('area', 0))

@@ -67,7 +67,7 @@ def _publish_loop(cam, mapx, mapy, rotate, stop_event):
 
 
 def main():
-    logger = setup_logger('CS-4-TrackColor', console=False)   # 只写日志文件，终端不输出
+    logger = setup_logger('CS-4-TrackColor')   # 终端显示流程，详细日志进文件
     params = load_params()
     color = 'blue'   # 默认颜色
 
@@ -101,6 +101,7 @@ def main():
     searcher = Searcher(board, ik, ak, params, detect)
 
     # 1) 扫描找目标
+    logger.info('[scan] 开始扫描（21号+24号）…')
     r = searcher.ScanNumberTwentyOne()
     if r is None:
         logger.info('[scan] 未找到目标，直接进入追踪等待')
