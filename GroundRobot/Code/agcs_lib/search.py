@@ -38,7 +38,7 @@ class Searcher:
 
     # ---------------- 模块：24号舵机上下扫描 ----------------
     def scan_tilt(self, pulses=(500, 400, 300, 200, 600, 700, 800), wait=0.5):
-        """24号按脉宽序列上下扫描，每档检测，有目标就停下。
+        """24号按脉宽序列上下扫描，每档检测，有目标就停下；找不到恢复 24号=500。
 
         返回 Detection（dict）或 None。
         """
@@ -51,6 +51,10 @@ class Searcher:
                               p, r['center'], r.get('area', 0))
                 return r
             self.log.info('[scan24] 24号=%d 无目标', p)
+        # 找不到：24号 恢复回 500
+        self.board.bus_servo_set_position(wait, [[24, 500]])
+        time.sleep(wait)
+        self.log.info('[scan24] 未找到目标，24号恢复回 500')
         return None
 
     # ---------------- 占位：完整搜索/逼近（待按流程图实现） ----------------
