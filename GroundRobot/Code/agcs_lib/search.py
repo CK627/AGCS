@@ -51,7 +51,7 @@ class Searcher:
         self.pan_detect_interval = float(gf.get('pan_detect_interval_ms', 30)) / 1000.0
 
         # 追踪/逼近参数
-        self.edge_margin = int(gf.get('edge_margin', 30))
+        self.edge_margin = int(gf.get('edge_margin', 10))
         self.px_per_deg = float(gf.get('px_per_deg', 10.7))
         self.turn_deg = int(gf.get('turn_deg', 10))
         self.turn_sign = int(gf.get('turn_sign', 1))
@@ -129,20 +129,44 @@ class Searcher:
                 '云台调整', action='舵机21 %d->%d脉宽，舵机24 %d->%d脉宽'
                 % (old_x, self.x_dis, old_y, self.y_dis)))
 
-    def _confirm(self, tries=5, need_hits=2):
-        """目标连续出现若干帧才确认，避免把瞬时噪声当目标。"""
+    def _confirm(self, tries=3, need_hits=2):
+        """目标连续出现若干帧、且在画面中部，才确认，避免把边缘/噪声当目标。"""
         hits = 0
         last = None
         for _ in range(tries):
             r = self.detect()
             if r is not None:
                 cx, cy = r['center']
-                if (self.edge_margin <= cx <= 640 - self.edge_margin and
-                        self.edge_margin <= cy <= 480 - self.edge_margin):
+                self.log.debug('[search] %s', action_msg(
+                    '确认检测', action='中心x=%dpx 中心y=%dpx 面积=%d' % (cx, cy, r.get('area', 0))))
+                # 目标中心要在画面中部（不贴边）才计数：顶部/底部/左右边缘都不算，
+                # 避免目标还在边缘（快移出画面）就确认，导致追踪时目标已丢失
+                if 60 <= cx <= 580 and 100 <= cy <= 380:
                     hits += 1
                     last = r
             time.sleep(0.08)
         return last if hits >= need_hits else None
+
+    def _lock_on(self, det):
+        """检测到目标后先把云台转向目标居中，再确认。居中即锁定，不再继续扫。
+
+        方向约定与 ColorTracker 一致：dx = 320-cx、dy = 240-cy，比例转向，
+        目标偏右/偏下就按对应脉宽方向修正，直到目标进入画面中部再交给 _confirm。
+        """
+        for _ in range(12):
+            cx, cy = det['center']
+            if 60 <= cx <= 580 and 100 <= cy <= 380:
+                return self._confirm()
+            self.log.info('[search] %s', action_msg(
+                '锁定目标', action='目标中心x=%dpx y=%dpx 偏离画面中心，云台转向居中' % (cx, cy)))
+            self.x_dis = max(0, min(1000, int(self.x_dis + 0.2 * (320 - cx))))
+            self.y_dis = max(0, min(1000, int(self.y_dis + 0.2 * (240 - cy))))
+            self._cam()
+            time.sleep(self.settle)
+            det = self.detect()
+            if det is None:
+                return None
+        return self._confirm()
 
     def _turn_body(self, angle):
         if angle == 0:
@@ -182,7 +206,7 @@ class Searcher:
                 if r is not None:
                     self.log.info('[search] %s', action_msg(
                         '检测到目标', action='云台水平=%d脉宽 云台俯仰=%d脉宽' % (self.x_dis, self.y_dis)))
-                    cr = self._confirm()
+                    cr = self._lock_on(r)
                     if cr is not None:
                         return cr
                     self.log.debug('[search] %s', action_msg('检测到但未确认', action='继续扫描'))
@@ -212,7 +236,7 @@ class Searcher:
                 if r is not None:
                     self.log.info('[search] %s', action_msg(
                         '检测到目标', action='云台水平=%d脉宽 云台俯仰=%d脉宽' % (self.x_dis, self.y_dis)))
-                    cr = self._confirm()
+                    cr = self._lock_on(r)
                     if cr is not None:
                         return cr
                     self.log.debug('[search] %s', action_msg('检测到但未确认', action='继续扫描'))
@@ -263,7 +287,7 @@ class Searcher:
         # 复位位置先看一眼；没找到才进入 24 号舵机扫描
         r = self.detect()
         if r is not None:
-            cr = self._confirm()
+            cr = self._lock_on(r)
             if cr is not None:
                 return cr
 
