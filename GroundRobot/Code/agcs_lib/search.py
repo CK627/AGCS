@@ -51,10 +51,10 @@ class Searcher:
                               p, r['center'], r.get('area', 0))
                 return r
             self.log.info('[scan24] 24号=%d 无目标', p)
-        # 找不到：24号 恢复回 500
-        self.board.bus_servo_set_position(wait, [[24, 500]])
+        # 找不到：24号 恢复回官方初始位置 260（硬编码，官方 color_track 相机初始位）
+        self.board.bus_servo_set_position(wait, [[24, 260]])
         time.sleep(wait)
-        self.log.info('[scan24] 未找到目标，24号恢复回 500')
+        self.log.info('[scan24] 未找到目标，24号恢复回官方初始位置 260')
         return None
 
     # ---------------- 占位：完整搜索/逼近（待按流程图实现） ----------------
