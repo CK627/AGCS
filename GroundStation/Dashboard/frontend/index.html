@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>地面站中枢</title>
+<link rel="stylesheet" href="/common.css">
+</head>
+<body>
+  <h1>地面站中枢（空地协同） <span id="status" class="bad">机器人未连接</span></h1>
+  <div class="hint">无人机 + 地面机器人 + YOLO 统一视图：机器人画面回传 / 实时参数，无人机 SDK 数据 / 图传检测。</div>
+
+  <!-- ==================== 最上方：无人机 · YOLO 模型状态 ==================== -->
+  <div class="box">
+    <h2>🧠 无人机 · YOLO 模型状态</h2>
+    <div class="grid">
+      <div class="card"><h2>模型</h2><div class="v txt" id="modelName">-</div><div class="s">weights 文件</div></div>
+      <div class="card"><h2>加载状态</h2><div class="v" id="modelLoaded">-</div><div class="s" id="modelMsg"></div></div>
+      <div class="card"><h2>置信度阈值</h2><div class="v" id="modelConf">-</div><div class="s">conf</div></div>
+      <div class="card"><h2>推理 FPS</h2><div class="v" id="modelFps">-</div><div class="s">地面站推理</div></div>
+      <div class="card"><h2>累计检测</h2><div class="v" id="modelTotal">-</div><div class="s">总计目标数</div></div>
+      <div class="card"><h2>各类别计数</h2><div class="v txt" id="modelCounts">-</div><div class="s">class=count</div></div>
+      <div class="card"><h2>最近检测</h2><div class="v txt" id="modelLast">-</div><div class="s">最新若干个目标</div></div>
+    </div>
+  </div>
+
+  <!-- ==================== 下方分两栏：机器人 / 无人机 ==================== -->
+  <div class="wrap" style="margin-top:14px">
+    <div class="box">
+      <div class="titlebar">
+        <h2>🕷 机器人（摄像头画面回传）</h2>
+        <span class="chip" id="rOnline">连接 -</span>
+        <span class="chip">状态 <b id="rState">-</b></span>
+        <span class="chip">位置 <b id="rPos">-</b></span>
+        <span class="chip">朝向 <b id="rHeading">-</b></span>
+        <span class="chip">已抓取 <b id="rPicked">-</b></span>
+        <span class="chip">任务 <b id="rTask">-</b></span>
+        <span class="chip">结果 <b id="rResult">-</b></span>
+        <span class="chip msg">消息 <b id="rMsg">-</b></span>
+        <button class="fsbtn" data-fs="robotVideoBox">⛶ 全屏</button>
+      </div>
+      <div class="videoBox" id="robotVideoBox">
+        {% if robot_video_enabled %}<!-- JS videoHeal() 自动挂图，断流 5 秒自愈 -->
+        {% else %}
+        <div class="offline">画面已关闭（data/config.yaml 的 robot.video=false）</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="box">
+      <div class="titlebar">
+        <h2>📡 无人机画面（YOLO 检测预览）</h2>
+        <span class="chip" id="dOnline">连接 -</span>
+        <span class="chip">源 <b id="dSrc">-</b></span>
+        <span class="chip">位置 <b id="dPos">-</b></span>
+        <span class="chip">偏航 <b id="dYaw">-</b></span>
+        <span class="chip">电压 <b id="dVolt">-</b></span>
+        <span class="chip">避障 <b id="dObs">-</b></span>
+        <span class="chip">按键 <b id="dKey">-</b></span>
+        <span class="chip msg">消息 <b id="dNews">-</b></span>
+        <button class="fsbtn" data-fs="droneVideoBox">⛶ 全屏</button>
+      </div>
+      <div class="videoBox" id="droneVideoBox">
+        {% if drone_video_enabled %}<!-- JS videoHeal() 自动挂图，断流 5 秒自愈 -->
+        {% else %}
+        <div class="offline">画面已关闭（data/config.yaml 的 drone.video=false）</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+<script>
+const statusEl = document.getElementById('status');
+
+// 全屏显示画面（机器人 / 无人机）
+document.querySelectorAll('.fsbtn').forEach(btn => {
+  btn.onclick = () => {
+    const box = document.getElementById(btn.dataset.fs);
+    if (!document.fullscreenElement) {
+      (box.requestFullscreen || box.webkitRequestFullscreen).call(box);
+    } else {
+      document.exitFullscreen();
+    }
+  };
+});
+document.addEventListener('fullscreenchange', () => {
+  document.querySelectorAll('.fsbtn').forEach(b => {
+    b.textContent = document.fullscreenElement ? '✕ 退出全屏' : '⛶ 全屏';
+  });
+});
+
+// MJPEG 画面自愈：挂 <img>，断流/被热关闭后 5 秒自动重试，恢复后画面自动回来
+function videoHeal(boxId, src) {
+  const box = document.getElementById(boxId);
+  const img = document.createElement('img');
+  img.src = src + (src.includes('?') ? '&' : '?') + 't=' + Date.now();
+  img.alt = '画面未连接';
+  img.onerror = () => {
+    box.innerHTML = '<div class="offline">画面暂不可用（检查对应设备/服务是否在线、data/config.yaml 开关），5 秒后自动重试…</div>';
+    setTimeout(() => videoHeal(boxId, src), 5000);
+  };
+  box.innerHTML = '';
+  box.appendChild(img);
+}
+{% if robot_video_enabled %}videoHeal('robotVideoBox', '/robot_video_feed');{% endif %}
+{% if drone_video_enabled %}videoHeal('droneVideoBox', '/video.mjpeg');{% endif %}
+
+function setStatus(ok) {
+  statusEl.textContent = ok ? '机器人已连接' : '机器人未连接';
+  statusEl.className = ok ? 'ok' : 'bad';
+}
+
+async function refreshRobot() {
+  try {
+    const d = await (await fetch('/api/robot/status')).json();
+    setStatus(d.online);
+    const on = document.getElementById('rOnline');
+    on.textContent = d.online ? '● 在线' : '● 离线';
+    on.className = 'chip ' + (d.online ? 'ok' : 'bad');
+    const st = document.getElementById('rState');
+    st.textContent = d.state || '-';
+    st.className = 'state' + (d.state ? ' ' + d.state : '');
+    document.getElementById('rPos').textContent =
+      d.position_m ? d.position_m.x + ', ' + d.position_m.y : '-';
+    document.getElementById('rHeading').textContent =
+      d.heading_deg != null ? d.heading_deg + '°' : '-';
+    document.getElementById('rPicked').textContent =
+      d.picked_count != null ? d.picked_count : '-';
+    document.getElementById('rTask').textContent =
+      d.last_task ? (d.last_task.task_id || '?') : '-';
+    const r = document.getElementById('rResult');
+    r.textContent = d.last_result || '-';
+    r.style.color = d.last_result === 'done' ? '#4ade80' :
+      (d.last_result === 'failed' ? '#f87171' : '');
+    document.getElementById('rMsg').textContent = d.message || '-';
+  } catch (e) {
+    setStatus(false);
+  }
+}
+
+async function refreshDrone() {
+  try {
+    const d = await (await fetch('/api/drone/status')).json();
+    const on = document.getElementById('dOnline');
+    on.textContent = d.online ? '● 在线' : '● 离线';
+    on.className = 'chip ' + (d.online ? 'ok' : 'bad');
+    document.getElementById('dSrc').textContent =
+      d.source === 'sdk' ? 'SDK' : (d.source || '-');
+    document.getElementById('dPos').textContent =
+      d.pose ? (d.pose.x + ', ' + d.pose.y + ', ' + d.pose.z) : '-';
+    document.getElementById('dYaw').textContent =
+      d.pose && d.pose.yaw_deg != null ? d.pose.yaw_deg + '°' : '-';
+    const voltEl = document.getElementById('dVolt');
+    const volt = d.battery ? d.battery.voltage : null;
+    voltEl.textContent = volt == null ? '-' : volt + ' V';
+    voltEl.style.color = volt != null && volt < 3.3 ? '#f87171' : '';
+    const obs = d.obstacles || {};
+    const obsEl = document.getElementById('dObs');
+    obsEl.textContent =
+      obs.front == null ? '-' : obs.front + ' / ' + obs.back + ' / ' + obs.left + ' / ' + obs.right;
+    const near = [obs.front, obs.back, obs.left, obs.right].some(v => v != null && v < 100);
+    obsEl.style.color = near ? '#fbbf24' : '';
+    document.getElementById('dKey').textContent =
+      d.key_press ? '按下' : '-';
+    document.getElementById('dNews').textContent = (d.role_news || '-');
+  } catch (e) {
+    const on = document.getElementById('dOnline');
+    on.textContent = '● 接口错误';
+    on.className = 'chip bad';
+  }
+}
+
+async function refreshModel() {
+  try {
+    const m = await (await fetch('/api/model/status')).json();
+    document.getElementById('modelName').textContent = m.model || '-';
+    const ld = document.getElementById('modelLoaded');
+    ld.textContent = m.loaded ? '已加载' : '未加载';
+    ld.style.color = m.loaded ? '#4ade80' : '#f87171';
+    document.getElementById('modelMsg').textContent = m.loaded ? '' : (m.message || '');
+    document.getElementById('modelConf').textContent = m.conf != null ? m.conf : '-';
+    document.getElementById('modelFps').textContent = m.fps != null ? m.fps : '-';
+    document.getElementById('modelTotal').textContent =
+      m.total_detections != null ? m.total_detections : '-';
+    document.getElementById('modelCounts').textContent =
+      m.counts ? Object.entries(m.counts).map(kv => kv[0] + '=' + kv[1]).join(' | ') : '-';
+    document.getElementById('modelLast').textContent =
+      m.last_detections && m.last_detections.length
+        ? m.last_detections.map(x => x.class + ' ' + x.conf).join(', ') : '-';
+  } catch (e) { document.getElementById('modelName').textContent = '接口错误'; }
+}
+
+refreshRobot(); setInterval(refreshRobot, 1000);
+refreshDrone(); setInterval(refreshDrone, 2000);
+refreshModel(); setInterval(refreshModel, 2000);
+</script>
+</body>
+</html>

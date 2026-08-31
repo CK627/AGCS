@@ -1,0 +1,23 @@
+地面站仪表盘: http://0.0.0.0:20001
+Traceback (most recent call last):
+  File "/Users/jj/Documents/MyCode/AGCS/GroundStation/Dashboard/backend/app.py", line 279, in <module>
+    serve(app, host=args.host, port=args.port, threads=8)
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/waitress/__init__.py", line 13, in serve
+    server = _server(app, **kw)
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/waitress/server.py", line 78, in create_server
+    last_serv = TcpWSGIServer(
+        application,
+    ...<5 lines>...
+        sockinfo=sockinfo,
+    )
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/waitress/server.py", line 243, in __init__
+    self.bind_server_socket()
+    ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/waitress/server.py", line 364, in bind_server_socket
+    self.bind(sockaddr)
+    ~~~~~~~~~^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/waitress/wasyncore.py", line 374, in bind
+    return self.socket.bind(addr)
+           ~~~~~~~~~~~~~~~~^^^^^^
+OSError: [Errno 48] Address already in use
