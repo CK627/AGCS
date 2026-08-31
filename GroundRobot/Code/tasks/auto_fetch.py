@@ -37,6 +37,7 @@ def main():
     color = args.color
 
     from agcs_lib.logs import setup_logger, action_msg
+    from agcs_lib.params import summarize
     logger = setup_logger()
     logger.info('启动 auto_fetch：color=%s', color)
 
@@ -45,6 +46,7 @@ def main():
     ak = make_arm_ik()
     params = load_params()
     params['grab']['grab_area_ratio'] = args.ratio  # 命令行 --ratio 覆盖 yaml 占比阈值
+    logger.info('关键生效参数：\n%s', summarize(params))
     rotate = params['vision'].get('camera_rotate', 0)
     lab = load_lab_data()
     mapx, mapy = load_undistort_maps()

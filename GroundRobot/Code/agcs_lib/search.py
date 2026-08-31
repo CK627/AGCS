@@ -183,7 +183,11 @@ class Searcher:
         return 0 < d < self.obstacle_threshold
 
     def _smooth_tilt_to(self, x, target_y):
-        """把 21 移到 x，然后让 24 以小步平滑移动到 target_y，途中持续检测。"""
+        """把 21 移到 x，然后让 24 以小步平滑移动到 target_y，途中持续检测。
+
+        修复：检测与移动解耦——发移动指令后，在移动窗口内反复取帧；
+        不再用 sleep(整个检测间隔) 把唯一一次检测挡在窗外（旧实现每步只检测 1 帧）。
+        """
         self.x_dis = max(0, min(1000, int(x)))
         self.board.bus_servo_set_position(0.05, [[21, self.x_dis]])
 
@@ -200,8 +204,8 @@ class Searcher:
                 self.scan_move_ms, [[24, self.y_dis], [21, self.x_dis]])
 
             # 舵机移动的同时反复取帧检测，避免“跳一下停一下”
-            end_time = time.time() + self.scan_move_ms
-            while time.time() < end_time:
+            deadline = time.time() + self.scan_move_ms
+            while time.time() < deadline:
                 r = self.detect()
                 if r is not None:
                     self.log.info('[search] %s', action_msg(
@@ -210,14 +214,20 @@ class Searcher:
                     if cr is not None:
                         return cr
                     self.log.debug('[search] %s', action_msg('检测到但未确认', action='继续扫描'))
-                time.sleep(self.detect_interval)
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    break
+                time.sleep(min(self.detect_interval, remaining))
 
             if next_y == target_y:
                 break
         return None
 
     def _smooth_pan_to(self, target_x):
-        """让 21 号以小步平滑移动到 target_x，途中持续检测；找到返回 dict。"""
+        """让 21 号以小步平滑移动到 target_x，途中持续检测；找到返回 dict。
+
+        修复：与 _smooth_tilt_to 相同，检测不再被整段 sleep 挡在移动窗口外。
+        """
         target_x = max(0, min(1000, int(target_x)))
         step = self.pan_scan_step
         direction = 1 if target_x >= self.x_dis else -1
@@ -230,8 +240,8 @@ class Searcher:
             self.x_dis = next_x
             self.board.bus_servo_set_position(self.pan_move_ms, [[21, self.x_dis]])
 
-            end_time = time.time() + self.pan_detect_interval
-            while time.time() < end_time:
+            deadline = time.time() + self.pan_move_ms
+            while time.time() < deadline:
                 r = self.detect()
                 if r is not None:
                     self.log.info('[search] %s', action_msg(
@@ -240,7 +250,10 @@ class Searcher:
                     if cr is not None:
                         return cr
                     self.log.debug('[search] %s', action_msg('检测到但未确认', action='继续扫描'))
-                time.sleep(self.pan_detect_interval)
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    break
+                time.sleep(min(self.pan_detect_interval, remaining))
 
             if next_x == target_x:
                 break

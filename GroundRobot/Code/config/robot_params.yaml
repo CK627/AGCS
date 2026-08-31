@@ -137,7 +137,6 @@ grab:
   y_forward: 0.0           # 夹取点前伸补偿 cm（正=更靠前；官方+2已过度，改0待标定）
   grab_y_min: 6.0          # 夹取前实际 y 下限 cm
   grab_y_max: 22.0         # 夹取前实际 y 上限 cm
-  fine_step_mm: 10         # 夹取前六足前后微调步长 mm
   move_tol_px: 40          # 判定块被夹走的像素位移
   pos_ratio: 1.5           # 位移阈值 = max(move_tol_px, pos_ratio*radius)
   attempts: 3              # 夹取重试次数
@@ -203,7 +202,6 @@ grab:
   cy_ref: 240             # 高度补偿基准 cy
   height_gain: 0.0        # cy 每偏离基准 1px，z 调整 cm（未标定，先 0 禁用；标定后填符号+大小）
   ultra_weight: 0.0       # 超声波与视觉 y 融合权重（先用0，避免把y拉偏）
-  ultra_max_cm: 30        # 超声波参与融合的最大距离 cm
   base_pulse: 220         # 高度补偿基准 24 号脉宽
   height_gain_pulse: 0.0  # 24号脉宽高度补偿（先用0，避免用到过期脉宽）
   area_ref: 3000          # 面积-高度映射基准面积
@@ -233,6 +231,7 @@ grab:
   tof_samples: 5            # 红外中位数采样次数（丢 0/超量程后取中）
   reach_y_start: 28.0       # 前伸扫描起始 y cm（alpha=0 有解下限，servo23 不超限）
   reach_y_max: 45.0         # 前伸扫描最大 y cm（要能越过目标，目标约在前方 40cm）
+  max_reach_steps: 30       # 前伸最大步数（防死循环兜底；与 reach_y_max 同时作为硬上限）
   reach_gain: 20.0          # 前伸增益 cm/占比：步长 = (grab_area_ratio - 当前占比) * gain
   reach_step_min: 0.5       # 最小前伸步长 cm（占比接近阈值时的小步）
   reach_step_max: 2.0       # 最大前伸步长 cm（看不到/目标远时的大步，慢调）
@@ -251,5 +250,3 @@ grab:
   slow_step_cm: 0.2         # 慢速点动步长 cm（2mm）
   descend_move_ms: 120      # 每次下降舵机转动时间 ms
   descend_settle_ms: 80     # 每次下降后稳定等待 ms
-  min_z: 0.0                # 下降 z 下限 cm（安全兜底，防过冲）
-  descend_max_steps: 100    # 下降总步数上限（防死循环兜底）

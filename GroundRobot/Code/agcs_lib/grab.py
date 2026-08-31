@@ -37,6 +37,8 @@ class Grabber:
         # 前伸夹取参数
         self.coarse_z = float(gc.get('coarse_z', 15.0))
         self.reach_y_start = float(gc.get('reach_y_start', 28.0))
+        self.reach_y_max = float(gc.get('reach_y_max', 45.0))      # 前伸硬上限：超过即兜底夹取
+        self.max_reach_steps = int(gc.get('max_reach_steps', 30))  # 前伸最大步数（防死循环兜底）
         self.grab_area_ratio = float(gc.get('grab_area_ratio', 0.30))
         self.reach_gain = float(gc.get('reach_gain', 20.0))          # 前伸增益 cm/占比
         self.reach_step_min = float(gc.get('reach_step_min', 0.5))   # 占比接近阈值时的小步
@@ -100,7 +102,15 @@ class Grabber:
         return vals[len(vals) // 2] / 10.0
 
     def _descend(self, y):
-        """前伸到位后下降：红外测夹爪离地高度，降到色块顶面附近返回 True。"""
+        """前伸到位后下降：红外测夹爪离地高度，降到色块顶面附近返回 True。
+
+        返回 False 表示未确认到位（红外未初始化 / 未触发 / 已达 z 下限 / IK 无解），
+        调用方必须检查返回值，不允许静默继续闭夹。
+        """
+        if self.tof is None:
+            self.log.info('[grab] %s', action_msg(
+                '下降失败', reason='红外(VL53L0X)未初始化，无法确认夹爪离地高度'))
+            return False
         z = self.coarse_z
         for _ in range(self.descend_max_steps):
             d = self._tof_height_cm()
@@ -110,17 +120,39 @@ class Grabber:
                 return True
             z -= self.descend_step_cm
             if z < self.min_z:
-                break
+                self.log.info('[grab] %s', action_msg(
+                    '下降失败', reason='z 达下限 %.1fcm 仍未触发红外(<=%.1fcm)'
+                    % (self.min_z, self.tof_grab_cm)))
+                return False
             if not self._move((0.0, y, z), move_ms=self.descend_move_ms, settle_ms=self.descend_settle_ms):
-                break
+                self.log.info('[grab] %s', action_msg(
+                    '下降失败', reason='z=%.1fcm 逆运动学无解或俯仰降级' % z))
+                return False
+        self.log.info('[grab] %s', action_msg(
+            '下降失败', reason='达到最大下降步数 %d 仍未触发红外' % self.descend_max_steps))
         return False
 
+    def _close_lift(self, last_servos):
+        """夹爪闭合 + 22 号肩舵机上抬（last_servos 无效时跳过上抬）。"""
+        self.board.bus_servo_set_position(0.5, [[25, self.gripper_close]])
+        time.sleep(1.0)
+        if last_servos:
+            self.board.bus_servo_set_position(0.5, [[22, last_servos["servo22"] + self.lift_pulse]])
+            time.sleep(0.5)
+
     def _reach(self):
-        """前伸 + 画面占比闭环：占比离阈值越远步长越大、越近越小；占比达标即夹。返回是否夹取。"""
+        """前伸 + 画面占比闭环：占比离阈值越远步长越大、越近越小；占比达标即夹。返回是否夹取。
+
+        三出口：占比达标（下降到色块高度后夹取）/
+        前伸到 reach_y_max 或 IK 无解（兜底夹取）/
+        达到 max_reach_steps（放弃本次，交 run 重试）。
+        """
         # 先前伸到扫描起始位置（alpha=0，末端朝前），避免从收拢位大幅跳变
         last_servos = self._move((0.0, self.reach_y_start, self.coarse_z), move_ms=800, settle_ms=500)
         y = self.reach_y_start
-        while True:
+        steps = 0
+        while steps < self.max_reach_steps:
+            steps += 1
             r = self.detect()
             if r is None:
                 area, ratio, cx, cy = 0, 0.0, 0, 0
@@ -133,12 +165,11 @@ class Grabber:
                     self.log.info('[grab] %s', action_msg(
                         '目标占比达标', reason='占比 %.1f%% >= %.1f%%' % (ratio * 100, self.grab_area_ratio * 100),
                         action='下降到色块高度再夹取'))
-                    self._descend(y)
-                    self.board.bus_servo_set_position(0.5, [[25, self.gripper_close]])
-                    time.sleep(1.0)
-                    if last_servos:
-                        self.board.bus_servo_set_position(0.5, [[22, last_servos["servo22"] + self.lift_pulse]])
-                        time.sleep(0.5)
+                    if not self._descend(y):
+                        self.log.info('[grab] %s', action_msg(
+                            '本次夹取失败', reason='下降未确认到位', action='放弃本次，等待重试'))
+                        return False
+                    self._close_lift(last_servos)
                     self.log.info('[grab] %s', action_msg('夹取执行完成'))
                     return True
             # 根据画面占比动态前伸：占比离阈值越远步长越大、越近越小（逐渐逼近，不伸过头）
@@ -147,18 +178,27 @@ class Grabber:
             self.log.info('[grab] %s', action_msg(
                 '前伸扫描', action='y=%.1fcm 面积=%d 占比=%.1f%% cy=%d → 前伸 %.1fcm' % (y, area, ratio * 100, cy, step)))
             y += step
+            if y > self.reach_y_max:
+                # 前伸到配置上限：已经最靠近目标，直接夹取兜底（不再依赖 IK 无解终止）
+                self.log.info('[grab] %s', action_msg(
+                    '前伸到上限', reason='y=%.1fcm > reach_y_max=%.1fcm' % (y, self.reach_y_max),
+                    action='直接夹取兜底'))
+                self._close_lift(last_servos)
+                self.log.info('[grab] %s', action_msg('夹取执行完成'))
+                return True
             res = self._move((0.0, y, self.coarse_z), move_ms=400, settle_ms=300)
             if res is False:
                 # 前伸到极限（IK 无解），已经最靠近目标，直接夹取
                 self.log.info('[grab] %s', action_msg('前伸到极限', action='y=%.1fcm 直接夹取' % y))
-                self.board.bus_servo_set_position(0.5, [[25, self.gripper_close]])
-                time.sleep(1.0)
-                if last_servos:
-                    self.board.bus_servo_set_position(0.5, [[22, last_servos["servo22"] + self.lift_pulse]])
-                    time.sleep(0.5)
+                self._close_lift(last_servos)
                 self.log.info('[grab] %s', action_msg('夹取执行完成'))
                 return True
             last_servos = res
+
+        self.log.info('[grab] %s', action_msg(
+            '本次夹取失败', reason='前伸 %d 步仍未满足占比阈值' % self.max_reach_steps,
+            action='放弃本次，等待重试'))
+        return False
 
     def run(self):
         self.board.bus_servo_set_position(0.5, [[25, self.gripper_open]])
