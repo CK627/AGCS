@@ -76,7 +76,7 @@ def main():
 
     board = make_board()
     ik = make_ik(board)
-    ak = make_arm_ik(params)
+    ak = make_arm_ik(board, params)
     restore = Restore(board, ik, ak, params)
 
     cam, mapx, mapy, rotate = restore.start_camera()

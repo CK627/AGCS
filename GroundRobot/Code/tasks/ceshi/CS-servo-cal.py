@@ -52,7 +52,7 @@ def main():
     logger.info('[CS-servo-cal] %s', action_msg('启动标定', action='color=%s %d-%d' % (args.color, args.start, args.end)))
 
     board = make_board()
-    ak = make_arm_ik()
+    ak = make_arm_ik(board)
     params = load_params()
     rotate = params['vision'].get('camera_rotate', 0)
     lab = load_lab_data()

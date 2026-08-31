@@ -39,7 +39,7 @@ def main():
 
     board = make_board()
     ik = make_ik(board)
-    ak = make_arm_ik()
+    ak = make_arm_ik(board)
     params = load_params()
     rotate = params['vision'].get('camera_rotate', 0)
     lab = load_lab_data()

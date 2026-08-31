@@ -36,7 +36,7 @@ def main():
     try:
         board = make_board()
         ik = make_ik(board)
-        ak = make_arm_ik(params)
+        ak = make_arm_ik(board, params)
 
         stand(ik, t=500)                       # 六足立正
         arm_pulses = params['arm']['reset_pulses']

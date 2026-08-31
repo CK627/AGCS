@@ -51,7 +51,7 @@ def main():
 
     board = make_board()
     ik = make_ik(board)
-    ak = make_arm_ik()
+    ak = make_arm_ik(board)
     params = load_params()
     params['grab']['grab_area_ratio'] = args.ratio  # 命令行 --ratio 覆盖 yaml 占比阈值
     logger.info('关键生效参数：\n%s', summarize(params))
