@@ -39,6 +39,9 @@ class Searcher:
         self.tof = tof
         self.log = get_logger('search')
         self._stop_event = threading.Event()
+        # 当前云台位置（21 水平 / 24 俯仰），扫描与追踪共用起点
+        self.x_dis = 500
+        self.y_dis = 260
 
     # ---------------- 模块：24号舵机上下扫描 ----------------
     def ScanNumberTwentyFour(self, pulses=(500, 400, 300, 200, 600, 700, 800), wait=0.5):
@@ -47,6 +50,7 @@ class Searcher:
         返回 Detection（dict）或 None。
         """
         for p in pulses:
+            self.y_dis = p
             self.board.bus_servo_set_position(wait, [[24, p]])
             time.sleep(wait)
             r = self.detect()
@@ -56,6 +60,7 @@ class Searcher:
                 return r
             self.log.info('[scan24] 24号=%d 无目标', p)
         # 找不到：24号 恢复回官方初始位置 260（硬编码，官方 color_track 相机初始位）
+        self.y_dis = 260
         self.board.bus_servo_set_position(wait, [[24, 260]])
         time.sleep(wait)
         self.log.info('[scan24] 未找到目标，24号恢复回官方初始位置 260')
@@ -68,6 +73,7 @@ class Searcher:
         找不到则 21号回 500、24号回 260。返回 Detection（dict）或 None。
         """
         for p in pan_pulses:
+            self.x_dis = p
             self.board.bus_servo_set_position(wait, [[21, p]])
             time.sleep(wait)
             r = self.ScanNumberTwentyFour()
@@ -77,10 +83,35 @@ class Searcher:
                 return r
             self.log.info('[scan21] 21号=%d 未找到', p)
         # 找不到：21号回 500，24号回 260
+        self.x_dis = 500
+        self.y_dis = 260
         self.board.bus_servo_set_position(wait, [[21, 500], [24, 260]])
         time.sleep(wait)
         self.log.info('[scan21] 未找到目标，21号恢复 500，24号恢复 260')
         return None
+
+    # ---------------- 模块：颜色追踪（目标锁定 + 画面居中，不走动） ----------------
+    def TrackColor(self):
+        """颜色追踪：锁定目标，持续调整 21/24 让目标保持在画面居中（不走动）。
+
+        借鉴官方 color_track 的 PID 云台跟踪，后台线程持续检测并修正；
+        从当前云台位置开始（扫描已记录 x_dis/y_dis）。调用 stop() 停止。
+        """
+        from agcs_lib.tracker import ColorTracker
+        gf = self.params.get('gimbal_fetch', {})
+        self.tracker = ColorTracker(
+            self.board, self.detect,
+            dead_x=int(gf.get('track_dead_cx', 40)),
+            dead_y=int(gf.get('track_dead_cy', 60)),
+            start_x=self.x_dis, start_y=self.y_dis,
+            tilt_sign=int(gf.get('tilt_sign', -1)),
+            pan_sign=int(gf.get('pan_sign', 1)),
+            p_gain=float(gf.get('track_p_gain', 0.2)),
+            settle=float(gf.get('track_settle_ms', 80)) / 1000.0,
+        )
+        self.tracker.start()
+        self.log.info('[track] 颜色追踪已启动：目标锁定并保持画面居中（21=%d 24=%d，不走动）',
+                      self.x_dis, self.y_dis)
 
     # ---------------- 占位：完整搜索/逼近（待按流程图实现） ----------------
     def run(self):
@@ -94,5 +125,7 @@ class Searcher:
         time.sleep(0.5)
 
     def stop(self):
-        """占位：线程清理待重新设计。"""
+        """停止追踪线程。"""
         self._stop_event.set()
+        if getattr(self, 'tracker', None) is not None:
+            self.tracker.stop()
