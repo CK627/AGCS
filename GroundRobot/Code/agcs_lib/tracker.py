@@ -17,7 +17,7 @@ class ColorTracker:
     def __init__(self, board, detect, dead_x=40, dead_y=60,
                  pan_min=0, pan_max=1000, tilt_min=0, tilt_max=1000,
                  start_x=500, start_y=260, interval=0.03, tilt_fixed=False,
-                 tilt_sign=1, settle=0.12):
+                 tilt_sign=1, pan_sign=1, p_gain=0.2, settle=0.12):
         self.board = board
         self.detect = detect
         self.dead_x = int(dead_x)
@@ -29,15 +29,17 @@ class ColorTracker:
         self.interval = float(interval)
         self.tilt_fixed = tilt_fixed  # True=24 号固定不追踪俯仰，只动 21 号水平转
         self.tilt_sign = int(tilt_sign)  # 俯仰方向符号：本机实测为 -1（上下反）
+        self.pan_sign = int(pan_sign)    # 水平方向符号：待探针实测（默认 +1）
         self.settle = float(settle)      # 舵机移动后到位等待，避免运动模糊丢帧
+        self.p_gain = float(p_gain)      # PID 比例增益：锁定速度（越大越快，过大易过冲）
 
         self.x_dis = int(start_x)
         self.y_dis = int(start_y)
         # 纯比例控制：目标静止色块、慢速逼近，不需要 I（积分累积会抬头过冲）
         # 也不需要 D（clear 后 last_error=0 导致微分突跳）。只留 P。
-        # P=0.2：走路时目标在画面里移动快，P 太小云台跟不上（0.1 实测丢目标）
-        self.x_pid = PID(P=0.2, I=0.0, D=0.0)
-        self.y_pid = PID(P=0.2, I=0.0, D=0.0)
+        # 走路时目标在画面里移动快，P 太小云台跟不上（0.1 实测丢目标）
+        self.x_pid = PID(P=self.p_gain, I=0.0, D=0.0)
+        self.y_pid = PID(P=self.p_gain, I=0.0, D=0.0)
 
         self._lock = threading.Lock()
         self._latest = None
@@ -55,7 +57,9 @@ class ColorTracker:
         else:
             self.x_pid.SetPoint = 320
             self.x_pid.update(cx)
-            self.x_dis = max(self.pan_min, min(self.pan_max, self.x_dis + int(self.x_pid.output)))
+            # pan_sign：水平修正方向按本机实际方向取反（待探针定标）
+            self.x_dis = max(self.pan_min, min(
+                self.pan_max, self.x_dis + int(self.pan_sign * self.x_pid.output)))
         # 24 号俯仰：tilt_fixed 时固定（保持摆位后的水平朝前），否则正常追踪
         if not self.tilt_fixed:
             if abs(cy - 240) < self.dead_y:

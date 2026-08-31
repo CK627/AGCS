@@ -58,9 +58,12 @@ class Searcher:
         self.turn_deg = int(gf.get('turn_deg', 10))
         self.turn_sign = int(gf.get('turn_sign', 1))
         self.tilt_sign = int(gf.get('tilt_sign', 1))      # 俯仰方向符号（本机实测 -1）
+        self.pan_sign = int(gf.get('pan_sign', 1))        # 水平方向符号（待探针定标）
+        self.track_p_gain = float(gf.get('track_p_gain', 0.2))  # 锁定速度（PID 比例增益）
         self.track_settle_ms = float(gf.get('track_settle_ms', 120)) / 1000.0  # 跟踪到位等待
         self.lost_limit = int(gf.get('lost_limit_frames', 15))  # 连续丢帧超过该值才放弃逼近
         self.center_wait = float(gf.get('center_wait_ms', 800)) / 1000.0  # 每步走后等云台重新居中的时间窗
+        self.walk_mm_small = int(gf.get('walk_mm_small', 20))  # 未完全锁准时的小步步长
         self.max_approach = int(gf.get('max_approach', 12))
         self.near_radius = float(gf.get('near_radius', 65.0))
         self.base_pulse = float(gf.get('base_pulse', 220.0))
@@ -94,7 +97,8 @@ class Searcher:
             board, detect,
             dead_x=self.track_dead_x, dead_y=self.track_dead_y,
             start_x=self.x_dis, start_y=self.y_dis,
-            tilt_sign=self.tilt_sign, settle=self.track_settle_ms)
+            tilt_sign=self.tilt_sign, pan_sign=self.pan_sign,
+            p_gain=self.track_p_gain, settle=self.track_settle_ms)
         self._stop_event = threading.Event()
         self._obstacle_thread = None
 
@@ -176,7 +180,8 @@ class Searcher:
                 return self._confirm()
             self.log.info('[search] %s', action_msg(
                 '锁定目标', action='目标中心x=%dpx y=%dpx 偏离画面中心，云台转向居中' % (cx, cy)))
-            self.x_dis = max(0, min(1000, int(self.x_dis + 0.2 * (320 - cx))))
+            # pan_sign：水平修正方向按本机实际方向取反（待探针定标）
+            self.x_dis = max(0, min(1000, int(self.x_dis + self.pan_sign * 0.2 * (320 - cx))))
             # tilt_sign：俯仰修正方向按本机实际方向取反
             self.y_dis = max(0, min(1000, int(self.y_dis + self.tilt_sign * 0.2 * (240 - cy))))
             self._cam()
@@ -401,16 +406,21 @@ class Searcher:
                 time.sleep(0.4)
                 continue
 
-            # 3) 目标被走路带偏（贴到画面上下边）：等云台拉回画面中部再走
+            # 3) 目标被走路带偏（贴到画面上下边）：给 tracker 时间拉回中部（锁定速度可调）
+            step_mm = self.walk_mm
             if not (120 <= cy <= 380):
                 last_center = (cx, cy)
                 r = self._wait_centered(timeout=self.center_wait)
                 if r is None:
-                    self.log.info('[search] %s', action_msg(
-                        '目标未回到画面中部',
-                        reason='最后中心x=%dpx y=%dpx，等待 %.0fms 后仍偏离'
-                        % (last_center[0], last_center[1], self.center_wait * 1000)))
-                    return None, None
+                    # 等不到完全居中：只要目标还可见，就走最小步（边走边校，速度与锁定同步）
+                    r = self._wait_target(timeout=0.3)
+                    if r is None:
+                        self.log.info('[search] %s', action_msg(
+                            '目标未回到画面中部且不可见',
+                            reason='最后中心x=%dpx y=%dpx，等待 %.0fms 后偏离且丢失'
+                            % (last_center[0], last_center[1], self.center_wait * 1000)))
+                        return None, None
+                    step_mm = self.walk_mm_small
                 cx, cy = r['center']
                 dx = int(r['x_dis']) - 500
 
@@ -444,10 +454,10 @@ class Searcher:
                     time.sleep(0.4)
                 return (cx, cy), cy
 
-            # 4) 走一小步（40mm×1 慢速），下一步前再等 tracker 重新居中
+            # 4) 走一步：已居中走正常步，未完全锁准走小步（边走边校）
             self.log.debug('[search] %s', action_msg(
-                '接近中', action='前进 %dmm x1' % self.walk_mm))
-            go_forward(self.ik, self.walk_mm, self.walk_speed, 1)
+                '接近中', action='前进 %dmm x1' % step_mm))
+            go_forward(self.ik, step_mm, self.walk_speed, 1)
             time.sleep(0.05)
 
         return None, None
