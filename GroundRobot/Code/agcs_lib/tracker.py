@@ -16,7 +16,7 @@ from agcs_lib.logs import get_logger, action_msg
 class ColorTracker:
     def __init__(self, board, detect, dead_x=40, dead_y=60,
                  pan_min=0, pan_max=1000, tilt_min=0, tilt_max=1000,
-                 start_x=500, start_y=260, interval=0.03):
+                 start_x=500, start_y=260, interval=0.03, tilt_fixed=False):
         self.board = board
         self.detect = detect
         self.dead_x = int(dead_x)
@@ -26,11 +26,14 @@ class ColorTracker:
         self.tilt_min = int(tilt_min)
         self.tilt_max = int(tilt_max)
         self.interval = float(interval)
+        self.tilt_fixed = tilt_fixed  # True=24 号固定不追踪俯仰，只动 21 号水平转
 
         self.x_dis = int(start_x)
         self.y_dis = int(start_y)
-        self.x_pid = PID(P=0.1, I=0.001, D=0.008)
-        self.y_pid = PID(P=0.1, I=0.02, D=0.008)
+        # 纯比例控制：目标静止色块、慢速逼近，不需要 I（积分累积会抬头过冲）
+        # 也不需要 D（clear 后 last_error=0 导致微分突跳）。只留 P。
+        self.x_pid = PID(P=0.1, I=0.0, D=0.0)
+        self.y_pid = PID(P=0.1, I=0.0, D=0.0)
 
         self._lock = threading.Lock()
         self._latest = None
@@ -42,17 +45,21 @@ class ColorTracker:
     def _update(self, r):
         cx, cy = r['center']
         old_x, old_y = self.x_dis, self.y_dis
-        # 死区：目标已居中就不更新 PID，并清积分，避免积分累积过冲把目标追出画面
-        if abs(cx - 320) < self.dead_x and abs(cy - 240) < self.dead_y:
+        # 21 号水平追踪（死区内清积分，否则更新）
+        if abs(cx - 320) < self.dead_x:
             self.x_pid.clear()
-            self.y_pid.clear()
         else:
             self.x_pid.SetPoint = 320
             self.x_pid.update(cx)
-            self.y_pid.SetPoint = 240
-            self.y_pid.update(cy)
             self.x_dis = max(self.pan_min, min(self.pan_max, self.x_dis + int(self.x_pid.output)))
-            self.y_dis = max(self.tilt_min, min(self.tilt_max, self.y_dis + int(self.y_pid.output)))
+        # 24 号俯仰：tilt_fixed 时固定（保持摆位后的水平朝前），否则正常追踪
+        if not self.tilt_fixed:
+            if abs(cy - 240) < self.dead_y:
+                self.y_pid.clear()
+            else:
+                self.y_pid.SetPoint = 240
+                self.y_pid.update(cy)
+                self.y_dis = max(self.tilt_min, min(self.tilt_max, self.y_dis + int(self.y_pid.output)))
         if old_x != self.x_dis or old_y != self.y_dis:
             self.log.debug('[track] %s', action_msg(
                 '云台调整', action='21号 %d->%d，24号 %d->%d' % (old_x, self.x_dis, old_y, self.y_dis)))

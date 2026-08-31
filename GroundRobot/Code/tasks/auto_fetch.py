@@ -32,6 +32,7 @@ def main():
     parser.add_argument('--detector', default='color', choices=['color', 'yolo'])
     parser.add_argument('--model', default='models/worm_best.onnx', help='yolo 时的 ONNX 模型路径')
     parser.add_argument('--conf', type=float, default=0.35, help='yolo 置信度阈值')
+    parser.add_argument('--ratio', type=float, default=0.3, help='夹取占比阈值（目标占画面 320x240 比例 >= 此值夹取）')
     args = parser.parse_args()
     color = args.color
 
@@ -43,12 +44,24 @@ def main():
     ik = make_ik(board)
     ak = make_arm_ik()
     params = load_params()
+    params['grab']['grab_area_ratio'] = args.ratio  # 命令行 --ratio 覆盖 yaml 占比阈值
     rotate = params['vision'].get('camera_rotate', 0)
     lab = load_lab_data()
     mapx, mapy = load_undistort_maps()
     K, R, T = load_block_params()
     ultrasonic = make_ultrasonic()
     display = make_display()
+    # 红外(VL53L0X)初始化（寻路 + 夹取共享）
+    tof = None
+    try:
+        import board as adafruit_board
+        import busio
+        import adafruit_vl53l0x
+        i2c = busio.I2C(adafruit_board.SCL, adafruit_board.SDA)
+        tof = adafruit_vl53l0x.VL53L0X(i2c)
+        logger.info('红外初始化成功')
+    except Exception as e:
+        logger.info('红外初始化失败: %s' % e)
     cam = open_camera()
 
     detector = None
@@ -73,8 +86,8 @@ def main():
     time.sleep(2)
 
     # 1) 搜索
-    searcher = Searcher(board, ik, ak, params, detect, ultrasonic, display)
-    center, cy = searcher.run()
+    searcher = Searcher(board, ik, ak, params, detect, ultrasonic, display, tof=tof)
+    center, _ = searcher.run()
     if center is None:
         logger.info('[search] %s', action_msg('未找到目标', reason='颜色=%s' % color))
         cam.camera_close()
@@ -84,9 +97,13 @@ def main():
     # 寻路刚停，停止追踪（夹取阶段不再调 21/24 居中，只判断面积夹取，避免 21 号抽搐）
     searcher.tracker.stop()
     time.sleep(1)
-    grabber = Grabber(board, ik, ak, params, K, R, T, detect, display, ultrasonic=ultrasonic)
-    ok = grabber.run(cy=cy, x_dis=searcher.x_dis, y_dis=searcher.y_dis)
+    grabber = Grabber(board, ik, ak, params, K, R, T, detect, display, ultrasonic=ultrasonic, tof=tof)
+    ok = grabber.run()
     searcher.stop()  # 夹取结束，清理追踪线程 + 避障线程
+
+    # 夹住保持，人工确认夹稳后再松开（测试阶段：回车前一直夹紧）
+    if ok:
+        input('已夹住，保持夹紧。敲回车松开夹爪并复位...')
 
     # 归位到官方初始位置（机械臂复位 + 夹爪张开）
     arm_pulses = params['arm']['reset_pulses']

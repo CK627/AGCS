@@ -1,201 +1,178 @@
 #!/usr/bin/python3
 # coding=utf8
-"""夹取：红外粗定位 + 面积阈值精夹取。
+"""夹取：search 定位目标，grab 前伸 + 画面占比判断夹取（alpha=0）。
+
+search 到位后目标已在画面中心（云台对准），grab 不重新检测。夹持器水平
+（alpha=0°）时，摄像头朝前下方看，目标在地面出现在画面下部。机械臂前伸，
+摄像头靠近目标时目标在画面下部越来越大（摄像头能朝下看，目标不会消失）；
+目标占画面比例达标 = 夹爪已到目标上方，直接夹取。
 
 流程：
-1. 机械臂缩回（抬头），红外测距算目标高度 z（粗定位，目标不动只测一次）；
-2. 机械臂切检测位（pitch=-90），pixel_to_arm_coord 算 x,y（地面假设）；
-3. 机械臂 IK 直接到 (x,y,z) 目标附近；
-4. 面积阈值精夹取：面积 < 阈值就下调 z（机械臂下降靠近），面积到阈值就夹取。
+1. 前伸到起始位置（alpha=0，末端朝前）；
+2. 动态前伸：占比离阈值越远步长越大、越近越小；占比达标 → 停止前伸 → 闭合夹爪；
+3. 前伸到 IK 极限仍不够 → 直接夹取（目标可能超可及范围，已最靠近）；
+4. 抬起（复位由调用方处理）。
 """
 import time
-import math
 
-from agcs_lib.vision import pixel_to_arm_coord
 from agcs_lib.sensors import show_status
 from agcs_lib.logs import get_logger, action_msg
 
 
 class Grabber:
-    """detect: callable，返回 detect_color 的 dict 或 None。"""
+    """detect: callable，返回 dict(center=(cx,cy), radius, area, color, contour) 或 None。"""
 
-    def __init__(self, board, ik, ak, params, K, R, T, detect, display=None, ultrasonic=None):
+    def __init__(self, board, ik, ak, params, K, R, T, detect, display=None, ultrasonic=None, tof=None):
         self.board = board
         self.ik = ik
         self.ak = ak
         self.detect = detect
         self.display = display
+        self.tof = tof  # 红外(VL53L0X)，读垂直距离（mm）
         self.log = get_logger()
 
         gc = params.get('grab', {})
         arm = params['arm']
 
-        # 精夹取面积阈值（320x240 检测）
-        self.servo_area_threshold = float(gc.get('servo_area_threshold', 1500.0))
-        self.servo_z_step = float(gc.get('servo_z_step', 0.5))       # 精夹取下调 z 步长 cm
-        self.servo_z_tries = int(gc.get('servo_z_tries', 10))         # 精夹取最大下调次数
+        # 前伸夹取参数
+        self.coarse_z = float(gc.get('coarse_z', 15.0))
+        self.reach_y_start = float(gc.get('reach_y_start', 28.0))
+        self.grab_area_ratio = float(gc.get('grab_area_ratio', 0.30))
+        self.reach_gain = float(gc.get('reach_gain', 20.0))          # 前伸增益 cm/占比
+        self.reach_step_min = float(gc.get('reach_step_min', 0.5))   # 占比接近阈值时的小步
+        self.reach_step_max = float(gc.get('reach_step_max', 3.0))   # 看不到/目标远时的大步
+        self.lift_pulse = int(gc.get('lift_pulse', 50))              # 夹住后 22 号肩舵机上抬脉宽
+        self.tof_grab_cm = float(gc.get('tof_grab_cm', 4.0))         # 红外读数 <= 此值（夹爪到色块顶面）夹取
+        self.descend_step_cm = float(gc.get('descend_step_cm', 0.5))  # 下降步长 cm
+        self.min_z = float(gc.get('min_z', 3.0))                     # 下降 z 下限 cm
+        self.descend_max_steps = int(gc.get('descend_max_steps', 30))
+        self.frame_area = 320 * 240  # detect() 在 320x240 上算面积，占比 = area / frame_area
+        self.descend_move_ms = int(gc.get('descend_move_ms', 120))
+        self.descend_settle_ms = int(gc.get('descend_settle_ms', 80))
+        self.attempts = int(gc.get('attempts', 3))
 
-        self.pick_z = float(arm.get('pick_z', -4))
+        # 夹取动作参数
         self.gripper_open = int(arm.get('gripper_open', 120))
         self.gripper_close = int(arm.get('gripper_close', 550))
-        self.raise_pose = [float(v) for v in arm.get('raise_pose', [12, 24, 5])]
-        self.detect_pose = [float(v) for v in arm.get('detect_pose', [0, 15, 5])]
+        self.raise_pose = tuple(float(v) for v in arm.get('raise_pose', [12, 24, 5]))
+        self.detect_pose = tuple(float(v) for v in arm.get('detect_pose', [0, 15, 5]))
         self.K, self.R, self.T = K, R, T
 
-        # 红外算 z 参数
-        self.tof_height = float(gc.get('tof_height', 13.5))     # 红外离地高度 cm
-        self.tof_forward = float(gc.get('tof_forward', 30.0))   # 红外到夹爪水平距离 cm
-        self.tof = None
-        try:
-            import board as adafruit_board
-            import busio
-            import adafruit_vl53l0x
-            i2c = busio.I2C(adafruit_board.SCL, adafruit_board.SDA)
-            self.tof = adafruit_vl53l0x.VL53L0X(i2c)
-            self.log.info('[grab] %s', action_msg('红外初始化成功'))
-        except Exception as e:
-            self.log.info('[grab] %s', action_msg('红外初始化失败', reason=str(e)))
+        self._z = self.coarse_z  # 当前末端 z（cm），下降过程维护
 
     def _status(self, v):
         show_status(self.display, v)
 
-    def _stable(self, frames=60, need=5, jitter=5):
-        """连续多帧目标坐标稳定才返回检测结果，否则 None。"""
-        stable = 0
-        old = None
-        last = None
-        for _ in range(frames):
-            r = self.detect()
-            if r is None:
-                stable = 0
-                old = None
-                time.sleep(0.05)
-                continue
-            c = r['center']
-            if old is not None and abs(c[0] - old[0]) < jitter and abs(c[1] - old[1]) < jitter:
-                stable += 1
-            else:
-                stable = 0
-            old = c
-            last = r
-            if stable >= need:
-                return last
-            time.sleep(0.05)
-        return None
+    def _move(self, coord, move_ms=None, settle_ms=None):
+        """末端移到 coord=(x,y,z)，alpha=0°（夹持器水平 → 红外在夹爪下方垂直朝下）。IK 无解或俯仰降级返回 False。"""
+        if move_ms is None:
+            move_ms = self.descend_move_ms
+        if settle_ms is None:
+            settle_ms = self.descend_settle_ms
+        res = self.ak.setPitchRangeMoving(coord, 0, -90, 100, move_ms / 1000.0)  # ms → 秒
+        time.sleep(settle_ms / 1000.0)
+        if res is False:
+            return False  # 逆运动学无解
+        # 强制夹持器水平：alpha=0 无解时 IK 会降级成斜俯仰（alpha != 0），
+        # 斜了红外就不垂直朝下（打到机械臂自己/地面偏了），这里一律判失败
+        if abs(res[1]) > 0.5:
+            self.log.info('[grab] %s', action_msg(
+                '俯仰角降级', reason='目标%s 夹持器水平无解，IK 选了 alpha=%.1f°' % (tuple(coord), res[1])))
+            return False
+        return res[0]  # servos dict（含 servo22 当前脉宽，夹住后 +lift_pulse 上抬）
 
-    def _rescan(self):
-        """24 号舵机 200-800 平滑扫描找目标（20 步长平滑，21 号保持不动）。"""
-        self.log.info('[grab] %s', action_msg('重扫找回目标', action='24号 200-800 平滑扫描'))
-        y = 200
-        for target in (200, 400, 600, 800):
-            step = 20
-            direction = 1 if target >= y else -1
-            while y != target:
-                y += direction * step
-                if direction > 0:
-                    y = min(y, target)
-                else:
-                    y = max(y, target)
-                self.board.bus_servo_set_position(0.05, [[24, y]])
-                r = self.detect()
-                if r is not None:
-                    return r
-                time.sleep(0.05)
-        return None
-
-    def _coord(self, center):
-        return pixel_to_arm_coord(self.K, self.R, self.T, center, initial_coord=(0, 15, 5))
-
-    def _tof_distance_cm(self):
-        """红外测距（cm），失败/超范围返回 None。"""
+    def _tof_height_cm(self):
+        """红外测夹爪离地高度（cm），中位数采样，失败/超范围返回 None。"""
         if self.tof is None:
             return None
-        try:
-            d_mm = self.tof.range
-            if 0 < d_mm < 8000:
-                return d_mm / 10.0
-        except Exception:
-            pass
-        return None
+        vals = []
+        for _ in range(5):
+            try:
+                d = self.tof.range
+                if 0 < d < 8000:
+                    vals.append(d)
+            except Exception:
+                pass
+            time.sleep(0.01)
+        if not vals:
+            return None
+        vals.sort()
+        return vals[len(vals) // 2] / 10.0
 
-    def run(self, cy=None, x_dis=None, y_dis=None):
-        # 1. 红外粗定位：机械臂缩回（抬头，不挡红外），测 d 算目标高度 z
-        self.ak.setPitchRangeMoving((10, 15, 30), 0, -90, 100, 1)
-        time.sleep(1)
-        d = self._tof_distance_cm()
-        if d is not None:
-            inner = d * d - self.tof_forward * self.tof_forward
-            z = self.tof_height - math.sqrt(inner if inner > 0 else 0)
-        else:
-            z = self.pick_z  # 红外失败（地面目标），用 pick_z
-        self.log.info('[grab] %s', action_msg(
-            '红外粗定位', action='红外=%.1fcm 目标高度z=%.1fcm' % (d if d is not None else -1, z)))
+    def _descend(self, y):
+        """前伸到位后下降：红外测夹爪离地高度，降到色块顶面附近返回 True。"""
+        z = self.coarse_z
+        for _ in range(self.descend_max_steps):
+            d = self._tof_height_cm()
+            if d is not None and d <= self.tof_grab_cm:
+                self.log.info('[grab] %s', action_msg(
+                    '下降到夹取高度', action='红外离地 %.1fcm <= %.1fcm' % (d, self.tof_grab_cm)))
+                return True
+            z -= self.descend_step_cm
+            if z < self.min_z:
+                break
+            if not self._move((0.0, y, z), move_ms=self.descend_move_ms, settle_ms=self.descend_settle_ms):
+                break
+        return False
 
-        # 2. 保持抬头姿态（不切 -90，避免 24 号朝下看不到前方目标），检测目标算 x,y
+    def _reach(self):
+        """前伸 + 画面占比闭环：占比离阈值越远步长越大、越近越小；占比达标即夹。返回是否夹取。"""
+        # 先前伸到扫描起始位置（alpha=0，末端朝前），避免从收拢位大幅跳变
+        last_servos = self._move((0.0, self.reach_y_start, self.coarse_z), move_ms=800, settle_ms=500)
+        y = self.reach_y_start
+        while True:
+            r = self.detect()
+            if r is None:
+                area, ratio, cx, cy = 0, 0.0, 0, 0
+            else:
+                area = int(r.get('area', 0))
+                ratio = area / self.frame_area
+                cx, cy = r.get('center', (0, 0))
+                if ratio >= self.grab_area_ratio:
+                    # 目标占画面比例达标 = 夹爪已到目标上方，先下降到色块高度，再夹取
+                    self.log.info('[grab] %s', action_msg(
+                        '目标占比达标', reason='占比 %.1f%% >= %.1f%%' % (ratio * 100, self.grab_area_ratio * 100),
+                        action='下降到色块高度再夹取'))
+                    self._descend(y)
+                    self.board.bus_servo_set_position(0.5, [[25, self.gripper_close]])
+                    time.sleep(1.0)
+                    if last_servos:
+                        self.board.bus_servo_set_position(0.5, [[22, last_servos["servo22"] + self.lift_pulse]])
+                        time.sleep(0.5)
+                    self.log.info('[grab] %s', action_msg('夹取执行完成'))
+                    return True
+            # 根据画面占比动态前伸：占比离阈值越远步长越大、越近越小（逐渐逼近，不伸过头）
+            gap = max(0.0, self.grab_area_ratio - ratio)
+            step = max(self.reach_step_min, min(self.reach_step_max, gap * self.reach_gain))
+            self.log.info('[grab] %s', action_msg(
+                '前伸扫描', action='y=%.1fcm 面积=%d 占比=%.1f%% cy=%d → 前伸 %.1fcm' % (y, area, ratio * 100, cy, step)))
+            y += step
+            res = self._move((0.0, y, self.coarse_z), move_ms=400, settle_ms=300)
+            if res is False:
+                # 前伸到极限（IK 无解），已经最靠近目标，直接夹取
+                self.log.info('[grab] %s', action_msg('前伸到极限', action='y=%.1fcm 直接夹取' % y))
+                self.board.bus_servo_set_position(0.5, [[25, self.gripper_close]])
+                time.sleep(1.0)
+                if last_servos:
+                    self.board.bus_servo_set_position(0.5, [[22, last_servos["servo22"] + self.lift_pulse]])
+                    time.sleep(0.5)
+                self.log.info('[grab] %s', action_msg('夹取执行完成'))
+                return True
+            last_servos = res
+
+    def run(self):
         self.board.bus_servo_set_position(0.5, [[25, self.gripper_open]])
         time.sleep(0.5)
 
-        for attempt in range(3):
+        for attempt in range(self.attempts):
             self._status(2)
-            r = self._stable()
-            if r is None:
-                self.log.info('[grab] %s', action_msg('未检测到目标', action='24号重扫找回'))
-                r = self._rescan()
-                if r is None:
-                    continue
-            center = r['center']
-            x, y = self._coord(center)
             self.log.info('[grab] %s', action_msg(
-                '目标坐标', action='像素=%s x=%.1fcm y=%.1fcm z=%.1fcm' % (center, x, y, z)))
+                '前伸夹取', action='第 %d/%d 次' % (attempt + 1, self.attempts)))
 
-            # 3. 机械臂到目标附近（粗定位）
-            res = self.ak.setPitchRangeMoving((x, y, z), -90, -90, 100, 1)
-            if res is False:
-                self.log.info('[grab] %s', action_msg('粗定位失败', reason='逆运动学无解'))
-                continue
-            time.sleep(2)
-
-            # 4. 面积阈值精夹取：面积不够就下调 z，面积到阈值夹取
-            for i in range(self.servo_z_tries):
-                r2 = self.detect()
-                if r2 is None:
-                    continue
-                area = r2.get('area', 0)
-                self.log.debug('[grab] %s', action_msg('精夹取', action='面积=%d 阈值=%d z=%.1f' % (area, self.servo_area_threshold, z)))
-                if area >= self.servo_area_threshold:
-                    break
-                z -= self.servo_z_step
-                self.ak.setPitchRangeMoving((x, y, z), -90, -90, 100, 0.5)
-                time.sleep(0.5)
-
-            # 夹取动作 + 全程采样判定：目标跟着夹爪走（抬起→放下全程可见）才算夹中
-            samples = []
-
-            def sample(duration):
-                end_time = time.time() + duration
-                while time.time() < end_time:
-                    r = self.detect()
-                    samples.append(r['center'] if r is not None else None)
-                    time.sleep(0.15)
-
-            self.board.bus_servo_set_position(0.5, [[25, self.gripper_close]])  # 夹爪闭合
-            time.sleep(1.0)
-            self.ak.setPitchRangeMoving(tuple(self.raise_pose), -90, -90, 100, 1.5)  # 抬起
-            sample(1.5)
-            self.board.bus_servo_set_position(0.5, [[25, self.gripper_open]])  # 松开
-            sample(0.8)
-            self.ak.setPitchRangeMoving(tuple(self.detect_pose), -90, -90, 100, 1.5)  # 复位
-            sample(1.5)
-
-            seen = [s for s in samples if s is not None]
-            self.log.info('[grab] %s', action_msg(
-                '夹取过程采样', action='样本=%d 可见=%d' % (len(samples), len(seen))))
-            # 目标从夹取到放下全程可见 → 夹中；任何一帧丢失 → 失败
-            if len(seen) >= 5 and len(seen) == len(samples):
+            # 前伸 + 面积占比判断，目标消失直接夹取（_reach 内闭合夹爪 + 22 号上抬）
+            if self._reach():
                 self._status(3)
-                self.log.info('[grab] %s', action_msg('夹取成功', reason='目标从夹取到放下全程可见'))
                 return True
-            self.log.info('[grab] %s', action_msg('夹取失败', reason='目标在夹取-放下过程中丢失'))
-            continue
+            self.log.info('[grab] %s', action_msg('前伸未定位目标'))
 
         return False

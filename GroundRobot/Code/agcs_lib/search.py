@@ -22,7 +22,7 @@ from agcs_lib.tracker import ColorTracker
 class Searcher:
     """detect: callable，返回 detect_color 的 dict 或 None。"""
 
-    def __init__(self, board, ik, ak, params, detect, ultrasonic=None, display=None):
+    def __init__(self, board, ik, ak, params, detect, ultrasonic=None, display=None, tof=None):
         self.board = board
         self.ik = ik
         self.ak = ak
@@ -30,6 +30,7 @@ class Searcher:
         self.detect = detect
         self.ultrasonic = ultrasonic
         self.display = display
+        self.tof = tof  # 红外(VL53L0X)，寻路到位用
         self.log = get_logger()
 
         sc = params.get('search', {})
@@ -62,8 +63,11 @@ class Searcher:
         self.slow_radius = float(gf.get('slow_radius', 35.0))
         # 逼近停止面积阈值：面积到该值视为目标够近，停止逼近交给夹取
         self.approach_area_threshold = float(params.get('grab', {}).get('approach_area_threshold', 1400.0))
+        # 逼近到位红外距离：红外到目标 ≤ 此值（cm）停止逼近（优先用红外）
+        self.tof_stop_cm = float(params.get('grab', {}).get('tof_stop_cm', 28.0))
         self.stop_y = float(gf.get('stop_y', 20.0))
         self.pan_band = int(gf.get('pan_band', 80))
+        self.pan_band_fine = int(gf.get('pan_band_fine', 20))  # 到位后 21号回中的严格阈值
         self.pan_turn_deg = int(gf.get('pan_turn_deg', 5))
         self.fast_walk_mm = int(gf.get('fast_walk_mm', 70))
         self.fast_speed = int(gf.get('fast_speed', 90))
@@ -86,6 +90,18 @@ class Searcher:
             start_x=self.x_dis, start_y=self.y_dis)
         self._stop_event = threading.Event()
         self._obstacle_thread = None
+
+    def _tof_distance_cm(self):
+        """红外测距（cm），失败/超范围返回 None。"""
+        if self.tof is None:
+            return None
+        try:
+            d_mm = self.tof.range
+            if 0 < d_mm < 8000:
+                return d_mm / 10.0
+        except Exception:
+            pass
+        return None
 
     def _status(self, v):
         show_status(self.display, v)
@@ -329,10 +345,25 @@ class Searcher:
                 % (r['x_dis'], r.get('y_dis', self.base_pulse), cx, cy, radius, dx, area)))
 
             # 面积到阈值：目标够近，停止逼近交给夹取
+            # （红外在 search 阶段机械臂非垂直朝下，读的是夹爪离地高度而非到目标距离，不可作到位判定）
             if area >= self.approach_area_threshold:
                 self.log.info('[search] %s', action_msg(
                     '到位(面积阈值)', reason='面积=%d >= %d' % (area, self.approach_area_threshold),
                     action='停止逼近交给夹取'))
+                # 到位后强制 21号回中（转身体让 21号=500、目标居中），
+                # 避免 grab 前伸 IK 强制 21号=500 时目标偏离画面中心
+                for _ in range(self.max_approach):
+                    r2 = self.tracker.latest()
+                    if r2 is None:
+                        break
+                    dx2 = int(r2['x_dis']) - 500
+                    if abs(dx2) <= self.pan_band_fine:
+                        break
+                    self.log.info('[search] %s', action_msg(
+                        '回中微调', action='21偏移=%+d 身体%s转 %d°' % (
+                            dx2, '左' if dx2 > 0 else '右', self.pan_turn_deg)))
+                    self._turn_body(self.pan_turn_deg if dx2 > 0 else -self.pan_turn_deg)
+                    time.sleep(0.4)
                 return (cx, cy), cy
 
             # 21 号偏离 500 太多：转身体把摄像头方向拉回朝前（方向与转身对准循环一致）

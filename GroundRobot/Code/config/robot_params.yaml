@@ -17,7 +17,7 @@ walk:
   reach_y: 24.0            # 机械臂可及范围 y（cm），超出则继续接近
 
 obstacle:
-  threshold: 35.0          # 避障触发距离 cm
+  threshold: 3.0           # 避障触发距离 cm
   target_radius_gate: 30   # 目标半径超过此值视为前方是目标，不再触发避障停止
   back_stride: 80          # 后退步幅 mm
   filter_window: 5         # 超声波距离滤波窗口
@@ -172,13 +172,18 @@ grab:
   servo_min_area: 5000     # 峰值判断最小面积门槛（面积<此值不判峰值）
   servo_fall_ratio: 0.85   # 面积回落比例（面积<峰值*此值=到峰值夹取）
   servo_fall_frames: 3     # 连续回落帧数（判峰值）
-  approach_area_threshold: 1400  # 寻路停止面积阈值（目标够近就停，交给夹取）
+  approach_area_threshold: 2800  # 寻路停止面积阈值（约对应目标 28cm，机械臂可及范围下限内）
+  tof_stop_cm: 28.0        # 寻路到位红外距离 cm（红外≤此值停止逼近，交给夹取）
   servo_area_threshold: 1500  # 精夹取面积阈值（320x240 检测，贴近夹爪）
   servo_z_step: 0.5           # 精夹取下调 z 步长 cm
   servo_z_tries: 10           # 精夹取最大下调次数
   # ---- 红外(VL53L0X)算 z 高度 ----
-  tof_height: 13.5         # 红外离地高度 cm
-  tof_forward: 30.0        # 红外到夹爪水平距离 cm（机械臂伸直）
+  # ---- 红外(VL53L0X，夹爪下方)靠近夹取 ----
+  tof_trigger_cm: 11.0     # 红外到目标触发距离 cm（夹取位实测 110mm）
+  down_z_start: 18.0       # 机械臂下降起始高度 cm
+  down_z_step: 0.5         # 每次下降步长 cm
+  down_z_tries: 52         # 最大下降次数（降到红外 d≈10cm）
+  forward_y: 18.0          # 追踪居中后的前伸距离 cm
   servo_raise_z: 15        # 夹取后抬起 z cm
   servo_place_pulse: 800   # 转 21 放置脉宽
   cam_offset_x: 0.0        # 摄像头相对夹爪的水平补偿 cm
@@ -224,3 +229,27 @@ grab:
   ultra_match_cm: 15.0      # 超声波与视觉互证容差 cm
   ultra_min_h_cm: -2.0      # 实测高度低于此值视为读数无效（物体不可能在地下），退回平面参考系
   ultra_max_h_cm: 25.0      # 实测高度高于此值视为异常，退回平面参考系（机械臂可及上限内）
+  # ---- 面积峰值判断前伸 + 下降夹取状态机（alpha=0 夹持器水平，无PID）----
+  tof_samples: 5            # 红外中位数采样次数（丢 0/超量程后取中）
+  reach_y_start: 28.0       # 前伸扫描起始 y cm（alpha=0 有解下限，servo23 不超限）
+  reach_y_max: 45.0         # 前伸扫描最大 y cm（要能越过目标，目标约在前方 40cm）
+  reach_gain: 20.0          # 前伸增益 cm/占比：步长 = (grab_area_ratio - 当前占比) * gain
+  reach_step_min: 0.5       # 最小前伸步长 cm（占比接近阈值时的小步）
+  reach_step_max: 2.0       # 最大前伸步长 cm（看不到/目标远时的大步，慢调）
+  lift_pulse: 50            # 夹住后 22 号肩舵机上抬脉宽（+50 抬起，方向反了改负值）
+  tof_grab_cm: 4.0          # 下降夹取：红外读数 <= 此值（夹爪到色块顶面）夹取
+  descend_step_cm: 0.5      # 下降步长 cm（慢调）
+  min_z: 3.0                # 下降 z 下限 cm
+  descend_max_steps: 30     # 下降步数上限
+  grab_area_ratio: 0.30     # 目标面积占画面(320x240)比例 >= 此值判定夹爪到目标上方，停止前伸直接夹取
+  grab_trigger_mm: 110      # 下降夹取距离：红外读 <= 此值触发夹取（含补偿，现场标定）
+  coarse_z: 15.0            # 前伸/下降末端高度 cm（alpha=0，红外垂直朝下读约 120mm）
+  fast_switch_mm: 200       # 红外 > 此值快速下降，<= 此值切慢速点动
+  tof_abnormal_max: 300     # 红外 > 此值视为测距异常（没对准目标/反光），抬升放弃
+  tof_abnormal_min: 10      # 红外 < 此值视为测距异常（贴到物体/戳地），抬升放弃
+  fast_step_cm: 1.0         # 快速下降步长 cm（10mm）
+  slow_step_cm: 0.2         # 慢速点动步长 cm（2mm）
+  descend_move_ms: 120      # 每次下降舵机转动时间 ms
+  descend_settle_ms: 80     # 每次下降后稳定等待 ms
+  min_z: 0.0                # 下降 z 下限 cm（安全兜底，防过冲）
+  descend_max_steps: 100    # 下降总步数上限（防死循环兜底）
