@@ -12,11 +12,15 @@ GET /status 供地面站仪表盘轮询机器人状态；
     独立调试：python3 communication/task_server.py
 """
 import json
+import logging
 import os
 import queue
 import sys
 import threading
 import time
+
+# 屏蔽 Flask/Werkzeug 的每请求访问日志（地面站每秒轮询 /status 会刷屏终端）
+logging.getLogger('werkzeug').setLevel(logging.ERROR)
 
 _PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PKG_ROOT not in sys.path:
