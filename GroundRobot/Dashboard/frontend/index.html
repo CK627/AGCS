@@ -17,7 +17,7 @@
   .box { background: #1e293b; border-radius: 10px; padding: 12px; }
   .box h2 { font-size: 14px; color: #94a3b8; font-weight: 400; margin-bottom: 8px; }
   #videoBox { background: #0b1220; min-height: 300px; display: flex; align-items: center; justify-content: center; }
-  #video { width: 100%; max-height: 520px; object-fit: contain; }
+  #videoBox img { width: 100%; max-height: 520px; object-fit: contain; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
   .card { background: #1e293b; border-radius: 10px; padding: 10px 12px; }
   .card h2 { font-size: 12px; color: #94a3b8; font-weight: 400; }
@@ -48,11 +48,9 @@
     <div class="box">
       <h2>机器人摄像头画面（回传）</h2>
       <div id="videoBox">
-        {% if video_enabled %}
-        <img id="video" src="/video_feed" alt="画面未连接"
-             onerror="this.style.display='none'; document.getElementById('videoBox').innerHTML='画面未连接（检查机器人 autonomous_pick 是否运行 / 网络可达 / VIDEO_ENABLED）'">
+        {% if video_enabled %}<!-- JS videoHeal() 自动挂图，断流 5 秒自愈 -->
         {% else %}
-        <div style="color:#64748b;font-size:13px">画面未连接（检查机器人 autonomous_pick 是否运行 / 网络可达 / VIDEO_ENABLED）</div>
+        <div style="color:#64748b;font-size:13px">画面已关闭（AGCS/config.yaml 的 robot.video=false）</div>
         {% endif %}
       </div>
     </div>
@@ -88,6 +86,21 @@
 <script>
 const statusEl = document.getElementById('status');
 const errEl = document.getElementById('err');
+
+// MJPEG 画面自愈：挂 <img>，断流/被热关闭后 5 秒自动重试，恢复后画面自动回来
+function videoHeal(boxId, src) {
+  const box = document.getElementById(boxId);
+  const img = document.createElement('img');
+  img.src = src + '?t=' + Date.now();
+  img.alt = '画面未连接';
+  img.onerror = () => {
+    box.innerHTML = '<div style="color:#64748b;font-size:13px">画面暂不可用（检查机器人端推流程序是否在线、AGCS/config.yaml 开关），5 秒后自动重试…</div>';
+    setTimeout(() => videoHeal(boxId, src), 5000);
+  };
+  box.innerHTML = '';
+  box.appendChild(img);
+}
+{% if video_enabled %}videoHeal('videoBox', '/video_feed');{% endif %}
 
 function setStatus(ok) {
   statusEl.textContent = ok ? '已连接' : '未连接';

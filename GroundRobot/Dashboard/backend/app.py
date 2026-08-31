@@ -31,12 +31,14 @@ app = Flask(__name__, template_folder=FRONTEND_DIR)
 
 @app.route('/')
 def index():
+    config.reload_if_changed()
     return render_template('index.html', video_enabled=config.VIDEO_ENABLED)
 
 
 @app.route('/api/status')
 def api_status():
     """机器人状态（代理机器人 task_server 的 GET /status，页面轮询）。"""
+    config.reload_if_changed()
     try:
         r = requests.get(config.ROBOT_URL + '/status', timeout=2)
         data = r.json()
@@ -49,6 +51,7 @@ def api_status():
 @app.route('/api/task', methods=['POST'])
 def api_task():
     """把任务转发给机器人（POST /task）。"""
+    config.reload_if_changed()
     try:
         task = request.get_json(force=True)
         r = requests.post(config.ROBOT_URL + '/task', json=task, timeout=5)
@@ -60,6 +63,7 @@ def api_task():
 @app.route('/video_feed')
 def video_feed():
     """机器人摄像头画面 MJPEG 代理（转发 task_server /video.mjpeg）。"""
+    config.reload_if_changed()
     if not config.VIDEO_ENABLED:
         return 'video disabled', 503
     try:

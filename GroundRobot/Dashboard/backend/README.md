@@ -28,11 +28,12 @@ cd backend && python app.py
 
 ## 配置
 
-改 [config.py](config.py)：
+**临时配置（机器人 IP / 视频开关 / 端口）统一改仓库根目录的
+[AGCS/config.yaml](../../../../config.yaml)，保存即热重载生效，无需重启**
+（端口除外，改端口需重启对应仪表盘）。该文件与地面站中枢仪表盘共用，
+改一次 `robot.url` 两边同时生效。
 
-- `ROBOT_URL`：机器人地址（当前 `http://10.194.228.87:5000`）
-- `VIDEO_ENABLED`：视频开关
-- `DASHBOARD_HOST` / `DASHBOARD_PORT`：监听地址/端口（默认 `20002`）
+`config.py` 只放默认值。
 
 > 提示：仪表盘直接跑在树莓派本机时，把 `ROBOT_URL` 改成
 > `http://127.0.0.1:5000` 即可。
