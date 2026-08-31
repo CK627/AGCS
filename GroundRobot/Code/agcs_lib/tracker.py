@@ -43,7 +43,7 @@ class ColorTracker:
         self._lost_frames = 0
         self._stop = threading.Event()
         self._thread = None
-        self.log = get_logger()
+        self.log = get_logger('tracker')
 
     def _update(self, r):
         cx, cy = r['center']

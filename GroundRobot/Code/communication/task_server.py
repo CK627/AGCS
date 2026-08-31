@@ -12,9 +12,20 @@ GET /status 供地面站仪表盘轮询机器人状态；
     独立调试：python3 communication/task_server.py
 """
 import json
+import os
 import queue
+import sys
 import threading
 import time
+
+_PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PKG_ROOT not in sys.path:
+    sys.path.insert(0, _PKG_ROOT)
+
+from agcs_lib.logs import get_logger
+
+# 推流/任务服务日志：只写文件（日期/task_server/时刻.log），不进终端
+log = get_logger('task_server')
 
 TASK_FILE = '/tmp/task.json'
 task_queue = queue.Queue()
@@ -98,7 +109,7 @@ def _create_app():
         with open(TASK_FILE, 'w') as f:
             json.dump(task, f)
         set_status(last_task=task, message='收到任务 %s' % task.get('task_id', '?'))
-        print('[TASK] 收到任务:', task)
+        log.info('收到任务: %s', task)
         return jsonify({'status': 'accepted'})
 
     @app.route('/status', methods=['GET'])
@@ -129,7 +140,7 @@ def start_server(host='0.0.0.0', port=5000):
     try:
         app = _create_app()
     except ImportError:
-        print('[TASK] Flask 未安装，跳过 HTTP 服务（需 pip3 install flask）')
+        log.warning('Flask 未安装，跳过 HTTP 服务（需 pip3 install flask）')
         return None
     t = threading.Thread(
         target=app.run,
@@ -138,15 +149,15 @@ def start_server(host='0.0.0.0', port=5000):
         daemon=True,
     )
     t.start()
-    print('[TASK] HTTP 服务已启动: http://%s:%d  (POST /task, GET /status, GET /video.mjpeg)' % (host, port))
+    log.info('HTTP 服务已启动: http://%s:%d  (POST /task, GET /status, GET /video.mjpeg)', host, port)
     return t
 
 
 if __name__ == '__main__':
     start_server()
-    print('[TASK] 独立调试模式，等待任务...')
+    log.info('独立调试模式，等待任务...')
     while True:
         task = get_next_task(timeout=1.0)
         if task:
-            print('[TASK] 取到任务:', task)
+            log.info('取到任务: %s', task)
         time.sleep(1)

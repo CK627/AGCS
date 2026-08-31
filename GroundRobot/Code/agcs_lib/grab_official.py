@@ -40,7 +40,7 @@ def official_color_grab(board, ak, params, detect, K, R, T,
     stable_need = 11   # 官方 num > 10
     stable_jitter = 8  # 官方 abs(center-old) < 8
 
-    log = get_logger()
+    log = get_logger('grab_official')
 
     # 官方 init_move()：张开夹爪，并用逆运动学回到色块检测姿态。
     board.bus_servo_set_position(0.5, [[25, gripper_open]])

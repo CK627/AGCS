@@ -32,7 +32,7 @@ def main():
     parser.add_argument('--min-area', type=int, default=50)
     args = parser.parse_args()
 
-    logger = setup_logger()
+    logger = setup_logger('CS-zq')
     logger.info('[CS-zq] %s', action_msg('启动夹取单测', action='color=%s' % args.color))
 
     board = make_board()

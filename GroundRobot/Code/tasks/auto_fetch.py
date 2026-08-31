@@ -46,7 +46,7 @@ def main():
 
     from agcs_lib.logs import setup_logger, action_msg
     from agcs_lib.params import summarize
-    logger = setup_logger()
+    logger = setup_logger('auto_fetch')
     logger.info('启动 auto_fetch：color=%s', color)
 
     board = make_board()

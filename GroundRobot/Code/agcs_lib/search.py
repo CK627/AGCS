@@ -31,7 +31,7 @@ class Searcher:
         self.ultrasonic = ultrasonic
         self.display = display
         self.tof = tof  # 红外(VL53L0X)，寻路到位用
-        self.log = get_logger()
+        self.log = get_logger('search')
 
         sc = params.get('search', {})
         gf = params.get('gimbal_fetch', {})

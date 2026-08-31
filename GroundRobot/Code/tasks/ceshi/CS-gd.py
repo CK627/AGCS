@@ -41,7 +41,7 @@ def main():
     parser.add_argument('--out', default=None, help='CSV 输出路径；默认脚本同目录 gd_samples.csv')
     args = parser.parse_args()
 
-    logger = setup_logger()
+    logger = setup_logger('CS-gd')
     logger.info('[CS-gd] %s', action_msg(
         '启动数据采集', action='color=%s label=%s step=%d move_ms=%d interval_ms=%d'
         % (args.color, args.label, args.step, args.move_ms, args.interval_ms)))

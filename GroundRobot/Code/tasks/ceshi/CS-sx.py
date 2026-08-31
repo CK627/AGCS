@@ -37,7 +37,7 @@ def main():
                         help='选择扫描的舵机：21=水平，24=俯仰')
     args = parser.parse_args()
 
-    logger = setup_logger()
+    logger = setup_logger('CS-sx')
     logger.info('启动 %d号扫描测试：color=%s step=%d move_ms=%d interval_ms=%d start=%d end=%d',
                 args.servo, args.color, args.step, args.move_ms, args.interval_ms, args.start, args.end)
 

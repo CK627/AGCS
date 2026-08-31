@@ -34,7 +34,7 @@ def main():
     parser.add_argument('--min-area', type=int, default=300)
     args = parser.parse_args()
 
-    logger = setup_logger()
+    logger = setup_logger('CS-grab-alt')
     logger.info('[CS-grab-alt] %s', action_msg('启动', action='mode=%s color=%s' % (args.mode, args.color)))
 
     board = make_board()

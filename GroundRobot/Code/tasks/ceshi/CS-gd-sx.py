@@ -67,7 +67,7 @@ def main():
                         help='稳定采样时每帧间隔 ms')
     args = parser.parse_args()
 
-    logger = setup_logger()
+    logger = setup_logger('CS-gd-sx')
     logger.info('[CS-gd-sx] %s', action_msg(
         '启动采集', action='servo=%d color=%s label=%s step=%d move_ms=%d interval_ms=%d'
         % (args.servo, args.color, args.label, args.step, args.move_ms, args.interval_ms)))

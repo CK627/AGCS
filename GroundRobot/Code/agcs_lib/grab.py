@@ -29,7 +29,7 @@ class Grabber:
         self.detect = detect
         self.display = display
         self.tof = tof  # 红外(VL53L0X)，读垂直距离（mm）
-        self.log = get_logger()
+        self.log = get_logger('grab')
 
         gc = params.get('grab', {})
         arm = params['arm']
