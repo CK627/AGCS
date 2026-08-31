@@ -18,6 +18,8 @@ import sys
 import threading
 import time
 
+os.environ.setdefault('OPENCV_LOG_LEVEL', 'SILENT')   # 屏蔽 OpenCV 警告刷屏
+
 _PKG_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 if _PKG_ROOT not in sys.path:
     sys.path.insert(0, _PKG_ROOT)
@@ -64,7 +66,7 @@ def _publish_loop(cam, mapx, mapy, rotate, stop_event):
 
 
 def main():
-    logger = setup_logger('CS-3-Scan21')
+    logger = setup_logger('CS-3-Scan21', console=False)   # 只写日志文件，终端不输出
     params = load_params()
     color = 'blue'   # 默认颜色
 
