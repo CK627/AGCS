@@ -38,6 +38,22 @@ if __name__ == '__main__':
     board.bus_servo_set_position(0.8, [[25, 700]])
     time.sleep(0.8)
 
+    print('已夹住：直接回车=继续搬运；输入 q 再回车=取消并恢复官方初始位置', flush=True)
+    try:
+        user_input = input()
+    except EOFError:
+        user_input = ''
+
+    if user_input.strip().lower() == 'q':
+        print('取消后续流程，恢复官方初始位置', flush=True)
+        ik.stand(ik.initial_pos, t=500)
+        board.bus_servo_set_position(1.5, [[21, 500], [22, 705], [23, 90], [24, 330]])
+        board.bus_servo_set_position(1.0, [[25, 120]])
+        time.sleep(1.5)
+        board.bus_servo_set_position(0.5, [[24, 260], [21, 500]])
+        time.sleep(0.5)
+        sys.exit(0)
+
     print('4. 六足后退 20cm（50mm x 4，速度50），25 保持夹紧', flush=True)
     ik.back(ik.initial_pos, 2, 50, 50, 4)
     time.sleep(1)
