@@ -57,8 +57,8 @@ def main():
                         help='最大前进步数，0=不限制')
     parser.add_argument('--invalid-limit', type=int, default=20,
                         help='超声波连续读数无效多少次后停止，默认 20')
-    parser.add_argument('--back-step', type=int, default=15,
-                        help='夹紧后六足后退步幅 mm，默认 15')
+    parser.add_argument('--back-step', type=int, default=200,
+                        help='夹紧后六足后退总距离 mm，默认 200（20cm）')
     parser.add_argument('--back-speed', type=int, default=50,
                         help='夹紧后六足后退速度，默认 50')
     parser.add_argument('--hold', action='store_true',
@@ -68,8 +68,9 @@ def main():
     logger = setup_logger('CZ1')
     logger.info('[CZ1] %s', action_msg(
         '启动固定夹取测试',
-        action='distance=%.1fcm step=%dmm speed=%d max_steps=%s'
-        % (args.distance, args.step, args.speed, args.max_steps or '无限')))
+        action='distance=%.1fcm step=%dmm speed=%d max_steps=%s back=%dmm'
+        % (args.distance, args.step, args.speed,
+           args.max_steps or '无限', args.back_step)))
 
     params = load_params()
     board = make_board()
@@ -138,9 +139,15 @@ def main():
 
         logger.info('[CZ1] %s', action_msg(
             '开始退回',
-            action='六足后退 step=%dmm speed=%d，25 保持夹紧'
+            action='六足后退总距离 %dmm speed=%d，25 保持夹紧'
             % (args.back_step, args.back_speed)))
-        go_back(ik, step=args.back_step, speed=args.back_speed)
+        back_remaining = args.back_step
+        back_per_move = 50
+        while back_remaining > 0:
+            move = min(back_per_move, back_remaining)
+            go_back(ik, step=move, speed=args.back_speed)
+            back_remaining -= move
+            time.sleep(0.15)
 
         # 恢复官方初始状态，但 25 号夹爪不松开。
         stand(ik, t=500)
