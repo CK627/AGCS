@@ -36,8 +36,7 @@ from agcs_lib import (
     make_ik,
     make_arm_ik,
     load_params,
-    go_forward,
-    go_back,
+    move_body_xyz,
     turn_left,
     stand,
     fixed_clamp,
@@ -50,8 +49,6 @@ def main():
     parser = argparse.ArgumentParser(description='固定夹取测试 CZ1')
     parser.add_argument('--approach-distance', type=int, default=200,
                         help='夹取前六足前进总距离 mm，默认 200（20cm）')
-    parser.add_argument('--step', type=int, default=50,
-                        help='夹取前每次六足前进步幅 mm，默认 50')
     parser.add_argument('--speed', type=int, default=50,
                         help='六足前进速度，默认 50')
     parser.add_argument('--back-step', type=int, default=200,
@@ -64,8 +61,6 @@ def main():
                         help='左转速度，默认 60')
     parser.add_argument('--forward-distance', type=int, default=400,
                         help='左转后六足前进总距离 mm，默认 400（40cm）')
-    parser.add_argument('--forward-step', type=int, default=50,
-                        help='左转后每次六足前进步幅 mm，默认 50')
     parser.add_argument('--forward-speed', type=int, default=50,
                         help='左转后六足前进速度，默认 50')
     parser.add_argument('--hold', action='store_true',
@@ -75,8 +70,8 @@ def main():
     logger = setup_logger('CZ1')
     logger.info('[CZ1] %s', action_msg(
         '启动固定夹取测试',
-        action='approach=%dmm step=%dmm speed=%d back=%dmm turn=%ddeg forward=%dmm'
-        % (args.approach_distance, args.step, args.speed,
+        action='approach=%dmm speed=%d back=%dmm turn=%ddeg forward=%dmm'
+        % (args.approach_distance, args.speed,
            args.back_step, args.turn_angle, args.forward_distance)))
 
     params = load_params()
@@ -91,14 +86,11 @@ def main():
 
         logger.info('[CZ1] %s', action_msg(
             '固定前进到夹取点',
-            action='总距离 %dmm，step=%dmm speed=%d'
-            % (args.approach_distance, args.step, args.speed)))
-        approach_remaining = args.approach_distance
-        while approach_remaining > 0:
-            move = min(args.step, approach_remaining)
-            go_forward(ik, step=move, speed=args.speed, times=1)
-            approach_remaining -= move
-            time.sleep(0.15)
+            action='dx=-%dmm，speed=%d'
+            % (args.approach_distance, args.speed)))
+        move_body_xyz(ik, dx=-args.approach_distance, speed=args.speed)
+        time.sleep(args.approach_distance / max(args.speed, 1) + 0.3)
+        logger.info('[CZ1] %s', action_msg('固定前进完成'))
 
         logger.info('[CZ1] %s', action_msg(
             '开始固定夹取',
@@ -110,15 +102,10 @@ def main():
 
         logger.info('[CZ1] %s', action_msg(
             '开始退回',
-            action='六足后退总距离 %dmm speed=%d，25 保持夹紧'
+            action='dx=%dmm speed=%d，25 保持夹紧'
             % (args.back_step, args.back_speed)))
-        back_remaining = args.back_step
-        back_per_move = 50
-        while back_remaining > 0:
-            move = min(back_per_move, back_remaining)
-            go_back(ik, step=move, speed=args.back_speed)
-            back_remaining -= move
-            time.sleep(0.15)
+        move_body_xyz(ik, dx=args.back_step, speed=args.back_speed)
+        time.sleep(args.back_step / max(args.back_speed, 1) + 0.3)
 
         # 恢复官方初始状态，但 25 号夹爪不松开。
         stand(ik, t=500)
@@ -136,18 +123,14 @@ def main():
             '开始左转',
             action='向左转 %d 度，25 保持夹紧' % args.turn_angle))
         turn_left(ik, angle=args.turn_angle, speed=args.turn_speed)
-        time.sleep(0.5)
+        time.sleep(args.turn_angle / max(args.turn_speed, 1) + 0.3)
 
         logger.info('[CZ1] %s', action_msg(
             '开始前进',
-            action='六足前进总距离 %dmm，step=%dmm speed=%d，25 保持夹紧'
-            % (args.forward_distance, args.forward_step, args.forward_speed)))
-        forward_remaining = args.forward_distance
-        while forward_remaining > 0:
-            move = min(args.forward_step, forward_remaining)
-            go_forward(ik, step=move, speed=args.forward_speed, times=1)
-            forward_remaining -= move
-            time.sleep(0.15)
+            action='dx=-%dmm speed=%d，25 保持夹紧'
+            % (args.forward_distance, args.forward_speed)))
+        move_body_xyz(ik, dx=-args.forward_distance, speed=args.forward_speed)
+        time.sleep(args.forward_distance / max(args.forward_speed, 1) + 0.3)
 
         # 到达放置点后立正，机械臂放到放置位，最后 25 松开。
         stand(ik, t=500)

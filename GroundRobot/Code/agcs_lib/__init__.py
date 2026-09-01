@@ -9,7 +9,7 @@
 from agcs_lib.params import load_params
 from agcs_lib.hardware import make_board
 from agcs_lib.arm import make_arm_ik
-from agcs_lib.motion import make_ik, stand, move_body, turn_left, turn_right, go_forward, go_back
+from agcs_lib.motion import make_ik, stand, move_body, move_body_xyz, turn_left, turn_right, go_forward, go_back
 from agcs_lib.sensors import make_ultrasonic, dist_cm, make_display, show_status
 from agcs_lib.camera import open_camera, capture
 from agcs_lib.vision import (
