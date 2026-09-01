@@ -1,20 +1,21 @@
 #!/usr/bin/python3
 # coding=utf8
-"""固定夹取测试 CZ1：恢复官方初始位 -> 六足前进 -> 超声波 <1cm -> 固定夹取。
+"""固定夹取测试 CZ1：恢复官方初始位 -> 六足前进 -> 超声波 <1cm -> 固定夹取 -> 后退保持夹紧。
 
 流程：
     1. 恢复官方初始位置（立正 + 机械臂复位 + 云台回中 + 夹爪张开）；
     2. 六足持续前进，每走一步读一次超声波；
     3. 超声波检测到距离 < 1cm 时停止前进；
     4. 调用 agcs_lib.ClampRemoval.fixed_clamp()：
-       21=510, 22=440, 23=415, 24=300，随后 25=700 夹紧。
+       21=510, 22=440, 23=415, 24=300，随后 25=700 夹紧；
+    5. 六足后退，随后六足立正、21-24 恢复到官方初始位；
+    6. 25 号夹爪保持 700 不松开。
 
 用法（树莓派，先 sudo systemctl stop spiderpi）：
     python3 tasks/ceshi/FixedGripTest/CZ1.py
     python3 tasks/ceshi/FixedGripTest/CZ1.py --distance 1.0 --step 15 --speed 50
 
-夹取完成后默认保持夹紧。若要观察后再恢复官方初始位置，加 --hold，
-程序会等回车后松开夹爪并复位。
+夹紧后退并复位其他关节后，25 始终不松开。加 --hold 可让程序等回车再结束。
 """
 import argparse
 import os
@@ -36,6 +37,8 @@ from agcs_lib import (
     make_ultrasonic,
     dist_cm,
     go_forward,
+    go_back,
+    stand,
     fixed_clamp,
 )
 from agcs_lib.logs import setup_logger, action_msg
@@ -54,8 +57,12 @@ def main():
                         help='最大前进步数，0=不限制')
     parser.add_argument('--invalid-limit', type=int, default=20,
                         help='超声波连续读数无效多少次后停止，默认 20')
+    parser.add_argument('--back-step', type=int, default=15,
+                        help='夹紧后六足后退步幅 mm，默认 15')
+    parser.add_argument('--back-speed', type=int, default=50,
+                        help='夹紧后六足后退速度，默认 50')
     parser.add_argument('--hold', action='store_true',
-                        help='夹取成功后等待回车，再恢复官方初始位置')
+                        help='后退并恢复其他关节后，等待回车结束；25 保持夹紧不松开')
     args = parser.parse_args()
 
     logger = setup_logger('CZ1')
@@ -129,14 +136,29 @@ def main():
             '固定夹取完成',
             action='21-24 已到固定位，25=700 已夹紧'))
 
+        logger.info('[CZ1] %s', action_msg(
+            '开始退回',
+            action='六足后退 step=%dmm speed=%d，25 保持夹紧'
+            % (args.back_step, args.back_speed)))
+        go_back(ik, step=args.back_step, speed=args.back_speed)
+
+        # 恢复官方初始状态，但 25 号夹爪不松开。
+        stand(ik, t=500)
+        reset_pulses = params['arm']['reset_pulses']
+        board.bus_servo_set_position(
+            1.5, [[sid, reset_pulses[sid]] for sid in [21, 22, 23, 24]])
+        time.sleep(1.5)
+        board.bus_servo_set_position(0.5, [[25, 700]])
+        time.sleep(0.5)
+        logger.info('[CZ1] %s', action_msg(
+            '后退并恢复其他关节',
+            action='六足立正，21-24 回官方初始位，25=700 保持夹紧'))
+
         if args.hold:
             try:
-                input('固定夹取完成，保持夹紧。按回车松开夹爪并恢复官方初始位置...')
+                input('固定夹取完成并已后退，25 保持夹紧。按回车结束...')
             except EOFError:
                 logger.info('[CZ1] 非交互运行，保持夹紧并结束')
-                return 0
-            restore.restore_initial_state()
-            logger.info('[CZ1] %s', action_msg('已恢复官方初始位置'))
 
         return 0
 
