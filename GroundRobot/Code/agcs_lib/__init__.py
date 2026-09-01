@@ -21,3 +21,4 @@ from agcs_lib.vision import (
     correct_camera,
 )
 from agcs_lib.orientation import block_orientation, orientation_error
+from agcs_lib.ClampRemoval import fixed_clamp, clamp_removal
