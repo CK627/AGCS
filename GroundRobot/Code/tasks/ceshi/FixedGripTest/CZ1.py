@@ -5,7 +5,7 @@
 流程：
     1. 恢复官方初始位置（立正 + 机械臂复位 + 云台回中 + 夹爪张开）；
     2. 六足持续前进，每走一步读一次超声波；
-    3. 超声波检测到距离 < 1cm 时停止前进；
+    3. 超声波读数 < 1cm 时停止前进（负数也视为到达）；
     4. 调用 agcs_lib.ClampRemoval.fixed_clamp()：
        21=510, 22=440, 23=415, 24=300，随后 25=700 夹紧；
     5. 六足后退 20cm，随后六足立正、21-24 恢复到官方初始位；
@@ -59,8 +59,6 @@ def main():
                         help='六足前进速度，默认 50')
     parser.add_argument('--max-steps', type=int, default=0,
                         help='最大前进步数，0=不限制')
-    parser.add_argument('--invalid-limit', type=int, default=20,
-                        help='超声波连续读数无效多少次后停止，默认 20')
     parser.add_argument('--back-step', type=int, default=200,
                         help='夹紧后六足后退总距离 mm，默认 200（20cm）')
     parser.add_argument('--back-speed', type=int, default=50,
@@ -105,30 +103,15 @@ def main():
         restore.restore_initial_state()
 
         steps = 0
-        invalid_streak = 0
         while True:
             distance = dist_cm(ultrasonic)
 
-            if 0 < distance < args.distance:
+            if distance < args.distance:
                 logger.info('[CZ1] %s', action_msg(
                     '超声波到位',
-                    action='距离 %.2fcm < %.2fcm，停止六足前进'
+                    action='距离 %.2fcm < %.2fcm，停止六足前进（负数也视为到达）'
                     % (distance, args.distance)))
                 break
-
-            if distance < 0:
-                invalid_streak += 1
-                logger.info('[CZ1] %s', action_msg(
-                    '超声波读数无效',
-                    reason='连续 %d 次，超过 %d 次将停止'
-                    % (invalid_streak, args.invalid_limit)))
-                if invalid_streak >= args.invalid_limit:
-                    logger.error('[CZ1] %s', action_msg(
-                        '超声波持续无效', action='停止前进并恢复初始位置'))
-                    restore.restore_initial_state()
-                    return 2
-            else:
-                invalid_streak = 0
 
             if args.max_steps and steps >= args.max_steps:
                 logger.info('[CZ1] %s', action_msg(
