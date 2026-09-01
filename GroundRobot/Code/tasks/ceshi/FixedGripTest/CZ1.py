@@ -28,8 +28,8 @@ if __name__ == '__main__':
     board.bus_servo_set_position(0.5, [[24, 260], [21, 500]])
     time.sleep(0.5)
 
-    print('2. 六足前进 20cm（50mm x 4，速度50）', flush=True)
-    ik.go_forward(ik.initial_pos, 2, 50, 50, 4)
+    print('2. 六足前进 30cm（50mm x 6，速度50）', flush=True)
+    ik.go_forward(ik.initial_pos, 2, 50, 50, 6)
     time.sleep(1)
 
     print('3. 固定夹取：21=510 22=440 23=415 24=300，然后 25=700', flush=True)
