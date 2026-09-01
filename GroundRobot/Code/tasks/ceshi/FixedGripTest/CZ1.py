@@ -29,7 +29,7 @@ if __name__ == '__main__':
     time.sleep(0.5)
 
     print('2. 六足前进 20cm', flush=True)
-    ik.go_forward(ik.initial_pos, 2, 200, 50, 1)
+    ik.go_forward(ik.initial_pos, 2, 200, 20, 1)
     time.sleep(1)
 
     print('3. 固定夹取：21=510 22=440 23=415 24=300，然后 25=700', flush=True)
@@ -39,7 +39,7 @@ if __name__ == '__main__':
     time.sleep(0.8)
 
     print('4. 六足后退 20cm，25 保持夹紧', flush=True)
-    ik.back(ik.initial_pos, 2, 200, 50, 1)
+    ik.back(ik.initial_pos, 2, 200, 20, 1)
     time.sleep(1)
 
     print('5. 恢复六足和 21-24 官方初始位，25 继续保持 700', flush=True)
@@ -54,7 +54,7 @@ if __name__ == '__main__':
     time.sleep(1)
 
     print('7. 六足前进 40cm', flush=True)
-    ik.go_forward(ik.initial_pos, 2, 400, 50, 1)
+    ik.go_forward(ik.initial_pos, 2, 400, 20, 1)
     time.sleep(1)
 
     print('8. 机械臂放下：21=500 22=365 23=105 24=280，然后 25=120', flush=True)
