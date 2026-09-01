@@ -32,8 +32,8 @@ if __name__ == '__main__':
     ik.go_forward(ik.initial_pos, 2, 50, 50, 6)
     time.sleep(1)
 
-    print('3. 固定夹取：21=510 22=440 23=415 24=300，然后 25=700', flush=True)
-    board.bus_servo_set_position(1.2, [[21, 510], [22, 440], [23, 415], [24, 300]])
+    print('3. 固定夹取：21=510 22=455 23=415 24=300，然后 25=700', flush=True)
+    board.bus_servo_set_position(1.2, [[21, 500], [22, 540], [23, 170], [24, 445]])
     time.sleep(1.2)
     board.bus_servo_set_position(0.8, [[25, 700]])
     time.sleep(0.8)
