@@ -29,12 +29,13 @@ def official_color_grab(board, ak, params, detect, K, R, T,
     arm = params['arm']
     walk = params.get('walk', {})
     detect_pose = tuple(float(v) for v in arm.get('detect_pose', [0, 15, 5]))
-    pick_z = 5.0  # 官方 block_fetch.py 固定夹取高度
-    raise_pose = (12.0, 24.0, 5.0)
-    release_pose = (12.0, 24.0, -5.0)
+    # 夹取高度等行为参数统一走 robot_params.yaml 的 arm.*，别在这里硬编码
+    pick_z = float(arm.get('pick_z', 5.0))
+    raise_pose = tuple(float(v) for v in arm.get('raise_pose', [12, 24, 5]))
+    release_pose = tuple(float(v) for v in arm.get('release_pose', [12, 24, -5]))
 
     gripper_open = 120
-    gripper_close = 550
+    gripper_close = int(arm.get('gripper_close', 550))
     reach_x = float(walk.get('reach_x', 8.0))
     reach_y = float(walk.get('reach_y', 24.0))
     stable_need = 11   # 官方 num > 10

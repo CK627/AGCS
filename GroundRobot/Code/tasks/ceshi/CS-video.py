@@ -6,13 +6,13 @@
     本脚本（唯一占摄像头的进程，每帧 publish_frame）
       → task_server /video.mjpeg（5000 端口）
       → 地面站 Dashboard/backend/app.py /video_feed
-      → 浏览器 http://127.0.0.1:20002
+      → 浏览器 http://127.0.0.1:20001
 
 树莓派上运行（同时只能跑一个占摄像头的程序）：
     python3 CS-video.py   # 有桌面（VNC）开预览窗口 ESC 退出；SSH 无桌面自动纯推流 Ctrl+C 退出
 
 启动后按打印的 IP 改 Dashboard/backend/config.py 的 ROBOT_URL，
-再在地面站跑 app.py、浏览器开 http://127.0.0.1:20002 看画面。
+再在地面站跑 app.py、浏览器开 http://127.0.0.1:20001 看画面。
 也可先用浏览器直接开 http://<机器人IP>:5000/video.mjpeg 单独验证机器人端。
 """
 import argparse
