@@ -12,6 +12,7 @@
 """
 import argparse
 import csv
+from datetime import datetime
 import os
 import sys
 import time
@@ -58,7 +59,8 @@ def main():
     parser.add_argument('--start', type=int, default=0)
     parser.add_argument('--end', type=int, default=1000)
     parser.add_argument('--label', default='test')
-    parser.add_argument('--out', default=None)
+    parser.add_argument('--monitor-dir', default=os.path.join(_PKG_ROOT, 'Monitoring'),
+                        help='结果保存目录，默认 <Code>/Monitoring')
     parser.add_argument('--min-ratio', type=float, default=1.6)
     parser.add_argument('--max-ratio', type=float, default=2.4)
     parser.add_argument('--stable-frames', type=int, default=7,
@@ -79,10 +81,15 @@ def main():
     mapx, mapy = load_undistort_maps()
     cam = open_camera()
 
-    if args.out is None:
-        out = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'gd_sx_samples.csv')
-    else:
-        out = args.out
+    monitor_dir = args.monitor_dir
+    os.makedirs(monitor_dir, exist_ok=True)
+    prefix = datetime.now().strftime('%m-%d_%H-%M')
+    seq = 1
+    while True:
+        out = os.path.join(monitor_dir, '%s_%03d.csv' % (prefix, seq))
+        if not os.path.exists(out):
+            break
+        seq += 1
 
     def detect():
         f = capture(cam)
@@ -106,14 +113,14 @@ def main():
 
     y = start
     direction = 1
-    file_exists = os.path.exists(out) and os.path.getsize(out) > 0
-    with open(out, 'a', newline='') as f:
+    with open(out, 'w', newline='') as f:
         writer = csv.writer(f)
-        if not file_exists:
-            writer.writerow(['time', 'label', 'servo', 'pulse', 'x21', 'y24',
-                             'cx', 'cy', 'radius', 'area', 'ratio'])
+        writer.writerow(['time', 'label', 'servo', 'pulse', 'x21', 'y24',
+                         'cx', 'cy', 'radius', 'area', 'ratio'])
 
-        logger.info('[CS-gd-sx] %s', action_msg('开始单轴扫描', action='servo=%d %d->%d' % (servo_id, start, end)))
+        logger.info('[CS-gd-sx] %s', action_msg(
+            '开始单轴扫描',
+            action='servo=%d %d->%d 保存到 %s' % (servo_id, start, end, out)))
         try:
             while True:
                 if servo_id == 24:
