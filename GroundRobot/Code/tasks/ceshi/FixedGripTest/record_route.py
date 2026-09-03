@@ -13,6 +13,8 @@
     d  右横移一次
     q  左转一次
     e  右转一次
+    f  标记：夹取
+    g  标记：放下
     r  恢复立正（会记录 stand）
     u  撤销上一个动作（并反向执行）
     c  清空全部记录
@@ -60,6 +62,8 @@ def save_route(path, actions):
 def inverse_ik(ik, act):
     """反向执行一个已记录动作，用于撤销。"""
     name = act.get('action')
+    if name in ('pick', 'place'):
+        return
     speed = int(act.get('speed', 50))
     if name == 'forward':
         ik.back(ik.initial_pos, 2, int(act.get('step', 50)), speed, 1)
@@ -79,7 +83,7 @@ def inverse_ik(ik, act):
 
 def print_help():
     print('w=前进  s=后退  a=左横移  d=右横移  q=左转  e=右转', flush=True)
-    print('r=恢复立正  u=撤销上一步  c=清空记录  l=查看记录  x=保存退出', flush=True)
+    print('f=标记夹取  g=标记放下  r=恢复立正  u=撤销上一步  c=清空记录  l=查看记录  x=保存退出', flush=True)
 
 
 def main():
@@ -131,6 +135,12 @@ def main():
             ik.turn_right(ik.initial_pos, 2, args.angle, args.speed, 1)
             actions.append({'action': 'turn_right', 'angle': args.angle, 'speed': args.speed})
             print('记录 %d: turn_right %d' % (len(actions), args.angle), flush=True)
+        elif ch == 'f':
+            actions.append({'action': 'pick'})
+            print('记录 %d: pick' % len(actions), flush=True)
+        elif ch == 'g':
+            actions.append({'action': 'place'})
+            print('记录 %d: place' % len(actions), flush=True)
         elif ch == 'r':
             ik.stand(ik.initial_pos, t=500)
             actions.append({'action': 'stand'})
