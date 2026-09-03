@@ -1,10 +1,13 @@
 #!/usr/bin/python3
 # coding=utf8
-"""重放已固定到脚本里的路线，不读取 JSON。
+"""固定路线重放 + 机械臂固定夹取，不读取 JSON。
 
 当前固定路线：
     forward   50mm x 25
     left_move 50mm x 9
+
+夹取固定点：
+    21=715, 22=520, 23=335, 24=245, 25=700
 """
 
 import os
@@ -26,6 +29,9 @@ ROUTE = (
     [('forward', 50)] * 25 +
     [('left_move', 50)] * 9
 )
+
+PICK_ARM_PULSES = {21: 715, 22: 520, 23: 335, 24: 245}
+PICK_GRIPPER_PULSE = 700
 
 
 def main():
@@ -64,7 +70,15 @@ def main():
         time.sleep(0.08)
 
     ik.stand(ik.initial_pos, t=500)
-    print('固定路线重放完成', flush=True)
+    print('固定路线重放完成，开始机械臂夹取', flush=True)
+
+    print('机械臂到固定夹取点: 21=715 22=520 23=335 24=245', flush=True)
+    board.bus_servo_set_position(
+        1.2, [[sid, PICK_ARM_PULSES[sid]] for sid in [21, 22, 23, 24]])
+    time.sleep(1.2)
+    board.bus_servo_set_position(0.8, [[25, PICK_GRIPPER_PULSE]])
+    time.sleep(0.8)
+    print('25 夹取完成: %d' % PICK_GRIPPER_PULSE, flush=True)
 
 
 if __name__ == '__main__':
