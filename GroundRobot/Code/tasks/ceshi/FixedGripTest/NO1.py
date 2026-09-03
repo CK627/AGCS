@@ -7,7 +7,7 @@
     left_move 50mm x 9
 
 夹取固定点：
-    21=715, 22=520, 23=335, 24=245, 25=700
+    21=740, 22=495, 23=425, 24=255, 25=700
 """
 
 import os
@@ -30,7 +30,7 @@ ROUTE = (
     [('left_move', 50)] * 9
 )
 
-PICK_ARM_PULSES = {21: 715, 22: 520, 23: 335, 24: 245}
+PICK_ARM_PULSES = {21: 740, 22: 495, 23: 425, 24: 255}
 PICK_GRIPPER_PULSE = 700
 
 
@@ -72,7 +72,7 @@ def main():
     ik.stand(ik.initial_pos, t=500)
     print('固定路线重放完成，开始机械臂夹取', flush=True)
 
-    print('机械臂到固定夹取点: 21=715 22=520 23=335 24=245', flush=True)
+    print('机械臂到固定夹取点: 21=740 22=495 23=425 24=255', flush=True)
     board.bus_servo_set_position(
         1.2, [[sid, PICK_ARM_PULSES[sid]] for sid in [21, 22, 23, 24]])
     time.sleep(1.2)
