@@ -55,6 +55,14 @@ def main():
             angle = int(act.get('angle', 30))
             print('%d/%d turn_left %d' % (i, len(actions), angle), flush=True)
             ik.turn_left(ik.initial_pos, 2, angle, speed, 1)
+        elif name == 'left_move':
+            step = int(act.get('step', 50))
+            print('%d/%d right_move %d' % (i, len(actions), step), flush=True)
+            ik.right_move(ik.initial_pos, 2, step, speed, 1)
+        elif name == 'right_move':
+            step = int(act.get('step', 50))
+            print('%d/%d left_move %d' % (i, len(actions), step), flush=True)
+            ik.left_move(ik.initial_pos, 2, step, speed, 1)
         elif name == 'stand':
             print('%d/%d stand' % (i, len(actions)), flush=True)
             ik.stand(ik.initial_pos, t=500)

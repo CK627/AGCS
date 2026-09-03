@@ -9,13 +9,15 @@
 按键：
     w  前进一步
     s  后退一步
-    a  左转一次
-    d  右转一次
+    a  左横移一次
+    d  右横移一次
+    q  左转一次
+    e  右转一次
     r  恢复立正（会记录 stand）
     u  撤销上一个动作（并反向执行）
     c  清空全部记录
     l  查看已记录的动作
-    q  保存并退出
+    x  保存并退出
 
 记录文件默认保存在同目录 fixed_route.json，可用 --out 修改。
 """
@@ -67,13 +69,17 @@ def inverse_ik(ik, act):
         ik.turn_right(ik.initial_pos, 2, int(act.get('angle', 30)), speed, 1)
     elif name == 'turn_right':
         ik.turn_left(ik.initial_pos, 2, int(act.get('angle', 30)), speed, 1)
+    elif name == 'left_move':
+        ik.right_move(ik.initial_pos, 2, int(act.get('step', 50)), speed, 1)
+    elif name == 'right_move':
+        ik.left_move(ik.initial_pos, 2, int(act.get('step', 50)), speed, 1)
     elif name == 'stand':
         ik.stand(ik.initial_pos, t=500)
 
 
 def print_help():
-    print('w=前进一步  s=后退一步  a=左转一次  d=右转一次', flush=True)
-    print('r=恢复立正  u=撤销上一步  c=清空记录  l=查看记录  q=保存退出', flush=True)
+    print('w=前进  s=后退  a=左横移  d=右横移  q=左转  e=右转', flush=True)
+    print('r=恢复立正  u=撤销上一步  c=清空记录  l=查看记录  x=保存退出', flush=True)
 
 
 def main():
@@ -110,10 +116,18 @@ def main():
             actions.append({'action': 'back', 'step': args.step, 'speed': args.speed})
             print('记录 %d: back %d' % (len(actions), args.step), flush=True)
         elif ch == 'a':
+            ik.left_move(ik.initial_pos, 2, args.step, args.speed, 1)
+            actions.append({'action': 'left_move', 'step': args.step, 'speed': args.speed})
+            print('记录 %d: left_move %d' % (len(actions), args.step), flush=True)
+        elif ch == 'd':
+            ik.right_move(ik.initial_pos, 2, args.step, args.speed, 1)
+            actions.append({'action': 'right_move', 'step': args.step, 'speed': args.speed})
+            print('记录 %d: right_move %d' % (len(actions), args.step), flush=True)
+        elif ch == 'q':
             ik.turn_left(ik.initial_pos, 2, args.angle, args.speed, 1)
             actions.append({'action': 'turn_left', 'angle': args.angle, 'speed': args.speed})
             print('记录 %d: turn_left %d' % (len(actions), args.angle), flush=True)
-        elif ch == 'd':
+        elif ch == 'e':
             ik.turn_right(ik.initial_pos, 2, args.angle, args.speed, 1)
             actions.append({'action': 'turn_right', 'angle': args.angle, 'speed': args.speed})
             print('记录 %d: turn_right %d' % (len(actions), args.angle), flush=True)
@@ -137,7 +151,7 @@ def main():
             for i, act in enumerate(actions, 1):
                 print('%d: %s' % (i, act), flush=True)
             print('------------------', flush=True)
-        elif ch in ('q', 'x'):
+        elif ch == 'x':
             save_route(args.out, actions)
             print('已保存 %d 个动作到: %s' % (len(actions), args.out), flush=True)
             break
