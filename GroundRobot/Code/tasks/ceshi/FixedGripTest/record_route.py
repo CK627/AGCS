@@ -12,6 +12,8 @@
     a  左转一次
     d  右转一次
     r  恢复立正（会记录 stand）
+    u  撤销上一个动作（并反向执行）
+    c  清空全部记录
     l  查看已记录的动作
     q  保存并退出
 
@@ -53,9 +55,25 @@ def save_route(path, actions):
         json.dump(actions, f, ensure_ascii=False, indent=2)
 
 
+def inverse_ik(ik, act):
+    """反向执行一个已记录动作，用于撤销。"""
+    name = act.get('action')
+    speed = int(act.get('speed', 50))
+    if name == 'forward':
+        ik.back(ik.initial_pos, 2, int(act.get('step', 50)), speed, 1)
+    elif name == 'back':
+        ik.go_forward(ik.initial_pos, 2, int(act.get('step', 50)), speed, 1)
+    elif name == 'turn_left':
+        ik.turn_right(ik.initial_pos, 2, int(act.get('angle', 30)), speed, 1)
+    elif name == 'turn_right':
+        ik.turn_left(ik.initial_pos, 2, int(act.get('angle', 30)), speed, 1)
+    elif name == 'stand':
+        ik.stand(ik.initial_pos, t=500)
+
+
 def print_help():
     print('w=前进一步  s=后退一步  a=左转一次  d=右转一次', flush=True)
-    print('r=恢复立正  l=查看记录  q=保存并退出', flush=True)
+    print('r=恢复立正  u=撤销上一步  c=清空记录  l=查看记录  q=保存退出', flush=True)
 
 
 def main():
@@ -103,6 +121,17 @@ def main():
             ik.stand(ik.initial_pos, t=500)
             actions.append({'action': 'stand'})
             print('记录 %d: stand' % len(actions), flush=True)
+        elif ch == 'u':
+            if not actions:
+                print('没有可以撤销的动作', flush=True)
+            else:
+                act = actions.pop()
+                inverse_ik(ik, act)
+                print('已撤销: %s，剩余 %d 个动作' % (act, len(actions)), flush=True)
+        elif ch == 'c':
+            actions.clear()
+            ik.stand(ik.initial_pos, t=500)
+            print('已清空记录，并恢复立正', flush=True)
         elif ch == 'l':
             print('--- 已记录动作 ---', flush=True)
             for i, act in enumerate(actions, 1):
