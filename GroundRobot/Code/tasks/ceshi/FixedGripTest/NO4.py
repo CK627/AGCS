@@ -31,7 +31,7 @@ PICK2 = {21: 735, 22: 610, 23: 205, 24: 410}
 GRIPPER_CLOSE = 700
 GRIPPER_OPEN = 400
 
-MOVE_SPEED = 30
+MOVE_SPEED = 50
 LEFT_TURN_STEP = 1
 RIGHT_TURN_STEP = 1
 TURN_SPEED = 30
@@ -123,7 +123,6 @@ def straight_segment(ik, gyro, target_yaw, distance_mm):
             ik.back(ik.initial_pos, 2, move, MOVE_SPEED, 1)
         remaining -= move
         time.sleep(0.05)
-        correct_heading(ik, gyro, target_yaw)
 
 
 def turn_delta(ik, gyro, delta_deg):
