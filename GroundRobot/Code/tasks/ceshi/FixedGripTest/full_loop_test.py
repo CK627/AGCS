@@ -36,8 +36,10 @@ def main():
 
         if name == 'pick':
             print('%d/%d [skip pick]' % (i, len(actions)), flush=True)
+            time.sleep(0.5)
         elif name == 'place':
             print('%d/%d [skip place]' % (i, len(actions)), flush=True)
+            time.sleep(0.5)
         elif name == 'forward':
             value = int(act.get('step', 50))
             print('%d/%d forward %d' % (i, len(actions), value), flush=True)
