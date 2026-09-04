@@ -29,8 +29,6 @@ from agcs_lib import make_board, make_ik, make_ultrasonic, dist_cm
 
 ROUTE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), 'fixed_route.json')
-SUCCESS_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), 'success_points.json')
 
 OFFICIAL_ARM = {21: 500, 22: 705, 23: 90, 24: 330}
 ARM_ORDER = [22, 23, 21, 24]
@@ -108,18 +106,6 @@ def restore_travel(board, gripper):
     time.sleep(0.5)
 
 
-def load_place_points():
-    if not os.path.exists(SUCCESS_PATH):
-        return {}
-    with open(SUCCESS_PATH, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-    return {
-        key: data[key]['pulses']
-        for key in ('place1', 'place2')
-        if key in data and 'pulses' in data[key]
-    }
-
-
 def main():
     parser = argparse.ArgumentParser(description='NO2 固定路线自动运行')
     parser.add_argument('--obstacle-distance', type=float, default=1.0,
@@ -136,9 +122,7 @@ def main():
         print('超声波初始化失败', flush=True)
         return 1
 
-    place_points = load_place_points()
     pick_index = 0
-    place_index = 0
 
     print('NO2 启动，共 %d 个路线动作' % len(actions), flush=True)
     ik.stand(ik.initial_pos, t=500)
@@ -157,15 +141,8 @@ def main():
             continue
 
         if name == 'place':
-            place_index += 1
-            key = 'place%d' % place_index
-            pulses = place_points.get(key)
-            if pulses:
-                print('%d/%d %s 执行放下' % (i, len(actions), key), flush=True)
-                set_arm(board, pulses, GRIPPER_OPEN)
-                restore_travel(board, GRIPPER_OPEN)
-            else:
-                print('%d/%d %s 未配置，跳过放下' % (i, len(actions), key), flush=True)
+            print('%d/%d place 固定点打开25号夹爪' % (i, len(actions)), flush=True)
+            restore_travel(board, GRIPPER_OPEN)
             continue
 
         speed = int(act.get('speed', 50))
