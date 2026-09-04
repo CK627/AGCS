@@ -174,8 +174,8 @@ def arm_fine_tune(board, state, kind):
         time.sleep(0.1)
 
     gripper = GRIPPER_CLOSE if kind == 'pick' else GRIPPER_OPEN
-    board.bus_servo_set_position(0.8, [[25, gripper]])
-    time.sleep(0.8)
+    board.bus_servo_set_position(2.0, [[25, gripper]])
+    time.sleep(2.0)
     restore_travel(board, gripper)
 
 
@@ -256,19 +256,13 @@ def main():
                 arm_state = pick1_prepare(board)
             else:
                 arm_state = pick2_prepare(board)
-            board.bus_servo_set_position(0.8, [[25, GRIPPER_CLOSE]])
-            time.sleep(0.8)
-            print('pick%d 自动夹取完成' % pick_index, flush=True)
-            restore_travel(board, GRIPPER_CLOSE)
+            arm_fine_tune(board, arm_state, 'pick')
         elif name == 'place':
             place_index += 1
             print('%d/%d place%d' % (i, len(actions), place_index), flush=True)
             if place_index == 1:
                 arm_state = place1_prepare(board)
-                board.bus_servo_set_position(0.8, [[25, GRIPPER_OPEN]])
-                time.sleep(0.8)
-                print('place1 自动放下完成', flush=True)
-                restore_travel(board, GRIPPER_OPEN)
+                arm_fine_tune(board, arm_state, 'place')
             else:
                 arm_state = dict(OFFICIAL_ARM)
                 arm_fine_tune(board, arm_state, 'place')
