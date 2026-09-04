@@ -1,12 +1,14 @@
 #!/usr/bin/python3
 # coding=utf8
-"""NO2：固定路线自动运行，夹取/放下前进行机械臂手动微调。"""
+"""NO2：固定路线自动运行两轮夹取。无超声波避障，支持临时手动微调。"""
 
 import json
 import os
-import re
+import select
 import sys
+import termios
 import time
+import tty
 
 _PKG_ROOT = os.path.dirname(
     os.path.dirname(
@@ -34,10 +36,111 @@ MOVE_SPEED = 30
 TURN_SPEED = 30
 
 
-def set_servos(board, pulses, order):
-    board.bus_servo_set_position(
-        1.2, [[sid, int(pulses[sid])] for sid in order])
+def getch():
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        ch = sys.stdin.read(1)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+    return ch
+
+
+def read_key_nowait():
+    if select.select([sys.stdin], [], [], 0)[0]:
+        return getch().lower()
+    return None
+
+
+def save_route(actions):
+    with open(ROUTE_PATH, 'w', encoding='utf-8') as f:
+        json.dump(actions, f, ensure_ascii=False, indent=2)
+
+
+def live_action(ik, ch, actions):
+    """执行一个手动动作，并插入任务列表。"""
+    if ch == 'w':
+        ik.go_forward(ik.initial_pos, 2, 50, MOVE_SPEED, 1)
+        action = {'index': len(actions) + 1, 'action': 'forward', 'step': 50, 'speed': MOVE_SPEED}
+        print('插入 forward 50', flush=True)
+    elif ch == 's':
+        ik.back(ik.initial_pos, 2, 50, MOVE_SPEED, 1)
+        action = {'index': len(actions) + 1, 'action': 'back', 'step': 50, 'speed': MOVE_SPEED}
+        print('插入 back 50', flush=True)
+    elif ch == 'a':
+        ik.left_move(ik.initial_pos, 2, 50, MOVE_SPEED, 1)
+        action = {'index': len(actions) + 1, 'action': 'left_move', 'step': 50, 'speed': MOVE_SPEED}
+        print('插入 left_move 50', flush=True)
+    elif ch == 'd':
+        ik.right_move(ik.initial_pos, 2, 50, MOVE_SPEED, 1)
+        action = {'index': len(actions) + 1, 'action': 'right_move', 'step': 50, 'speed': MOVE_SPEED}
+        print('插入 right_move 50', flush=True)
+    elif ch == 'q':
+        ik.turn_left(ik.initial_pos, 2, 10, TURN_SPEED, 1)
+        action = {'index': len(actions) + 1, 'action': 'turn_left', 'angle': 10, 'speed': TURN_SPEED}
+        print('插入 turn_left 10', flush=True)
+    elif ch == 'e':
+        ik.turn_right(ik.initial_pos, 2, 10, TURN_SPEED, 1)
+        action = {'index': len(actions) + 1, 'action': 'turn_right', 'angle': 10, 'speed': TURN_SPEED}
+        print('插入 turn_right 10', flush=True)
+    elif ch == 'r':
+        ik.stand(ik.initial_pos, t=500)
+        action = {'index': len(actions) + 1, 'action': 'stand'}
+        print('插入 stand', flush=True)
+    else:
+        return None
+    actions.append(action)
+    save_route(actions)
+    return action
+
+
+def place2_manual(ik, actions):
+    print('place2 未配置，直接按移动键插入动作；按回车继续；c 退出', flush=True)
+    while True:
+        ch = getch().lower()
+        if ch in ('w', 's', 'a', 'd', 'q', 'e', 'r'):
+            live_action(ik, ch, actions)
+        elif ch in ('\r', '\n'):
+            print('继续自动路线', flush=True)
+            return
+        elif ch == 'c':
+            print('手动退出，脚本结束', flush=True)
+            sys.exit(0)
+        time.sleep(0.08)
+
+
+def pick_first(board):
+    print('pick1：先动 21，再动其他关节', flush=True)
+    board.bus_servo_set_position(1.2, [[21, PICK1[21]]])
     time.sleep(1.2)
+    board.bus_servo_set_position(
+        1.2, [[22, PICK1[22]], [23, PICK1[23]], [24, PICK1[24]]])
+    time.sleep(1.2)
+    board.bus_servo_set_position(0.8, [[25, GRIPPER_CLOSE]])
+    time.sleep(0.8)
+
+
+def pick_second(board):
+    print('pick2：先 22-23-(24+100)，再 21，再 24-100 后夹取', flush=True)
+    board.bus_servo_set_position(
+        1.2, [[22, PICK2[22]], [23, PICK2[23]], [24, PICK2[24] + 100]])
+    time.sleep(1.2)
+    board.bus_servo_set_position(1.2, [[21, PICK2[21]]])
+    time.sleep(1.2)
+    board.bus_servo_set_position(0.8, [[24, PICK2[24]]])
+    time.sleep(0.8)
+    board.bus_servo_set_position(0.8, [[25, GRIPPER_CLOSE]])
+    time.sleep(0.8)
+
+
+def place_first(board):
+    print('place1：到固定点并打开 25', flush=True)
+    board.bus_servo_set_position(
+        1.2, [[sid, PLACE1[sid]] for sid in [22, 23, 21, 24]])
+    time.sleep(1.2)
+    board.bus_servo_set_position(0.8, [[25, GRIPPER_OPEN]])
+    time.sleep(0.8)
 
 
 def restore_travel(board, gripper):
@@ -48,133 +151,55 @@ def restore_travel(board, gripper):
     time.sleep(0.5)
 
 
-def clamp_pulse(value):
-    return max(0, min(1000, int(value)))
-
-
-def parse_adjust(cmd):
-    """返回 (servo, delta, amount)，解析失败返回 None。"""
-    cmd = cmd.strip().lower()
-    if not cmd:
-        return None
-
-    # a/d 控制 21 号舵机
-    if cmd[0] in ('a', 'd'):
-        servo = 21
-        delta = -1 if cmd[0] == 'a' else 1
-        amount_text = cmd[1:]
-        amount = int(amount_text) if amount_text else 5
-        return servo, delta, amount
-
-    m = re.match(r'^(22|23|24)([ws])(\d*)$', cmd)
-    if not m:
-        return None
-    servo = int(m.group(1))
-    delta = 1 if m.group(2) == 'w' else -1
-    amount_text = m.group(3)
-    amount = int(amount_text) if amount_text else 5
-    return servo, delta, amount
-
-
-def arm_fine_tune(board, state, kind):
-    """手动微调 21-24；回车执行夹取/放下，c 退出。"""
-    print('机械臂微调中。', flush=True)
-    print('21: a/d 左右，默认 5，可 a10/d10', flush=True)
-    print('22/23/24: 例如 22w、22s、23w10、24s5', flush=True)
-    print('回车=执行%s，c=退出' % ('夹取' if kind == 'pick' else '放下'), flush=True)
-
-    while True:
-        print_state(state)
-        cmd = input('arm> ').strip().lower()
-        if cmd == '':
-            break
-        if cmd == 'c':
-            print('手动退出，脚本结束', flush=True)
-            sys.exit(0)
-
-        parsed = parse_adjust(cmd)
-        if parsed is None:
-            print('命令错误', flush=True)
-            continue
-
-        servo, delta, amount = parsed
-        state[servo] = clamp_pulse(state[servo] + delta * amount)
-        board.bus_servo_set_position(0.2, [[servo, state[servo]]])
-        time.sleep(0.1)
-
-    gripper = GRIPPER_CLOSE if kind == 'pick' else GRIPPER_OPEN
-    board.bus_servo_set_position(0.8, [[25, gripper]])
-    time.sleep(0.8)
-    print('已执行%s，25=%d' % ('夹取' if kind == 'pick' else '放下', gripper), flush=True)
-    restore_travel(board, gripper)
-
-
-def print_state(state):
-    print('当前 21=%d 22=%d 23=%d 24=%d'
-          % (state[21], state[22], state[23], state[24]), flush=True)
-
-
-def pick1_prepare(board):
-    print('pick1 到位，先动 21，再动其他', flush=True)
-    set_servos(board, PICK1, [21])
-    set_servos(board, PICK1, [22, 23, 24])
-    return dict(PICK1)
-
-
-def pick2_prepare(board):
-    print('pick2 到位，先 22-23-(24+100)，再 21，再 24', flush=True)
-    temp = dict(PICK2)
-    temp[24] = PICK2[24] + 100
-    set_servos(board, temp, [22, 23, 24])
-    set_servos(board, PICK2, [21])
-    set_servos(board, PICK2, [24])
-    return dict(PICK2)
-
-
-def place1_prepare(board):
-    print('place1 到位', flush=True)
-    set_servos(board, PLACE1, [22, 23, 21, 24])
-    return dict(PLACE1)
-
-
 def main():
     with open(ROUTE_PATH, 'r', encoding='utf-8') as f:
         actions = json.load(f)
 
     board = make_board()
     ik = make_ik(board)
-    arm_state = dict(OFFICIAL_ARM)
+
     pick_index = 0
     place_index = 0
 
-    print('NO2 启动，共 %d 个路线动作' % len(actions), flush=True)
+    print('NO2 启动，共 %d 个路线动作，无避障' % len(actions), flush=True)
     ik.stand(ik.initial_pos, t=500)
     time.sleep(0.5)
 
-    for i, act in enumerate(actions, 1):
+    i = 0
+    while i < len(actions):
+        act = actions[i]
+        key = read_key_nowait()
+        if key in ('w', 's', 'a', 'd', 'q', 'e', 'r'):
+            live_action(ik, key, actions)
+        elif key == 'c':
+            print('手动退出，脚本结束', flush=True)
+            sys.exit(0)
+
         name = act.get('action')
 
         if name == 'pick':
             pick_index += 1
-            print('%d/%d pick%d' % (i, len(actions), pick_index), flush=True)
+            print('%d/%d pick%d' % (i + 1, len(actions), pick_index), flush=True)
             if pick_index == 1:
-                arm_state = pick1_prepare(board)
+                pick_first(board)
             else:
-                arm_state = pick2_prepare(board)
-            arm_fine_tune(board, arm_state, 'pick')
+                pick_second(board)
+            restore_travel(board, GRIPPER_CLOSE)
+            i += 1
             continue
 
         if name == 'place':
             place_index += 1
             if place_index == 1:
-                arm_state = place1_prepare(board)
+                place_first(board)
+                restore_travel(board, GRIPPER_OPEN)
             else:
-                print('%d/%d place2 未配置，从当前姿态微调' % (i, len(actions)), flush=True)
-                arm_state = dict(OFFICIAL_ARM)
-            arm_fine_tune(board, arm_state, 'place')
+                print('%d/%d place2 未配置' % (i + 1, len(actions)), flush=True)
+                place2_manual(ik, actions)
+            i += 1
             continue
 
-        print('%d/%d %s' % (i, len(actions), act), flush=True)
+        print('%d/%d %s' % (i + 1, len(actions), act), flush=True)
 
         if name == 'forward':
             ik.go_forward(ik.initial_pos, 2, int(act.get('step', 50)), MOVE_SPEED, 1)
@@ -192,6 +217,7 @@ def main():
             ik.stand(ik.initial_pos, t=500)
 
         time.sleep(0.08)
+        i += 1
 
     ik.stand(ik.initial_pos, t=500)
     print('NO2 运行结束', flush=True)
