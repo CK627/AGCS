@@ -88,7 +88,7 @@ def main():
     th = threading.Thread(target=sample_gyro, args=(board, bias, stop_event, samples))
     th.start()
 
-    commanded = args.angle
+    commanded = args.angle if args.direction == 'left' else -args.angle
     remaining = args.angle
     while remaining > 0:
         move = min(args.step, remaining)
@@ -104,15 +104,20 @@ def main():
     th.join()
 
     measured = integrate_deg(samples)
+    error = measured - commanded
+    scale = abs(commanded / measured) if measured != 0 else None
     print('命令角度: %.1f 度' % commanded, flush=True)
     print('IMU 积分角度: %.1f 度' % measured, flush=True)
-    print('误差: %.1f 度' % (measured - commanded), flush=True)
+    print('误差: %.1f 度' % error, flush=True)
+    if scale is not None:
+        print('建议修正系数: %.3f' % scale, flush=True)
 
     result = {
         'direction': args.direction,
         'commanded_deg': commanded,
         'measured_deg': measured,
-        'error_deg': measured - commanded,
+        'error_deg': error,
+        'scale': scale,
         'gz_bias': bias,
         'samples': len(samples),
     }

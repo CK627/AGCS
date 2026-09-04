@@ -34,7 +34,8 @@ MOVE_SPEED = 30
 TURN_STEP = 5
 TURN_SPEED = 30
 HEADING_TOL_DEG = 2.0
-GYRO_SCALE = 1.15
+GYRO_SCALE_LEFT = 1.15
+GYRO_SCALE_RIGHT = 1.22
 
 
 def clamp_pulse(v):
@@ -74,7 +75,11 @@ class YawTracker:
         self.last_t = now
         gz = read_gz(self.board)
         if gz is not None:
-            self.yaw += (gz - self.bias) * dt * GYRO_SCALE
+            rate = gz - self.bias
+            if rate >= 0:
+                self.yaw += rate * dt * GYRO_SCALE_LEFT
+            else:
+                self.yaw += rate * dt * GYRO_SCALE_RIGHT
 
 
 def angle_error(current, target):
