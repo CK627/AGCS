@@ -92,7 +92,7 @@ def wait_if_obstacle(ik, ultrasonic, threshold):
 
 def set_arm(board, pulses, gripper):
     board.bus_servo_set_position(
-        1.2, [[sid, int(pulses[str(sid)])] for sid in ARM_ORDER])
+        1.2, [[sid, int(pulses[sid])] for sid in ARM_ORDER])
     time.sleep(1.2)
     board.bus_servo_set_position(0.8, [[25, gripper]])
     time.sleep(0.8)
