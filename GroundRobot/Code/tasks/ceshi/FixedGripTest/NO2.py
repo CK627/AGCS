@@ -9,13 +9,10 @@
 - 避障暂停时：w/a/s/d/q/e 移动，c 退出。
 """
 
-import argparse
 import json
 import os
 import sys
-import termios
 import time
-import tty
 
 _PKG_ROOT = os.path.dirname(
     os.path.dirname(
@@ -24,7 +21,7 @@ _PKG_ROOT = os.path.dirname(
 if _PKG_ROOT not in sys.path:
     sys.path.insert(0, _PKG_ROOT)
 
-from agcs_lib import make_board, make_ik, make_ultrasonic, dist_cm
+from agcs_lib import make_board, make_ik
 
 
 ROUTE_PATH = os.path.join(
@@ -38,56 +35,6 @@ PICK2 = {21: 745, 22: 485, 23: 345, 24: 325}
 
 GRIPPER_CLOSE = 700
 GRIPPER_OPEN = 400
-
-
-def getch():
-    fd = sys.stdin.fileno()
-    old_settings = termios.tcgetattr(fd)
-    try:
-        tty.setraw(fd)
-        ch = sys.stdin.read(1)
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-    return ch
-
-
-def wait_if_obstacle(ik, ultrasonic, threshold):
-    while True:
-        distance = dist_cm(ultrasonic)
-        if distance >= threshold:
-            return
-
-        print('检测到障碍 %.2fcm < %.2fcm，已停止' % (distance, threshold), flush=True)
-        print('手动操作: w=前进 s=后退 a=左横移 d=右横移 q=左转 e=右转 c=退出', flush=True)
-
-        while True:
-            ch = getch().lower()
-            if ch == 'w':
-                ik.go_forward(ik.initial_pos, 2, 50, 50, 1)
-                print('手动 forward', flush=True)
-            elif ch == 's':
-                ik.back(ik.initial_pos, 2, 50, 50, 1)
-                print('手动 back', flush=True)
-            elif ch == 'a':
-                ik.left_move(ik.initial_pos, 2, 50, 50, 1)
-                print('手动 left_move', flush=True)
-            elif ch == 'd':
-                ik.right_move(ik.initial_pos, 2, 50, 50, 1)
-                print('手动 right_move', flush=True)
-            elif ch == 'q':
-                ik.turn_left(ik.initial_pos, 2, 10, 50, 1)
-                print('手动 turn_left', flush=True)
-            elif ch == 'e':
-                ik.turn_right(ik.initial_pos, 2, 10, 50, 1)
-                print('手动 turn_right', flush=True)
-            elif ch == 'c':
-                print('手动退出，脚本结束', flush=True)
-                sys.exit(0)
-            else:
-                continue
-
-            time.sleep(0.08)
-            break
 
 
 def set_arm(board, pulses, gripper):
@@ -107,20 +54,11 @@ def restore_travel(board, gripper):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='NO2 固定路线自动运行')
-    parser.add_argument('--obstacle-distance', type=float, default=1.0,
-                        help='超声波距离小于此值(cm)时暂停，默认 1.0')
-    args = parser.parse_args()
-
     with open(ROUTE_PATH, 'r', encoding='utf-8') as f:
         actions = json.load(f)
 
     board = make_board()
     ik = make_ik(board)
-    ultrasonic = make_ultrasonic()
-    if ultrasonic is None:
-        print('超声波初始化失败', flush=True)
-        return 1
 
     pick_index = 0
 
@@ -129,7 +67,6 @@ def main():
     time.sleep(0.5)
 
     for i, act in enumerate(actions, 1):
-        wait_if_obstacle(ik, ultrasonic, args.obstacle_distance)
         name = act.get('action')
 
         if name == 'pick':
