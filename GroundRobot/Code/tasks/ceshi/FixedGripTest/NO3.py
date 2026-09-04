@@ -200,6 +200,9 @@ def main():
 
     board = make_board()
     ik = make_ik(board)
+    board.bus_servo_set_position(0.8, [[25, GRIPPER_OPEN]])
+    time.sleep(0.8)
+    print('启动时已打开 25 号夹爪: %d' % GRIPPER_OPEN, flush=True)
     arm_state = dict(OFFICIAL_ARM)
     pick_index = 0
     place_index = 0

@@ -194,6 +194,9 @@ def main():
     board = make_board()
     ik = make_ik(board)
     board.enable_reception()
+    board.bus_servo_set_position(0.8, [[25, GRIPPER_OPEN]])
+    time.sleep(0.8)
+    print('启动时已打开 25 号夹爪: %d' % GRIPPER_OPEN, flush=True)
 
     print('IMU 零漂标定...', flush=True)
     bias = calibrate_gz_bias(board)
