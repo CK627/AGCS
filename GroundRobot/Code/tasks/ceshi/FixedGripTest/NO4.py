@@ -32,11 +32,12 @@ GRIPPER_CLOSE = 700
 GRIPPER_OPEN = 400
 
 MOVE_SPEED = 30
-TURN_STEP = 5
+TURN_STEP = 2
 TURN_SPEED = 30
-HEADING_TOL_DEG = 2.0
+HEADING_TOL_DEG = 5.0
 GYRO_SCALE_LEFT = 1.15
 GYRO_SCALE_RIGHT = 1.22
+MAX_CORRECTIONS = 3
 
 
 def clamp_pulse(v):
@@ -99,7 +100,9 @@ def angle_error(current, target):
 
 
 def correct_heading(ik, gyro, target):
-    while abs(angle_error(gyro.get_yaw(), target)) > HEADING_TOL_DEG:
+    for _ in range(MAX_CORRECTIONS):
+        if abs(angle_error(gyro.get_yaw(), target)) <= HEADING_TOL_DEG:
+            break
         err = angle_error(gyro.get_yaw(), target)
         if err > 0:
             ik.turn_left(ik.initial_pos, 2, TURN_STEP, TURN_SPEED, 1)
