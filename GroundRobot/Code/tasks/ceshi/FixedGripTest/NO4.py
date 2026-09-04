@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 
 _PKG_ROOT = os.path.dirname(
@@ -62,43 +63,52 @@ def calibrate_gz_bias(board, samples=200):
     return sum(vals) / len(vals)
 
 
-class YawTracker:
+class GyroIntegrator(threading.Thread):
     def __init__(self, board, bias):
+        super().__init__(daemon=True)
         self.board = board
         self.bias = bias
         self.yaw = 0.0
-        self.last_t = time.monotonic()
+        self.stop_event = threading.Event()
+        self.lock = threading.Lock()
 
-    def update(self):
-        now = time.monotonic()
-        dt = now - self.last_t
-        self.last_t = now
-        gz = read_gz(self.board)
-        if gz is not None:
-            rate = gz - self.bias
-            if rate >= 0:
-                self.yaw += rate * dt * GYRO_SCALE_LEFT
-            else:
-                self.yaw += rate * dt * GYRO_SCALE_RIGHT
+    def run(self):
+        last_t = time.monotonic()
+        while not self.stop_event.is_set():
+            now = time.monotonic()
+            dt = now - last_t
+            last_t = now
+            gz = read_gz(self.board)
+            if gz is not None:
+                rate = gz - self.bias
+                scale = GYRO_SCALE_LEFT if rate >= 0 else GYRO_SCALE_RIGHT
+                with self.lock:
+                    self.yaw += rate * dt * scale
+            time.sleep(0.005)
+
+    def get_yaw(self):
+        with self.lock:
+            return self.yaw
+
+    def stop(self):
+        self.stop_event.set()
 
 
 def angle_error(current, target):
     return (target - current + 180.0) % 360.0 - 180.0
 
 
-def correct_heading(ik, tracker, target):
-    tracker.update()
-    while abs(angle_error(tracker.yaw, target)) > HEADING_TOL_DEG:
-        err = angle_error(tracker.yaw, target)
+def correct_heading(ik, gyro, target):
+    while abs(angle_error(gyro.get_yaw(), target)) > HEADING_TOL_DEG:
+        err = angle_error(gyro.get_yaw(), target)
         if err > 0:
             ik.turn_left(ik.initial_pos, 2, TURN_STEP, TURN_SPEED, 1)
         else:
             ik.turn_right(ik.initial_pos, 2, TURN_STEP, TURN_SPEED, 1)
-        time.sleep(0.05)
-        tracker.update()
+        time.sleep(0.08)
 
 
-def straight_segment(ik, tracker, target_yaw, distance_mm):
+def straight_segment(ik, gyro, target_yaw, distance_mm):
     remaining = abs(int(distance_mm))
     forward = distance_mm >= 0
     while remaining > 0:
@@ -109,12 +119,12 @@ def straight_segment(ik, tracker, target_yaw, distance_mm):
             ik.back(ik.initial_pos, 2, move, MOVE_SPEED, 1)
         remaining -= move
         time.sleep(0.05)
-        correct_heading(ik, tracker, target_yaw)
+        correct_heading(ik, gyro, target_yaw)
 
 
-def turn_delta(ik, tracker, delta_deg):
-    target = tracker.yaw + delta_deg
-    correct_heading(ik, tracker, target)
+def turn_delta(ik, gyro, delta_deg):
+    target = gyro.get_yaw() + delta_deg
+    correct_heading(ik, gyro, target)
 
 
 def set_servos(board, pulses, order):
@@ -206,7 +216,8 @@ def main():
 
     print('IMU 零漂标定...', flush=True)
     bias = calibrate_gz_bias(board)
-    tracker = YawTracker(board, bias)
+    gyro = GyroIntegrator(board, bias)
+    gyro.start()
     print('gz bias=%.4f' % bias, flush=True)
 
     ik.stand(ik.initial_pos, t=500)
@@ -229,18 +240,18 @@ def main():
 
         if pending_forward:
             print('%d/%d 直行 %dmm，保持航向 %.1f°'
-                  % (i, len(actions), pending_forward, tracker.yaw), flush=True)
-            straight_segment(ik, tracker, tracker.yaw, pending_forward)
+                  % (i, len(actions), pending_forward, gyro.get_yaw()), flush=True)
+            straight_segment(ik, gyro, gyro.get_yaw(), pending_forward)
             pending_forward = 0
 
         if name == 'turn_left':
             angle = int(act.get('angle', 90))
             print('%d/%d IMU左转 %d°' % (i, len(actions), angle), flush=True)
-            turn_delta(ik, tracker, angle)
+            turn_delta(ik, gyro, angle)
         elif name == 'turn_right':
             angle = int(act.get('angle', 90))
             print('%d/%d IMU右转 %d°' % (i, len(actions), angle), flush=True)
-            turn_delta(ik, tracker, -angle)
+            turn_delta(ik, gyro, -angle)
         elif name == 'pick':
             pick_index += 1
             print('%d/%d pick%d' % (i, len(actions), pick_index), flush=True)
@@ -261,8 +272,9 @@ def main():
             ik.stand(ik.initial_pos, t=500)
 
     if pending_forward:
-        straight_segment(ik, tracker, tracker.yaw, pending_forward)
+        straight_segment(ik, gyro, gyro.get_yaw(), pending_forward)
 
+    gyro.stop()
     ik.stand(ik.initial_pos, t=500)
     print('NO4 运行结束', flush=True)
 
