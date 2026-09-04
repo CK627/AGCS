@@ -32,7 +32,7 @@ ROUTE_PATH = os.path.join(
 
 OFFICIAL_ARM = {21: 500, 22: 705, 23: 90, 24: 330}
 GRIPPER_CLOSE = 700
-GRIPPER_OPEN = 120
+GRIPPER_OPEN = 400
 
 
 def getch():
@@ -84,9 +84,11 @@ def capture_point(board, kind):
             break
 
     pulses = {}
-    for sid in [21, 22, 23, 24, 25]:
+    for sid in [21, 22, 23, 24]:
         pulses[str(sid)] = read_pulse(board, sid)
         print('读取舵机 %d: %s' % (sid, pulses[str(sid)]), flush=True)
+    pulses['25'] = GRIPPER_CLOSE if kind == 'pick' else GRIPPER_OPEN
+    print('夹爪 25 使用固定值: %s' % pulses['25'], flush=True)
 
     restore_arm_after_record(board, kind)
     print('已恢复机械臂，更新 JSON 中的 %s 记录' % kind, flush=True)
