@@ -115,10 +115,11 @@ def print_state(state):
 
 
 def pick1_prepare(board):
-    print('pick1 到位，先动 21，再动其他', flush=True)
-    set_servos(board, PICK1, [21])
+    print('pick1 到位，21 保持官方初始位，只动 22-23-24', flush=True)
     set_servos(board, PICK1, [22, 23, 24])
-    return dict(PICK1)
+    state = dict(OFFICIAL_ARM)
+    state.update({22: PICK1[22], 23: PICK1[23], 24: PICK1[24]})
+    return state
 
 
 def pick2_prepare(board):

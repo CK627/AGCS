@@ -111,9 +111,7 @@ def place2_manual(ik, actions):
 
 
 def pick_first(board):
-    print('pick1：先动 21，再动其他关节', flush=True)
-    board.bus_servo_set_position(1.2, [[21, PICK1[21]]])
-    time.sleep(1.2)
+    print('pick1：21 保持官方初始位，只动 22-23-24', flush=True)
     board.bus_servo_set_position(
         1.2, [[22, PICK1[22]], [23, PICK1[23]], [24, PICK1[24]]])
     time.sleep(1.2)
