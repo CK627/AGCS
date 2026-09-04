@@ -4,15 +4,18 @@
 
 用法（树莓派，先 sudo systemctl stop spiderpi）：
     python3 tasks/ceshi/FixedGripTest/record_route.py
-    python3 tasks/ceshi/FixedGripTest/record_route.py --step 50 --angle 30 --speed 50
+    python3 tasks/ceshi/FixedGripTest/record_route.py --step 50 --angle 10 --speed 50
 
 按键：
     w  前进一步
     s  后退一步
     a  左横移一次
     d  右横移一次
-    q  左转一次
-    e  右转一次
+    q  左转 10 度
+    e  右转 10 度
+    :w50  临时前进一步，步长 50
+    :a50  临时左横移一次，步长 50
+    :q10  临时左转 10 度
     f  标记：夹取
     g  标记：放下
     r  恢复立正（会记录 stand）
@@ -54,6 +57,56 @@ def getch():
     return ch
 
 
+def read_command():
+    """读取冒号后的临时命令，回车结束。"""
+    print(':', end='', flush=True)
+    buf = ''
+    while True:
+        ch = getch()
+        if ch in ('\r', '\n'):
+            print('', flush=True)
+            return buf
+        if ch == '\x03':
+            return None
+        if ch in ('\x7f', '\b'):
+            if buf:
+                buf = buf[:-1]
+                print('\b \b', end='', flush=True)
+            continue
+        buf += ch
+        print(ch, end='', flush=True)
+
+
+def apply_one_off(ik, action, value, speed, actions):
+    """执行并记录一个临时参数动作。"""
+    if action == 'w':
+        ik.go_forward(ik.initial_pos, 2, value, speed, 1)
+        actions.append({'action': 'forward', 'step': value, 'speed': speed})
+        print('记录 %d: forward %d' % (len(actions), value), flush=True)
+    elif action == 's':
+        ik.back(ik.initial_pos, 2, value, speed, 1)
+        actions.append({'action': 'back', 'step': value, 'speed': speed})
+        print('记录 %d: back %d' % (len(actions), value), flush=True)
+    elif action == 'a':
+        ik.left_move(ik.initial_pos, 2, value, speed, 1)
+        actions.append({'action': 'left_move', 'step': value, 'speed': speed})
+        print('记录 %d: left_move %d' % (len(actions), value), flush=True)
+    elif action == 'd':
+        ik.right_move(ik.initial_pos, 2, value, speed, 1)
+        actions.append({'action': 'right_move', 'step': value, 'speed': speed})
+        print('记录 %d: right_move %d' % (len(actions), value), flush=True)
+    elif action == 'q':
+        ik.turn_left(ik.initial_pos, 2, value, speed, 1)
+        actions.append({'action': 'turn_left', 'angle': value, 'speed': speed})
+        print('记录 %d: turn_left %d' % (len(actions), value), flush=True)
+    elif action == 'e':
+        ik.turn_right(ik.initial_pos, 2, value, speed, 1)
+        actions.append({'action': 'turn_right', 'angle': value, 'speed': speed})
+        print('记录 %d: turn_right %d' % (len(actions), value), flush=True)
+    else:
+        print('不支持的临时动作: %s' % action, flush=True)
+
+
 def save_route(path, actions):
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(actions, f, ensure_ascii=False, indent=2)
@@ -82,7 +135,8 @@ def inverse_ik(ik, act):
 
 
 def print_help():
-    print('w=前进  s=后退  a=左横移  d=右横移  q=左转  e=右转', flush=True)
+    print('w=前进  s=后退  a=左横移  d=右横移  q=左转10度  e=右转10度', flush=True)
+    print('临时参数: :w50 :s50 :a50 :d50 :q10 :e10', flush=True)
     print('f=标记夹取  g=标记放下  r=恢复立正  u=撤销上一步  c=清空记录  l=查看记录  x=保存退出', flush=True)
 
 
@@ -90,8 +144,8 @@ def main():
     parser = argparse.ArgumentParser(description='手动录制六足固定路线')
     parser.add_argument('--step', type=int, default=50,
                         help='每次前进/后退距离，默认 50')
-    parser.add_argument('--angle', type=int, default=30,
-                        help='每次左转/右转角度，默认 30')
+    parser.add_argument('--angle', type=int, default=10,
+                        help='每次左转/右转角度，默认 10')
     parser.add_argument('--speed', type=int, default=50,
                         help='前进/后退/转弯速度，默认 50')
     parser.add_argument('--out', default=os.path.join(
@@ -111,7 +165,21 @@ def main():
 
     while True:
         ch = getch().lower()
-        if ch == 'w':
+        if ch == ':':
+            cmd = read_command()
+            if cmd is None:
+                print('取消临时命令', flush=True)
+            elif len(cmd) < 2:
+                print('临时命令格式错误，示例: :w50', flush=True)
+            else:
+                action = cmd[0].lower()
+                try:
+                    value = int(cmd[1:])
+                except ValueError:
+                    print('临时命令数值错误: %s' % cmd, flush=True)
+                else:
+                    apply_one_off(ik, action, value, args.speed, actions)
+        elif ch == 'w':
             ik.go_forward(ik.initial_pos, 2, args.step, args.speed, 1)
             actions.append({'action': 'forward', 'step': args.step, 'speed': args.speed})
             print('记录 %d: forward %d' % (len(actions), args.step), flush=True)
