@@ -53,33 +53,56 @@ def read_key_nowait():
     return None
 
 
-def manual_fine_tune(ik):
-    print('进入临时手动微调：w=前进 s=后退 a=左横移 d=右横移 q=左转 e=右转 r=立正 x=继续 c=退出', flush=True)
+def save_route(actions):
+    with open(ROUTE_PATH, 'w', encoding='utf-8') as f:
+        json.dump(actions, f, ensure_ascii=False, indent=2)
+
+
+def live_action(ik, ch, actions):
+    """执行一个手动动作，并插入任务列表。"""
+    if ch == 'w':
+        ik.go_forward(ik.initial_pos, 2, 50, MOVE_SPEED, 1)
+        action = {'index': len(actions) + 1, 'action': 'forward', 'step': 50, 'speed': MOVE_SPEED}
+        print('插入 forward 50', flush=True)
+    elif ch == 's':
+        ik.back(ik.initial_pos, 2, 50, MOVE_SPEED, 1)
+        action = {'index': len(actions) + 1, 'action': 'back', 'step': 50, 'speed': MOVE_SPEED}
+        print('插入 back 50', flush=True)
+    elif ch == 'a':
+        ik.left_move(ik.initial_pos, 2, 50, MOVE_SPEED, 1)
+        action = {'index': len(actions) + 1, 'action': 'left_move', 'step': 50, 'speed': MOVE_SPEED}
+        print('插入 left_move 50', flush=True)
+    elif ch == 'd':
+        ik.right_move(ik.initial_pos, 2, 50, MOVE_SPEED, 1)
+        action = {'index': len(actions) + 1, 'action': 'right_move', 'step': 50, 'speed': MOVE_SPEED}
+        print('插入 right_move 50', flush=True)
+    elif ch == 'q':
+        ik.turn_left(ik.initial_pos, 2, 10, TURN_SPEED, 1)
+        action = {'index': len(actions) + 1, 'action': 'turn_left', 'angle': 10, 'speed': TURN_SPEED}
+        print('插入 turn_left 10', flush=True)
+    elif ch == 'e':
+        ik.turn_right(ik.initial_pos, 2, 10, TURN_SPEED, 1)
+        action = {'index': len(actions) + 1, 'action': 'turn_right', 'angle': 10, 'speed': TURN_SPEED}
+        print('插入 turn_right 10', flush=True)
+    elif ch == 'r':
+        ik.stand(ik.initial_pos, t=500)
+        action = {'index': len(actions) + 1, 'action': 'stand'}
+        print('插入 stand', flush=True)
+    else:
+        return None
+    actions.append(action)
+    save_route(actions)
+    return action
+
+
+def place2_manual(ik, actions):
+    print('place2 未配置，直接按移动键插入动作；按回车继续；c 退出', flush=True)
     while True:
         ch = getch().lower()
-        if ch == 'w':
-            ik.go_forward(ik.initial_pos, 2, 50, MOVE_SPEED, 1)
-            print('微调 forward', flush=True)
-        elif ch == 's':
-            ik.back(ik.initial_pos, 2, 50, MOVE_SPEED, 1)
-            print('微调 back', flush=True)
-        elif ch == 'a':
-            ik.left_move(ik.initial_pos, 2, 50, MOVE_SPEED, 1)
-            print('微调 left_move', flush=True)
-        elif ch == 'd':
-            ik.right_move(ik.initial_pos, 2, 50, MOVE_SPEED, 1)
-            print('微调 right_move', flush=True)
-        elif ch == 'q':
-            ik.turn_left(ik.initial_pos, 2, 10, TURN_SPEED, 1)
-            print('微调 turn_left', flush=True)
-        elif ch == 'e':
-            ik.turn_right(ik.initial_pos, 2, 10, TURN_SPEED, 1)
-            print('微调 turn_right', flush=True)
-        elif ch == 'r':
-            ik.stand(ik.initial_pos, t=500)
-            print('微调 stand', flush=True)
-        elif ch == 'x':
-            print('退出微调，继续自动路线', flush=True)
+        if ch in ('w', 's', 'a', 'd', 'q', 'e', 'r'):
+            live_action(ik, ch, actions)
+        elif ch in ('\r', '\n'):
+            print('继续自动路线', flush=True)
             return
         elif ch == 'c':
             print('手动退出，脚本结束', flush=True)
@@ -142,21 +165,27 @@ def main():
     ik.stand(ik.initial_pos, t=500)
     time.sleep(0.5)
 
-    for i, act in enumerate(actions, 1):
+    i = 0
+    while i < len(actions):
+        act = actions[i]
         key = read_key_nowait()
-        if key == 'm':
-            manual_fine_tune(ik)
+        if key in ('w', 's', 'a', 'd', 'q', 'e', 'r'):
+            live_action(ik, key, actions)
+        elif key == 'c':
+            print('手动退出，脚本结束', flush=True)
+            sys.exit(0)
 
         name = act.get('action')
 
         if name == 'pick':
             pick_index += 1
-            print('%d/%d pick%d' % (i, len(actions), pick_index), flush=True)
+            print('%d/%d pick%d' % (i + 1, len(actions), pick_index), flush=True)
             if pick_index == 1:
                 pick_first(board)
             else:
                 pick_second(board)
             restore_travel(board, GRIPPER_CLOSE)
+            i += 1
             continue
 
         if name == 'place':
@@ -165,11 +194,12 @@ def main():
                 place_first(board)
                 restore_travel(board, GRIPPER_OPEN)
             else:
-                print('%d/%d place2 未配置，停车等待手动处理' % (i, len(actions)), flush=True)
-                manual_fine_tune(ik)
+                print('%d/%d place2 未配置' % (i + 1, len(actions)), flush=True)
+                place2_manual(ik, actions)
+            i += 1
             continue
 
-        print('%d/%d %s' % (i, len(actions), act), flush=True)
+        print('%d/%d %s' % (i + 1, len(actions), act), flush=True)
 
         if name == 'forward':
             ik.go_forward(ik.initial_pos, 2, int(act.get('step', 50)), MOVE_SPEED, 1)
@@ -187,6 +217,7 @@ def main():
             ik.stand(ik.initial_pos, t=500)
 
         time.sleep(0.08)
+        i += 1
 
     ik.stand(ik.initial_pos, t=500)
     print('NO2 运行结束', flush=True)
