@@ -81,27 +81,27 @@ def apply_one_off(ik, action, value, speed, actions):
     """执行并记录一个临时参数动作。"""
     if action == 'w':
         ik.go_forward(ik.initial_pos, 2, value, speed, 1)
-        actions.append({'action': 'forward', 'step': value, 'speed': speed})
+        actions.append({'index': len(actions) + 1, 'action': 'forward', 'step': value, 'speed': speed})
         print('记录 %d: forward %d' % (len(actions), value), flush=True)
     elif action == 's':
         ik.back(ik.initial_pos, 2, value, speed, 1)
-        actions.append({'action': 'back', 'step': value, 'speed': speed})
+        actions.append({'index': len(actions) + 1, 'action': 'back', 'step': value, 'speed': speed})
         print('记录 %d: back %d' % (len(actions), value), flush=True)
     elif action == 'a':
         ik.left_move(ik.initial_pos, 2, value, speed, 1)
-        actions.append({'action': 'left_move', 'step': value, 'speed': speed})
+        actions.append({'index': len(actions) + 1, 'action': 'left_move', 'step': value, 'speed': speed})
         print('记录 %d: left_move %d' % (len(actions), value), flush=True)
     elif action == 'd':
         ik.right_move(ik.initial_pos, 2, value, speed, 1)
-        actions.append({'action': 'right_move', 'step': value, 'speed': speed})
+        actions.append({'index': len(actions) + 1, 'action': 'right_move', 'step': value, 'speed': speed})
         print('记录 %d: right_move %d' % (len(actions), value), flush=True)
     elif action == 'q':
         ik.turn_left(ik.initial_pos, 2, value, speed, 1)
-        actions.append({'action': 'turn_left', 'angle': value, 'speed': speed})
+        actions.append({'index': len(actions) + 1, 'action': 'turn_left', 'angle': value, 'speed': speed})
         print('记录 %d: turn_left %d' % (len(actions), value), flush=True)
     elif action == 'e':
         ik.turn_right(ik.initial_pos, 2, value, speed, 1)
-        actions.append({'action': 'turn_right', 'angle': value, 'speed': speed})
+        actions.append({'index': len(actions) + 1, 'action': 'turn_right', 'angle': value, 'speed': speed})
         print('记录 %d: turn_right %d' % (len(actions), value), flush=True)
     else:
         print('不支持的临时动作: %s' % action, flush=True)
@@ -181,37 +181,37 @@ def main():
                     apply_one_off(ik, action, value, args.speed, actions)
         elif ch == 'w':
             ik.go_forward(ik.initial_pos, 2, args.step, args.speed, 1)
-            actions.append({'action': 'forward', 'step': args.step, 'speed': args.speed})
+            actions.append({'index': len(actions) + 1, 'action': 'forward', 'step': args.step, 'speed': args.speed})
             print('记录 %d: forward %d' % (len(actions), args.step), flush=True)
         elif ch == 's':
             ik.back(ik.initial_pos, 2, args.step, args.speed, 1)
-            actions.append({'action': 'back', 'step': args.step, 'speed': args.speed})
+            actions.append({'index': len(actions) + 1, 'action': 'back', 'step': args.step, 'speed': args.speed})
             print('记录 %d: back %d' % (len(actions), args.step), flush=True)
         elif ch == 'a':
             ik.left_move(ik.initial_pos, 2, args.step, args.speed, 1)
-            actions.append({'action': 'left_move', 'step': args.step, 'speed': args.speed})
+            actions.append({'index': len(actions) + 1, 'action': 'left_move', 'step': args.step, 'speed': args.speed})
             print('记录 %d: left_move %d' % (len(actions), args.step), flush=True)
         elif ch == 'd':
             ik.right_move(ik.initial_pos, 2, args.step, args.speed, 1)
-            actions.append({'action': 'right_move', 'step': args.step, 'speed': args.speed})
+            actions.append({'index': len(actions) + 1, 'action': 'right_move', 'step': args.step, 'speed': args.speed})
             print('记录 %d: right_move %d' % (len(actions), args.step), flush=True)
         elif ch == 'q':
             ik.turn_left(ik.initial_pos, 2, args.angle, args.speed, 1)
-            actions.append({'action': 'turn_left', 'angle': args.angle, 'speed': args.speed})
+            actions.append({'index': len(actions) + 1, 'action': 'turn_left', 'angle': args.angle, 'speed': args.speed})
             print('记录 %d: turn_left %d' % (len(actions), args.angle), flush=True)
         elif ch == 'e':
             ik.turn_right(ik.initial_pos, 2, args.angle, args.speed, 1)
-            actions.append({'action': 'turn_right', 'angle': args.angle, 'speed': args.speed})
+            actions.append({'index': len(actions) + 1, 'action': 'turn_right', 'angle': args.angle, 'speed': args.speed})
             print('记录 %d: turn_right %d' % (len(actions), args.angle), flush=True)
         elif ch == 'f':
-            actions.append({'action': 'pick'})
-            print('记录 %d: pick' % len(actions), flush=True)
+            actions.append({'index': len(actions) + 1, 'action': 'pick'})
+            print('记录 %d: 夹取' % len(actions), flush=True)
         elif ch == 'g':
-            actions.append({'action': 'place'})
-            print('记录 %d: place' % len(actions), flush=True)
+            actions.append({'index': len(actions) + 1, 'action': 'place'})
+            print('记录 %d: 放下' % len(actions), flush=True)
         elif ch == 'r':
             ik.stand(ik.initial_pos, t=500)
-            actions.append({'action': 'stand'})
+            actions.append({'index': len(actions) + 1, 'action': 'stand'})
             print('记录 %d: stand' % len(actions), flush=True)
         elif ch == 'u':
             if not actions:

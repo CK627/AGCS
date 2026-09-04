@@ -35,10 +35,10 @@ def main():
         speed = int(act.get('speed', 50))
 
         if name == 'pick':
-            print('%d/%d [skip pick]' % (i, len(actions)), flush=True)
+            print('%d/%d [跳过夹取]' % (i, len(actions)), flush=True)
             time.sleep(0.5)
         elif name == 'place':
-            print('%d/%d [skip place]' % (i, len(actions)), flush=True)
+            print('%d/%d [跳过放下]' % (i, len(actions)), flush=True)
             time.sleep(0.5)
         elif name == 'forward':
             value = int(act.get('step', 50))
