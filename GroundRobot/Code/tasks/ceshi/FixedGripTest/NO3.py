@@ -32,12 +32,68 @@ GRIPPER_OPEN = 400
 
 MOVE_SPEED = 30
 TURN_SPEED = 30
+CRAWL_SUBSTEP = 20
+CRAWL_SPEED = 20
 
 
 def set_servos(board, pulses, order):
     board.bus_servo_set_position(
         1.2, [[sid, int(pulses[sid])] for sid in order])
     time.sleep(1.2)
+
+
+def crawl_forward(ik, distance):
+    full = int(distance) // CRAWL_SUBSTEP
+    rem = int(distance) % CRAWL_SUBSTEP
+    if full:
+        ik.go_forward(ik.initial_pos, 2, CRAWL_SUBSTEP, CRAWL_SPEED, full)
+    if rem:
+        ik.go_forward(ik.initial_pos, 2, rem, CRAWL_SPEED, 1)
+
+
+def crawl_back(ik, distance):
+    full = int(distance) // CRAWL_SUBSTEP
+    rem = int(distance) % CRAWL_SUBSTEP
+    if full:
+        ik.back(ik.initial_pos, 2, CRAWL_SUBSTEP, CRAWL_SPEED, full)
+    if rem:
+        ik.back(ik.initial_pos, 2, rem, CRAWL_SPEED, 1)
+
+
+def crawl_turn_left(ik, angle):
+    full = int(angle) // 10
+    rem = int(angle) % 10
+    if full:
+        ik.turn_left(ik.initial_pos, 2, 10, TURN_SPEED, full)
+    if rem:
+        ik.turn_left(ik.initial_pos, 2, rem, TURN_SPEED, 1)
+
+
+def crawl_turn_right(ik, angle):
+    full = int(angle) // 10
+    rem = int(angle) % 10
+    if full:
+        ik.turn_right(ik.initial_pos, 2, 10, TURN_SPEED, full)
+    if rem:
+        ik.turn_right(ik.initial_pos, 2, rem, TURN_SPEED, 1)
+
+
+def crawl_left_move(ik, distance):
+    full = int(distance) // CRAWL_SUBSTEP
+    rem = int(distance) % CRAWL_SUBSTEP
+    if full:
+        ik.left_move(ik.initial_pos, 2, CRAWL_SUBSTEP, CRAWL_SPEED, full)
+    if rem:
+        ik.left_move(ik.initial_pos, 2, rem, CRAWL_SPEED, 1)
+
+
+def crawl_right_move(ik, distance):
+    full = int(distance) // CRAWL_SUBSTEP
+    rem = int(distance) % CRAWL_SUBSTEP
+    if full:
+        ik.right_move(ik.initial_pos, 2, CRAWL_SUBSTEP, CRAWL_SPEED, full)
+    if rem:
+        ik.right_move(ik.initial_pos, 2, rem, CRAWL_SPEED, 1)
 
 
 def restore_travel(board, gripper):
@@ -178,17 +234,17 @@ def main():
         print('%d/%d %s' % (i, len(actions), act), flush=True)
 
         if name == 'forward':
-            ik.go_forward(ik.initial_pos, 2, int(act.get('step', 50)), MOVE_SPEED, 1)
+            crawl_forward(ik, int(act.get('step', 50)))
         elif name == 'back':
-            ik.back(ik.initial_pos, 2, int(act.get('step', 50)), MOVE_SPEED, 1)
+            crawl_back(ik, int(act.get('step', 50)))
         elif name == 'turn_left':
-            ik.turn_left(ik.initial_pos, 2, int(act.get('angle', 10)), TURN_SPEED, 1)
+            crawl_turn_left(ik, int(act.get('angle', 10)))
         elif name == 'turn_right':
-            ik.turn_right(ik.initial_pos, 2, int(act.get('angle', 10)), TURN_SPEED, 1)
+            crawl_turn_right(ik, int(act.get('angle', 10)))
         elif name == 'left_move':
-            ik.left_move(ik.initial_pos, 2, int(act.get('step', 50)), MOVE_SPEED, 1)
+            crawl_left_move(ik, int(act.get('step', 50)))
         elif name == 'right_move':
-            ik.right_move(ik.initial_pos, 2, int(act.get('step', 50)), MOVE_SPEED, 1)
+            crawl_right_move(ik, int(act.get('step', 50)))
         elif name == 'stand':
             ik.stand(ik.initial_pos, t=500)
 
