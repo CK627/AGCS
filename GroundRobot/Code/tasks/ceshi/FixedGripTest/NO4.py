@@ -39,6 +39,7 @@ HEADING_TOL_DEG = 2.0
 GYRO_SCALE_LEFT = 1.15
 GYRO_SCALE_RIGHT = 1.15
 MAX_CORRECTIONS = 1
+MIN_BATTERY_MV = 10800
 
 
 def clamp_pulse(v):
@@ -53,6 +54,22 @@ def read_gz(board):
         return float(data[5])
     except Exception:
         return None
+
+
+def read_battery_mv(board):
+    vals = []
+    for _ in range(20):
+        try:
+            v = board.get_battery()
+            if v is not None:
+                vals.append(int(v))
+        except Exception:
+            pass
+        time.sleep(0.01)
+    if not vals:
+        return None
+    vals.sort()
+    return vals[len(vals) // 2]
 
 
 def calibrate_gz_bias(board, samples=200):
@@ -212,6 +229,15 @@ def main():
     board = make_board()
     ik = make_ik(board)
     board.enable_reception()
+    battery_mv = read_battery_mv(board)
+    if battery_mv is None:
+        print('无法读取电池电压', flush=True)
+        return 1
+    print('电池电压: %.2fV' % (battery_mv / 1000.0), flush=True)
+    if battery_mv < MIN_BATTERY_MV:
+        print('电压过低(%.2fV < %.2fV)，请先充电再运行'
+              % (battery_mv / 1000.0, MIN_BATTERY_MV / 1000.0), flush=True)
+        return 1
     restore_travel(board, GRIPPER_OPEN)
     print('启动时已恢复机械臂官方位置，25=%d' % GRIPPER_OPEN, flush=True)
 
