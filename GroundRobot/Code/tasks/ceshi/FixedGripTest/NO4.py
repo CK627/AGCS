@@ -34,6 +34,7 @@ GRIPPER_OPEN = 400
 MOVE_SPEED = 50
 LEFT_TURN_STEP = 1
 RIGHT_TURN_STEP = 1
+TURN_DELTA_STEP = 5
 TURN_SPEED = 30
 HEADING_TOL_DEG = 2.0
 GYRO_SCALE_LEFT = 1.15
@@ -144,7 +145,15 @@ def straight_segment(ik, gyro, target_yaw, distance_mm):
 
 def turn_delta(ik, gyro, delta_deg):
     target = gyro.get_yaw() + delta_deg
-    correct_heading(ik, gyro, target)
+    for _ in range(40):
+        if abs(angle_error(gyro.get_yaw(), target)) <= HEADING_TOL_DEG:
+            break
+        err = angle_error(gyro.get_yaw(), target)
+        if err > 0:
+            ik.turn_left(ik.initial_pos, 2, TURN_DELTA_STEP, TURN_SPEED, 1)
+        else:
+            ik.turn_right(ik.initial_pos, 2, TURN_DELTA_STEP, TURN_SPEED, 1)
+        time.sleep(0.08)
 
 
 def set_servos(board, pulses, order):
