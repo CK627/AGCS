@@ -183,8 +183,9 @@ def arm_fine_tune(board, state, kind):
 
 
 def pick1_prepare(board):
-    print('pick1：设置 21-24', flush=True)
-    set_servos(board, PICK1, [21, 22, 23, 24])
+    print('pick1：先处理 21，再移动 22-23-24', flush=True)
+    set_servos(board, PICK1, [21])
+    set_servos(board, PICK1, [22, 23, 24])
     return dict(PICK1)
 
 
