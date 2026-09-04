@@ -132,8 +132,8 @@ def turn_delta(ik, gyro, delta_deg):
 
 def set_servos(board, pulses, order):
     board.bus_servo_set_position(
-        1.2, [[sid, int(pulses[sid])] for sid in order])
-    time.sleep(1.2)
+        2.2, [[sid, int(pulses[sid])] for sid in order])
+    time.sleep(2.2)
 
 
 def restore_travel(board, gripper):
