@@ -30,8 +30,7 @@ PICK2 = {21: 735, 22: 610, 23: 205, 24: 410}
 GRIPPER_CLOSE = 700
 GRIPPER_OPEN = 400
 
-CRAWL_SUBSTEP = 20
-CRAWL_SPEED = 20
+MOVE_SPEED = 30
 TURN_STEP = 5
 TURN_SPEED = 30
 HEADING_TOL_DEG = 2.0
@@ -93,15 +92,15 @@ def correct_heading(ik, tracker, target):
         tracker.update()
 
 
-def crawl_straight(ik, tracker, target_yaw, distance_mm):
+def straight_segment(ik, tracker, target_yaw, distance_mm):
     remaining = abs(int(distance_mm))
     forward = distance_mm >= 0
     while remaining > 0:
-        move = min(CRAWL_SUBSTEP, remaining)
+        move = min(100, remaining)
         if forward:
-            ik.go_forward(ik.initial_pos, 2, move, CRAWL_SPEED, 1)
+            ik.go_forward(ik.initial_pos, 2, move, MOVE_SPEED, 1)
         else:
-            ik.back(ik.initial_pos, 2, move, CRAWL_SPEED, 1)
+            ik.back(ik.initial_pos, 2, move, MOVE_SPEED, 1)
         remaining -= move
         time.sleep(0.05)
         correct_heading(ik, tracker, target_yaw)
@@ -222,7 +221,7 @@ def main():
         if pending_forward:
             print('%d/%d 直行 %dmm，保持航向 %.1f°'
                   % (i, len(actions), pending_forward, tracker.yaw), flush=True)
-            crawl_straight(ik, tracker, tracker.yaw, pending_forward)
+            straight_segment(ik, tracker, tracker.yaw, pending_forward)
             pending_forward = 0
 
         if name == 'turn_left':
@@ -253,7 +252,7 @@ def main():
             ik.stand(ik.initial_pos, t=500)
 
     if pending_forward:
-        crawl_straight(ik, tracker, tracker.yaw, pending_forward)
+        straight_segment(ik, tracker, tracker.yaw, pending_forward)
 
     ik.stand(ik.initial_pos, t=500)
     print('NO4 运行结束', flush=True)
