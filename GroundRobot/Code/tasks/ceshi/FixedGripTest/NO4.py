@@ -217,9 +217,11 @@ def pick2_prepare(board):
 
 
 def place1_prepare(board):
-    print('place1：到固定点', flush=True)
-    set_servos(board, PLACE1, [22, 23, 21, 24])
-    return dict(PLACE1)
+    print('place1：21 保持官方初始位，只动 22-23-24', flush=True)
+    set_servos(board, PLACE1, [22, 23, 24])
+    state = dict(OFFICIAL_ARM)
+    state.update({22: PLACE1[22], 23: PLACE1[23], 24: PLACE1[24]})
+    return state
 
 
 def main():
