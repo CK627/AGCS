@@ -180,11 +180,9 @@ def arm_fine_tune(board, state, kind):
 
 
 def pick1_prepare(board):
-    print('pick1：21保持官方，只动22-23-24', flush=True)
-    set_servos(board, PICK1, [22, 23, 24])
-    state = dict(OFFICIAL_ARM)
-    state.update({22: PICK1[22], 23: PICK1[23], 24: PICK1[24]})
-    return state
+    print('pick1：设置 21-24', flush=True)
+    set_servos(board, PICK1, [21, 22, 23, 24])
+    return dict(PICK1)
 
 
 def pick2_prepare(board):
@@ -210,9 +208,8 @@ def main():
     board = make_board()
     ik = make_ik(board)
     board.enable_reception()
-    board.bus_servo_set_position(0.8, [[25, GRIPPER_OPEN]])
-    time.sleep(0.8)
-    print('启动时已打开 25 号夹爪: %d' % GRIPPER_OPEN, flush=True)
+    restore_travel(board, GRIPPER_OPEN)
+    print('启动时已恢复机械臂官方位置，25=%d' % GRIPPER_OPEN, flush=True)
 
     print('IMU 零漂标定...', flush=True)
     bias = calibrate_gz_bias(board)
@@ -259,15 +256,22 @@ def main():
                 arm_state = pick1_prepare(board)
             else:
                 arm_state = pick2_prepare(board)
-            arm_fine_tune(board, arm_state, 'pick')
+            board.bus_servo_set_position(0.8, [[25, GRIPPER_CLOSE]])
+            time.sleep(0.8)
+            print('pick%d 自动夹取完成' % pick_index, flush=True)
+            restore_travel(board, GRIPPER_CLOSE)
         elif name == 'place':
             place_index += 1
             print('%d/%d place%d' % (i, len(actions), place_index), flush=True)
             if place_index == 1:
                 arm_state = place1_prepare(board)
+                board.bus_servo_set_position(0.8, [[25, GRIPPER_OPEN]])
+                time.sleep(0.8)
+                print('place1 自动放下完成', flush=True)
+                restore_travel(board, GRIPPER_OPEN)
             else:
                 arm_state = dict(OFFICIAL_ARM)
-            arm_fine_tune(board, arm_state, 'place')
+                arm_fine_tune(board, arm_state, 'place')
         elif name == 'stand':
             ik.stand(ik.initial_pos, t=500)
 
