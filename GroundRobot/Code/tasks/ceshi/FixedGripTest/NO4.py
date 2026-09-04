@@ -32,7 +32,8 @@ GRIPPER_CLOSE = 700
 GRIPPER_OPEN = 400
 
 MOVE_SPEED = 30
-TURN_STEP = 1
+LEFT_TURN_STEP = 2
+RIGHT_TURN_STEP = 1
 TURN_SPEED = 30
 HEADING_TOL_DEG = 2.0
 GYRO_SCALE_LEFT = 1.11
@@ -105,9 +106,9 @@ def correct_heading(ik, gyro, target):
             break
         err = angle_error(gyro.get_yaw(), target)
         if err > 0:
-            ik.turn_left(ik.initial_pos, 2, TURN_STEP, TURN_SPEED, 1)
+            ik.turn_left(ik.initial_pos, 2, LEFT_TURN_STEP, TURN_SPEED, 1)
         else:
-            ik.turn_right(ik.initial_pos, 2, TURN_STEP, TURN_SPEED, 1)
+            ik.turn_right(ik.initial_pos, 2, RIGHT_TURN_STEP, TURN_SPEED, 1)
         time.sleep(0.08)
 
 
