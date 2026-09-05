@@ -58,7 +58,7 @@ GRIPPER_OPEN = 400
 MOVE_SPEED = 50
 TURN_SPEED = 30
 CENTER_TOL = 40
-CORRECT_MOVE = 20
+CORRECT_MOVE = 10
 camera_lock = threading.Lock()
 
 
@@ -297,7 +297,7 @@ def main():
     parser = argparse.ArgumentParser(description='NO5 分阶段路线运行')
     parser.add_argument('--color', default='blue',
                         choices=['red', 'green', 'blue', 'yellow', 'cz1'])
-    parser.add_argument('--min-area', type=int, default=50)
+    parser.add_argument('--min-area', type=int, default=1)
     args = parser.parse_args()
 
     with open(ROUTE_PATH, 'r', encoding='utf-8') as f:
