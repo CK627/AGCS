@@ -200,8 +200,14 @@ def straight_with_camera(ik, detector, distance_mm):
             print('检测到色块 cx=%d %s%d' % (cx, direction, abs(offset)), flush=True)
             align_to_color(ik, det)
         else:
-            print('未发现定位色块，持续观察中...', flush=True)
-            time.sleep(0.2)
+            print('未发现定位色块，前进搜索 50mm', flush=True)
+            move = min(50, remaining)
+            if forward:
+                ik.go_forward(ik.initial_pos, 2, move, MOVE_SPEED, 1)
+            else:
+                ik.back(ik.initial_pos, 2, move, MOVE_SPEED, 1)
+            remaining -= move
+            time.sleep(0.05)
             continue
         move = min(100, remaining)
         if forward:
