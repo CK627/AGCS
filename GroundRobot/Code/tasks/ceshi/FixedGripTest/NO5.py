@@ -38,6 +38,7 @@ from agcs_lib import (
     open_camera,
     capture,
 )
+from agcs_lib.tracker import ColorTracker
 try:
     from communication import task_server
 except ImportError:
@@ -154,12 +155,10 @@ def pick2_prepare(board):
 
 
 def place1_prepare(board):
-    """准备第一次放下：21 保持官方，只动 22-23-24。"""
-    print('place1：21 保持官方初始位，只动 22-23-24', flush=True)
-    set_servos(board, PLACE1, [22, 23, 24])
-    state = dict(OFFICIAL_ARM)
-    state.update({22: PLACE1[22], 23: PLACE1[23], 24: PLACE1[24]})
-    return state
+    """准备第一次放下：使用已记录的 21-24 放下脉宽。"""
+    print('place1：使用记录的 21-24 放下脉宽', flush=True)
+    set_servos(board, PLACE1, [21, 22, 23, 24])
+    return dict(PLACE1)
 
 
 def open_vision(color, min_area):
@@ -204,6 +203,36 @@ def lab_view(frame, lab, color):
     maxv = tuple(int(v) for v in lab[color]['max'])
     mask = cv2.inRange(labf, minv, maxv)
     return cv2.bitwise_and(frame, frame, mask=mask)
+
+
+def start_tracking(board, detector):
+    """第一次夹取后到第一次放下前：只让 24 号云台跟踪，21 号固定。"""
+    tracker = ColorTracker(
+        board, detector,
+        dead_x=10, dead_y=30,
+        start_x=500, start_y=260,
+        pan_fixed=True, tilt_fixed=False)
+    tracker.start()
+    return tracker
+
+
+def stop_tracking(tracker):
+    if tracker is not None:
+        tracker.stop()
+
+
+def move_straight(ik, distance_mm):
+    """纯直线移动，不做摄像头或左右微调。"""
+    remaining = abs(int(distance_mm))
+    forward = distance_mm >= 0
+    while remaining > 0:
+        move = min(100, remaining)
+        if forward:
+            ik.go_forward(ik.initial_pos, 2, move, MOVE_SPEED, 1)
+        else:
+            ik.back(ik.initial_pos, 2, move, MOVE_SPEED, 1)
+        remaining -= move
+        time.sleep(0.05)
 
 
 def move_straight_adjust(ik, detector, distance_mm):
@@ -295,6 +324,7 @@ def main():
     pending_forward = 0
     pick_count = 0
     place_count = 0
+    tracker = None
 
     for i, act in enumerate(actions, 1):
         name = act.get('action')
@@ -308,7 +338,10 @@ def main():
 
         if pending_forward:
             print('%d/%d 直行 %dmm' % (i, len(actions), pending_forward), flush=True)
-            move_straight_adjust(ik, detector, pending_forward)
+            if tracker is not None:
+                move_straight(ik, pending_forward)
+            else:
+                move_straight_adjust(ik, detector, pending_forward)
             pending_forward = 0
 
         if name in ('turn_left', 'turn_right'):
@@ -318,16 +351,27 @@ def main():
             pick_count += 1
             print('%d/%d pick%d' % (i, len(actions), pick_count), flush=True)
             do_pick(board, pick_count)
+            if pick_count == 1 and tracker is None:
+                tracker = start_tracking(board, detector)
+                print('第一次夹取完成，开始 24 号云台跟踪', flush=True)
         elif name == 'place':
             place_count += 1
             print('%d/%d place%d' % (i, len(actions), place_count), flush=True)
             do_place(board, place_count)
+            if place_count == 1 and tracker is not None:
+                stop_tracking(tracker)
+                tracker = None
+                print('第一次放下完成，停止云台跟踪', flush=True)
         elif name == 'stand':
             ik.stand(ik.initial_pos, t=500)
 
     if pending_forward:
-        move_straight_adjust(ik, detector, pending_forward)
+        if tracker is not None:
+            move_straight(ik, pending_forward)
+        else:
+            move_straight_adjust(ik, detector, pending_forward)
 
+    stop_tracking(tracker)
     video_stop.set()
     cam.camera_close()
     ik.stand(ik.initial_pos, t=500)
