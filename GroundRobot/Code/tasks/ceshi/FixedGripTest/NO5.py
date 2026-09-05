@@ -39,7 +39,7 @@ GRIPPER_OPEN = 400
 MOVE_SPEED = 50
 TURN_SPEED = 30
 CENTER_TOL = 40
-CORRECT_MOVE = 10
+CORRECT_MOVE = 20
 
 
 def restore_travel(board, gripper):
