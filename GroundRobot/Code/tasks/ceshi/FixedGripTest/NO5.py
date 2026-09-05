@@ -230,9 +230,10 @@ def main():
 
     tracker = ColorTracker(
         board, detector,
-        dead_x=20, dead_y=60,
+        dead_x=10, dead_y=60,
         start_x=500, start_y=260,
         tilt_fixed=True)
+    tracker.x_pid.setKp(0.25)
     tracker.start()
 
     restore_travel(board, GRIPPER_OPEN)
