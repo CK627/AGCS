@@ -228,13 +228,7 @@ def main():
     def detector():
         return detect_target(cam, mapx, mapy, rotate, lab, args.color, args.min_area)
 
-    tracker = ColorTracker(
-        board, detector,
-        dead_x=10, dead_y=60,
-        start_x=500, start_y=260,
-        tilt_fixed=True)
-    tracker.x_pid.setKp(0.25)
-    tracker.start()
+    tracker = None
 
     restore_travel(board, GRIPPER_OPEN)
     print('启动完成，颜色目标=%s' % args.color, flush=True)
@@ -272,6 +266,15 @@ def main():
             else:
                 arm_state = pick2_prepare(board)
             arm_fine_tune(board, arm_state, 'pick')
+            if pick_count == 1 and tracker is None:
+                tracker = ColorTracker(
+                    board, detector,
+                    dead_x=10, dead_y=60,
+                    start_x=500, start_y=260,
+                    tilt_fixed=True)
+                tracker.x_pid.setKp(0.25)
+                tracker.start()
+                print('第一次夹取完成，开始摄像头跟踪到放下点', flush=True)
         elif name == 'place':
             place_count += 1
             print('%d/%d place%d' % (i, len(actions), place_count), flush=True)
@@ -280,6 +283,10 @@ def main():
             else:
                 arm_state = dict(OFFICIAL_ARM)
             arm_fine_tune(board, arm_state, 'place')
+            if place_count == 1 and tracker is not None:
+                tracker.stop()
+                tracker = None
+                print('第一次放下完成，停止摄像头跟踪', flush=True)
         elif name == 'stand':
             ik.stand(ik.initial_pos, t=500)
 
@@ -287,7 +294,8 @@ def main():
         straight_with_camera(ik, detector, pending_forward)
 
     cam.camera_close()
-    tracker.stop()
+    if tracker is not None:
+        tracker.stop()
     ik.stand(ik.initial_pos, t=500)
     print('NO5 运行结束', flush=True)
 
