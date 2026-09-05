@@ -57,6 +57,8 @@ GRIPPER_CLOSE = 700
 GRIPPER_OPEN = 400
 MOVE_SPEED = 50
 TURN_SPEED = 30
+CENTER_TOL = 40
+CORRECT_MOVE = 20
 
 
 def lan_ip():
@@ -228,6 +230,32 @@ def move_straight(ik, distance_mm):
         time.sleep(0.05)
 
 
+def move_straight_tracking(ik, tracker, distance_mm):
+    """跟踪阶段前进：摄像头跟踪色块，同时机器人左右微调保持正对。"""
+    remaining = abs(int(distance_mm))
+    forward = distance_mm >= 0
+    while remaining > 0:
+        latest = tracker.latest()
+        if latest is not None:
+            cx, _ = latest['center']
+            offset = cx - 320
+            if abs(offset) > CENTER_TOL:
+                if offset > 0:
+                    ik.right_move(ik.initial_pos, 2, CORRECT_MOVE, MOVE_SPEED, 1)
+                    print('色块右偏，机械足右移 %dmm' % CORRECT_MOVE, flush=True)
+                else:
+                    ik.left_move(ik.initial_pos, 2, CORRECT_MOVE, MOVE_SPEED, 1)
+                    print('色块左偏，机械足左移 %dmm' % CORRECT_MOVE, flush=True)
+                time.sleep(0.05)
+        move = min(100, remaining)
+        if forward:
+            ik.go_forward(ik.initial_pos, 2, move, MOVE_SPEED, 1)
+        else:
+            ik.back(ik.initial_pos, 2, move, MOVE_SPEED, 1)
+        remaining -= move
+        time.sleep(0.05)
+
+
 def do_turn(ik, act):
     """执行 JSON 中的左转/右转动作。"""
     name = act.get('action')
@@ -297,7 +325,10 @@ def main():
 
         if pending_forward:
             print('%d/%d 直行 %dmm' % (i, len(actions), pending_forward), flush=True)
-            move_straight(ik, pending_forward)
+            if tracker is not None:
+                move_straight_tracking(ik, tracker, pending_forward)
+            else:
+                move_straight(ik, pending_forward)
             pending_forward = 0
 
         if name in ('turn_left', 'turn_right'):
@@ -322,7 +353,10 @@ def main():
             ik.stand(ik.initial_pos, t=500)
 
     if pending_forward:
-        move_straight(ik, pending_forward)
+        if tracker is not None:
+            move_straight_tracking(ik, tracker, pending_forward)
+        else:
+            move_straight(ik, pending_forward)
 
     stop_tracking(tracker)
     cam.camera_close()
