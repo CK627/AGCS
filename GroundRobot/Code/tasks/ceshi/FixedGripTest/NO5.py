@@ -17,6 +17,8 @@ _PKG_ROOT = os.path.dirname(
 if _PKG_ROOT not in sys.path:
     sys.path.insert(0, _PKG_ROOT)
 
+import NO4
+
 from agcs_lib import (
     make_board,
     make_ik,
@@ -92,17 +94,6 @@ def straight_with_camera(ik, detector, distance_mm):
         time.sleep(0.05)
 
 
-def manual_grip(board, kind):
-    print('到达 %s 点，请手动用 App 调整机械臂后按回车'
-          % ('夹取' if kind == 'pick' else '放下'), flush=True)
-    input()
-    gripper = GRIPPER_CLOSE if kind == 'pick' else GRIPPER_OPEN
-    board.bus_servo_set_position(1.5, [[25, gripper]])
-    time.sleep(1.5)
-    print('%s完成，25=%d' % ('夹取' if kind == 'pick' else '放下', gripper), flush=True)
-    restore_travel(board, gripper)
-
-
 def main():
     parser = argparse.ArgumentParser(description='NO5 摄像头直线引导')
     parser.add_argument('--color', default='blue',
@@ -154,11 +145,19 @@ def main():
         elif name == 'pick':
             pick_count += 1
             print('%d/%d pick%d' % (i, len(actions), pick_count), flush=True)
-            manual_grip(board, 'pick')
+            if pick_count == 1:
+                arm_state = NO4.pick1_prepare(board)
+            else:
+                arm_state = NO4.pick2_prepare(board)
+            NO4.arm_fine_tune(board, arm_state, 'pick')
         elif name == 'place':
             place_count += 1
             print('%d/%d place%d' % (i, len(actions), place_count), flush=True)
-            manual_grip(board, 'place')
+            if place_count == 1:
+                arm_state = NO4.place1_prepare(board)
+            else:
+                arm_state = dict(OFFICIAL_ARM)
+            NO4.arm_fine_tune(board, arm_state, 'place')
         elif name == 'stand':
             ik.stand(ik.initial_pos, t=500)
 
