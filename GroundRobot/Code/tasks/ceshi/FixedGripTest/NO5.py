@@ -167,7 +167,7 @@ def lab_view(frame, lab, color):
     minv = tuple(int(v) for v in lab[color]['min'])
     maxv = tuple(int(v) for v in lab[color]['max'])
     mask = cv2.inRange(labf, minv, maxv)
-    return cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+    return cv2.bitwise_and(frame, frame, mask=mask)
 
 
 def align_to_color(ik, det):
