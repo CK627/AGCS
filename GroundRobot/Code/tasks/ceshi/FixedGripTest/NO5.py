@@ -195,7 +195,9 @@ def straight_with_camera(ik, detector, distance_mm):
         det = detector()
         if det is not None:
             cx, _ = det['center']
-            print('检测到色块 cx=%d 偏移=%d' % (cx, cx - 320), flush=True)
+            offset = cx - 320
+            direction = '右偏' if offset > 0 else ('左偏' if offset < 0 else '居中')
+            print('检测到色块 cx=%d %s%d' % (cx, direction, abs(offset)), flush=True)
             align_to_color(ik, det)
         else:
             print('未发现定位色块，持续观察中...', flush=True)
