@@ -60,6 +60,7 @@ TURN_SPEED = 30
 
 
 def lan_ip():
+    """获取本机局域网 IP，用于打印视频推流地址。"""
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(('8.8.8.8', 80))
@@ -71,6 +72,7 @@ def lan_ip():
 
 
 def restore_travel(board, gripper):
+    """恢复 21-24 到官方初始位置，并设置 25 夹爪状态。夹取/放下后回到安全姿态时使用。"""
     board.bus_servo_set_position(
         1.5, [[sid, OFFICIAL_ARM[sid]] for sid in [22, 23, 21, 24]])
     time.sleep(1.5)
@@ -79,16 +81,19 @@ def restore_travel(board, gripper):
 
 
 def clamp_pulse(v):
+    """把舵机脉宽限制在 0-1000，防止手动微调越界。"""
     return max(0, min(1000, int(v)))
 
 
 def set_servos(board, pulses, order):
+    """按指定顺序把多个舵机移动到目标脉宽。pick/place 准备动作使用。"""
     board.bus_servo_set_position(
         2.2, [[sid, int(pulses[sid])] for sid in order])
     time.sleep(2.2)
 
 
 def parse_adjust(cmd):
+    """解析机械臂微调命令，例如 a/d、22w/23s10。"""
     cmd = cmd.strip().lower()
     if not cmd:
         return None
@@ -101,6 +106,7 @@ def parse_adjust(cmd):
 
 
 def arm_fine_tune(board, state, kind):
+    """进入机械臂手动微调；回车执行夹取/放下。用于 pick/place 前精调。"""
     print('机械臂微调：回车=%s，c=退出' % ('夹取' if kind == 'pick' else '放下'), flush=True)
     while True:
         print('当前 21=%d 22=%d 23=%d 24=%d'
@@ -127,6 +133,7 @@ def arm_fine_tune(board, state, kind):
 
 
 def pick1_prepare(board):
+    """准备第一次夹取：先 21，再 22-23-24。"""
     print('pick1：先处理 21，再移动 22-23-24', flush=True)
     set_servos(board, PICK1, [21])
     set_servos(board, PICK1, [22, 23, 24])
@@ -134,6 +141,7 @@ def pick1_prepare(board):
 
 
 def pick2_prepare(board):
+    """准备第二次夹取：22-23-(24+100) -> 21 -> 24。"""
     print('pick2：22-23-(24+100) -> 21 -> 24', flush=True)
     temp = dict(PICK2)
     temp[24] = PICK2[24] + 100
@@ -144,6 +152,7 @@ def pick2_prepare(board):
 
 
 def place1_prepare(board):
+    """准备第一次放下：21 保持官方，只动 22-23-24。"""
     print('place1：21 保持官方初始位，只动 22-23-24', flush=True)
     set_servos(board, PLACE1, [22, 23, 24])
     state = dict(OFFICIAL_ARM)
@@ -152,6 +161,7 @@ def place1_prepare(board):
 
 
 def open_vision(color, min_area):
+    """打开摄像头和检测器，返回 (cam, detector)。detector 同时负责视频推流。"""
     params = load_params()
     rotate = params['vision'].get('camera_rotate', 0)
     lab = load_lab_data()
@@ -178,6 +188,7 @@ def open_vision(color, min_area):
 
 
 def lab_view(frame, lab, color):
+    """生成 LAB 阈值图，只保留识别到的颜色区域，供 video_lab.mjpeg 显示。"""
     labf = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
     minv = tuple(int(v) for v in lab[color]['min'])
     maxv = tuple(int(v) for v in lab[color]['max'])
@@ -186,6 +197,7 @@ def lab_view(frame, lab, color):
 
 
 def start_tracking(board, detector):
+    """启动摄像头云台跟踪，仅用于第一次夹取后到第一次放下前。"""
     tracker = ColorTracker(
         board, detector,
         dead_x=10, dead_y=60,
@@ -197,11 +209,13 @@ def start_tracking(board, detector):
 
 
 def stop_tracking(tracker):
+    """停止摄像头云台跟踪。"""
     if tracker is not None:
         tracker.stop()
 
 
 def move_straight(ik, distance_mm):
+    """按距离执行纯前进/后退，不做摄像头修正。"""
     remaining = abs(int(distance_mm))
     forward = distance_mm >= 0
     while remaining > 0:
@@ -215,6 +229,7 @@ def move_straight(ik, distance_mm):
 
 
 def do_turn(ik, act):
+    """执行 JSON 中的左转/右转动作。"""
     name = act.get('action')
     if name == 'turn_left':
         ik.turn_left(ik.initial_pos, 2, int(act.get('angle', 10)), TURN_SPEED, 1)
@@ -223,6 +238,7 @@ def do_turn(ik, act):
 
 
 def do_pick(board, pick_count):
+    """执行第 1/2 次夹取准备和手动微调。"""
     if pick_count == 1:
         state = pick1_prepare(board)
     else:
@@ -231,6 +247,7 @@ def do_pick(board, pick_count):
 
 
 def do_place(board, place_count):
+    """执行第 1/2 次放下准备和手动微调。"""
     if place_count == 1:
         state = place1_prepare(board)
     else:
@@ -239,6 +256,7 @@ def do_place(board, place_count):
 
 
 def main():
+    """主流程：加载路线，按阶段调用移动、夹取、放下和跟踪。"""
     parser = argparse.ArgumentParser(description='NO5 分阶段路线运行')
     parser.add_argument('--color', default='blue',
                         choices=['red', 'green', 'blue', 'yellow', 'cz1'])
