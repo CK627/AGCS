@@ -51,6 +51,8 @@ robot_status = {
 VIDEO_JPEG_QUALITY = 60   # JPEG 质量（0-100），越小越省带宽
 latest_jpeg = None
 latest_jpeg_lock = threading.Lock()
+latest_lab_jpeg = None
+latest_lab_lock = threading.Lock()
 _last_publish_time = 0.0
 
 
@@ -78,6 +80,27 @@ def publish_frame(frame, max_fps=10.0):
         return
     with latest_jpeg_lock:
         latest_jpeg = buf.tobytes()
+
+
+def publish_lab_frame(frame, max_fps=10.0):
+    """发布 LAB 阈值图到 /video_lab.mjpeg。"""
+    global latest_lab_jpeg, _last_publish_time
+    interval = 1.0 / max(max_fps, 1.0)
+    now = time.time()
+    if now - _last_publish_time < interval:
+        return
+    _last_publish_time = now
+    try:
+        import cv2
+        ok, buf = cv2.imencode(
+            '.jpg', frame,
+            [int(cv2.IMWRITE_JPEG_QUALITY), VIDEO_JPEG_QUALITY])
+        if not ok:
+            return
+    except Exception:
+        return
+    with latest_lab_lock:
+        latest_lab_jpeg = buf.tobytes()
 
 
 def set_status(**kwargs):
@@ -133,6 +156,21 @@ def _create_app():
                 else:
                     yield (b'--frame\r\nContent-Type: text/plain\r\n\r\n'
                            b'no video\r\n\r\n')
+                time.sleep(0.1)
+        return Response(gen(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+    @app.route('/video_lab.mjpeg')
+    def video_lab_mjpeg():
+        def gen():
+            while True:
+                with latest_lab_lock:
+                    jpg = latest_lab_jpeg
+                if jpg is not None:
+                    yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n'
+                           + jpg + b'\r\n')
+                else:
+                    yield (b'--frame\r\nContent-Type: text/plain\r\n\r\n'
+                           b'no lab video\r\n\r\n')
                 time.sleep(0.1)
         return Response(gen(), mimetype='multipart/x-mixed-replace; boundary=frame')
 

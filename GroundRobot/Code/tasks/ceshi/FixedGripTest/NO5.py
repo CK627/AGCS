@@ -158,7 +158,16 @@ def detect_target(cam, mapx, mapy, rotate, lab, color, min_area=300):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
     if task_server is not None:
         task_server.publish_frame(frame, max_fps=10.0)
+        task_server.publish_lab_frame(lab_view(frame, lab, color), max_fps=10.0)
     return result
+
+
+def lab_view(frame, lab, color):
+    labf = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+    minv = tuple(int(v) for v in lab[color]['min'])
+    maxv = tuple(int(v) for v in lab[color]['max'])
+    mask = cv2.inRange(labf, minv, maxv)
+    return cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
 
 
 def align_to_color(ik, det):
@@ -189,8 +198,9 @@ def straight_with_camera(ik, detector, distance_mm):
             print('检测到色块 cx=%d 偏移=%d' % (cx, cx - 320), flush=True)
             align_to_color(ik, det)
         else:
-            print('未发现定位色块，停止', flush=True)
-            return False
+            print('未发现定位色块，持续观察中...', flush=True)
+            time.sleep(0.2)
+            continue
         move = min(100, remaining)
         if forward:
             ik.go_forward(ik.initial_pos, 2, move, MOVE_SPEED, 1)
@@ -220,6 +230,7 @@ def main():
     cam = open_camera()
     if task_server is not None:
         print('视频推流: http://%s:5000/video.mjpeg' % lan_ip(), flush=True)
+        print('LAB 推流: http://%s:5000/video_lab.mjpeg' % lan_ip(), flush=True)
         task_server.start_server()
 
     def detector():
