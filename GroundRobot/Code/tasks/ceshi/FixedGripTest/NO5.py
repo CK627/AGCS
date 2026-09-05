@@ -185,7 +185,11 @@ def straight_with_camera(ik, detector, distance_mm):
     while remaining > 0:
         det = detector()
         if det is not None:
+            cx, _ = det['center']
+            print('检测到色块 cx=%d 偏移=%d' % (cx, cx - 320), flush=True)
             align_to_color(ik, det)
+        else:
+            print('未发现定位色块', flush=True)
         move = min(100, remaining)
         if forward:
             ik.go_forward(ik.initial_pos, 2, move, MOVE_SPEED, 1)
@@ -213,8 +217,8 @@ def main():
     mapx, mapy = load_undistort_maps()
     cam = open_camera()
     if task_server is not None:
-        task_server.start_server()
         print('视频推流: http://%s:5000/video.mjpeg' % lan_ip(), flush=True)
+        task_server.start_server()
 
     def detector():
         return detect_target(cam, mapx, mapy, rotate, lab, args.color, args.min_area)
@@ -274,4 +278,7 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print('用户中断，已退出', flush=True)
