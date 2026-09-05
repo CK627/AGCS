@@ -30,6 +30,7 @@ from agcs_lib import (
     open_camera,
     capture,
 )
+from agcs_lib.tracker import ColorTracker
 
 try:
     from communication import task_server
@@ -192,23 +193,6 @@ def straight_with_camera(ik, detector, distance_mm):
     remaining = abs(int(distance_mm))
     forward = distance_mm >= 0
     while remaining > 0:
-        det = detector()
-        if det is not None:
-            cx, _ = det['center']
-            offset = cx - 320
-            direction = '右偏' if offset > 0 else ('左偏' if offset < 0 else '居中')
-            print('检测到色块 cx=%d %s%d' % (cx, direction, abs(offset)), flush=True)
-            align_to_color(ik, det)
-        else:
-            print('未发现定位色块，前进搜索 50mm', flush=True)
-            move = min(50, remaining)
-            if forward:
-                ik.go_forward(ik.initial_pos, 2, move, MOVE_SPEED, 1)
-            else:
-                ik.back(ik.initial_pos, 2, move, MOVE_SPEED, 1)
-            remaining -= move
-            time.sleep(0.05)
-            continue
         move = min(100, remaining)
         if forward:
             ik.go_forward(ik.initial_pos, 2, move, MOVE_SPEED, 1)
@@ -243,6 +227,13 @@ def main():
 
     def detector():
         return detect_target(cam, mapx, mapy, rotate, lab, args.color, args.min_area)
+
+    tracker = ColorTracker(
+        board, detector,
+        dead_x=20, dead_y=60,
+        start_x=500, start_y=260,
+        tilt_fixed=True)
+    tracker.start()
 
     restore_travel(board, GRIPPER_OPEN)
     print('启动完成，颜色目标=%s' % args.color, flush=True)
@@ -295,6 +286,7 @@ def main():
         straight_with_camera(ik, detector, pending_forward)
 
     cam.camera_close()
+    tracker.stop()
     ik.stand(ik.initial_pos, t=500)
     print('NO5 运行结束', flush=True)
 
