@@ -5,6 +5,7 @@
 import argparse
 import json
 import os
+import socket
 import sys
 import time
 
@@ -31,6 +32,15 @@ from agcs_lib import (
     capture,
 )
 
+try:
+    from communication import task_server
+except ImportError:
+    task_server = None
+
+PICK1 = NO4.PICK1
+PLACE1 = NO4.PLACE1
+PICK2 = NO4.PICK2
+
 
 ROUTE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), 'fixed_route.json')
@@ -42,6 +52,17 @@ MOVE_SPEED = 50
 TURN_SPEED = 30
 CENTER_TOL = 40
 CORRECT_MOVE = 20
+
+
+def lan_ip():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(('8.8.8.8', 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return '127.0.0.1'
 
 
 def restore_travel(board, gripper):
@@ -57,7 +78,15 @@ def detect_target(cam, mapx, mapy, rotate, lab, color, min_area=300):
     if f is None:
         return None
     frame = cv2.remap(correct_camera(f, rotate), mapx, mapy, cv2.INTER_LINEAR)
-    return detect_color(frame, lab, color, min_area=min_area)
+    result = detect_color(frame, lab, color, min_area=min_area)
+    if result is not None:
+        cx, cy = result['center']
+        cv2.circle(frame, (cx, cy), int(result.get('radius', 20)), (0, 255, 0), 2)
+        cv2.putText(frame, color, (cx - 20, cy - 20),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+    if task_server is not None:
+        task_server.publish_frame(frame, max_fps=10.0)
+    return result
 
 
 def align_to_color(ik, det):
@@ -111,6 +140,9 @@ def main():
     lab = load_lab_data()
     mapx, mapy = load_undistort_maps()
     cam = open_camera()
+    if task_server is not None:
+        task_server.start_server()
+        print('视频推流: http://%s:5000/video.mjpeg' % lan_ip(), flush=True)
 
     def detector():
         return detect_target(cam, mapx, mapy, rotate, lab, args.color, args.min_area)
