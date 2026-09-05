@@ -230,28 +230,40 @@ def move_straight(ik, distance_mm):
         time.sleep(0.05)
 
 
-def move_straight_tracking(ik, tracker, distance_mm):
-    """跟踪阶段前进：摄像头跟踪色块，同时机器人左右微调保持正对。"""
+def keep_center_with_tracking(ik, tracker):
+    """只做一件事：根据摄像头跟踪结果，机械足左右微调保持色块居中。"""
+    latest = tracker.latest()
+    if latest is None:
+        return
+    cx, _ = latest['center']
+    offset = cx - 320
+    if abs(offset) <= CENTER_TOL:
+        return
+    if offset > 0:
+        ik.right_move(ik.initial_pos, 2, CORRECT_MOVE, MOVE_SPEED, 1)
+        print('色块右偏，机械足右移 %dmm' % CORRECT_MOVE, flush=True)
+    else:
+        ik.left_move(ik.initial_pos, 2, CORRECT_MOVE, MOVE_SPEED, 1)
+        print('色块左偏，机械足左移 %dmm' % CORRECT_MOVE, flush=True)
+    time.sleep(0.05)
+
+
+def move_one_chunk(ik, move, forward):
+    """只负责执行一小段前进或后退。"""
+    if forward:
+        ik.go_forward(ik.initial_pos, 2, move, MOVE_SPEED, 1)
+    else:
+        ik.back(ik.initial_pos, 2, move, MOVE_SPEED, 1)
+
+
+def tracking_straight(ik, tracker, distance_mm):
+    """跟踪阶段直线：先保持居中，再走一小步；只用于第一次夹取到第一次放下。"""
     remaining = abs(int(distance_mm))
     forward = distance_mm >= 0
     while remaining > 0:
-        latest = tracker.latest()
-        if latest is not None:
-            cx, _ = latest['center']
-            offset = cx - 320
-            if abs(offset) > CENTER_TOL:
-                if offset > 0:
-                    ik.right_move(ik.initial_pos, 2, CORRECT_MOVE, MOVE_SPEED, 1)
-                    print('色块右偏，机械足右移 %dmm' % CORRECT_MOVE, flush=True)
-                else:
-                    ik.left_move(ik.initial_pos, 2, CORRECT_MOVE, MOVE_SPEED, 1)
-                    print('色块左偏，机械足左移 %dmm' % CORRECT_MOVE, flush=True)
-                time.sleep(0.05)
+        keep_center_with_tracking(ik, tracker)
         move = min(100, remaining)
-        if forward:
-            ik.go_forward(ik.initial_pos, 2, move, MOVE_SPEED, 1)
-        else:
-            ik.back(ik.initial_pos, 2, move, MOVE_SPEED, 1)
+        move_one_chunk(ik, move, forward)
         remaining -= move
         time.sleep(0.05)
 
@@ -326,7 +338,7 @@ def main():
         if pending_forward:
             print('%d/%d 直行 %dmm' % (i, len(actions), pending_forward), flush=True)
             if tracker is not None:
-                move_straight_tracking(ik, tracker, pending_forward)
+                tracking_straight(ik, tracker, pending_forward)
             else:
                 move_straight(ik, pending_forward)
             pending_forward = 0
@@ -354,7 +366,7 @@ def main():
 
     if pending_forward:
         if tracker is not None:
-            move_straight_tracking(ik, tracker, pending_forward)
+            tracking_straight(ik, tracker, pending_forward)
         else:
             move_straight(ik, pending_forward)
 
