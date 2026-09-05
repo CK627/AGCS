@@ -189,7 +189,8 @@ def straight_with_camera(ik, detector, distance_mm):
             print('检测到色块 cx=%d 偏移=%d' % (cx, cx - 320), flush=True)
             align_to_color(ik, det)
         else:
-            print('未发现定位色块', flush=True)
+            print('未发现定位色块，停止', flush=True)
+            return False
         move = min(100, remaining)
         if forward:
             ik.go_forward(ik.initial_pos, 2, move, MOVE_SPEED, 1)
@@ -197,6 +198,7 @@ def straight_with_camera(ik, detector, distance_mm):
             ik.back(ik.initial_pos, 2, move, MOVE_SPEED, 1)
         remaining -= move
         time.sleep(0.05)
+    return True
 
 
 def main():
@@ -243,7 +245,8 @@ def main():
 
         if pending_forward:
             print('%d/%d 摄像头引导直行 %dmm' % (i, len(actions), pending_forward), flush=True)
-            straight_with_camera(ik, detector, pending_forward)
+            if not straight_with_camera(ik, detector, pending_forward):
+                break
             pending_forward = 0
 
         if name == 'turn_left':
