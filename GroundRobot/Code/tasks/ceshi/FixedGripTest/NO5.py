@@ -5,6 +5,7 @@
 import argparse
 import json
 import os
+import re
 import socket
 import sys
 import time
@@ -17,8 +18,6 @@ _PKG_ROOT = os.path.dirname(
             os.path.dirname(os.path.abspath(__file__)))))
 if _PKG_ROOT not in sys.path:
     sys.path.insert(0, _PKG_ROOT)
-
-import NO4
 
 from agcs_lib import (
     make_board,
@@ -37,9 +36,9 @@ try:
 except ImportError:
     task_server = None
 
-PICK1 = NO4.PICK1
-PLACE1 = NO4.PLACE1
-PICK2 = NO4.PICK2
+PICK1 = {21: 815, 22: 230, 23: 645, 24: 355}
+PLACE1 = {21: 830, 22: 470, 23: 295, 24: 460}
+PICK2 = {21: 735, 22: 610, 23: 205, 24: 410}
 
 
 ROUTE_PATH = os.path.join(
@@ -71,6 +70,79 @@ def restore_travel(board, gripper):
     time.sleep(1.5)
     board.bus_servo_set_position(0.5, [[25, gripper]])
     time.sleep(0.5)
+
+
+def clamp_pulse(v):
+    return max(0, min(1000, int(v)))
+
+
+def set_servos(board, pulses, order):
+    board.bus_servo_set_position(
+        2.2, [[sid, int(pulses[sid])] for sid in order])
+    time.sleep(2.2)
+
+
+def parse_adjust(cmd):
+    cmd = cmd.strip().lower()
+    if not cmd:
+        return None
+    if cmd[0] in ('a', 'd'):
+        return 21, (-1 if cmd[0] == 'a' else 1), (int(cmd[1:]) if cmd[1:] else 5)
+    m = re.match(r'^(22|23|24)([ws])(\d*)$', cmd)
+    if not m:
+        return None
+    return int(m.group(1)), (1 if m.group(2) == 'w' else -1), (int(m.group(3)) if m.group(3) else 5)
+
+
+def arm_fine_tune(board, state, kind):
+    print('机械臂微调：回车=%s，c=退出' % ('夹取' if kind == 'pick' else '放下'), flush=True)
+    while True:
+        print('当前 21=%d 22=%d 23=%d 24=%d'
+              % (state[21], state[22], state[23], state[24]), flush=True)
+        cmd = input('arm> ').strip().lower()
+        if cmd == '':
+            break
+        if cmd == 'c':
+            print('手动退出', flush=True)
+            sys.exit(0)
+        parsed = parse_adjust(cmd)
+        if parsed is None:
+            print('命令错误', flush=True)
+            continue
+        servo, delta, amount = parsed
+        state[servo] = clamp_pulse(state[servo] + delta * amount)
+        board.bus_servo_set_position(0.2, [[servo, state[servo]]])
+        time.sleep(0.1)
+
+    gripper = GRIPPER_CLOSE if kind == 'pick' else GRIPPER_OPEN
+    board.bus_servo_set_position(2.0, [[25, gripper]])
+    time.sleep(2.0)
+    restore_travel(board, gripper)
+
+
+def pick1_prepare(board):
+    print('pick1：先处理 21，再移动 22-23-24', flush=True)
+    set_servos(board, PICK1, [21])
+    set_servos(board, PICK1, [22, 23, 24])
+    return dict(PICK1)
+
+
+def pick2_prepare(board):
+    print('pick2：22-23-(24+100) -> 21 -> 24', flush=True)
+    temp = dict(PICK2)
+    temp[24] = PICK2[24] + 100
+    set_servos(board, temp, [22, 23, 24])
+    set_servos(board, PICK2, [21])
+    set_servos(board, PICK2, [24])
+    return dict(PICK2)
+
+
+def place1_prepare(board):
+    print('place1：21 保持官方初始位，只动 22-23-24', flush=True)
+    set_servos(board, PLACE1, [22, 23, 24])
+    state = dict(OFFICIAL_ARM)
+    state.update({22: PLACE1[22], 23: PLACE1[23], 24: PLACE1[24]})
+    return state
 
 
 def detect_target(cam, mapx, mapy, rotate, lab, color, min_area=300):
@@ -178,18 +250,18 @@ def main():
             pick_count += 1
             print('%d/%d pick%d' % (i, len(actions), pick_count), flush=True)
             if pick_count == 1:
-                arm_state = NO4.pick1_prepare(board)
+                arm_state = pick1_prepare(board)
             else:
-                arm_state = NO4.pick2_prepare(board)
-            NO4.arm_fine_tune(board, arm_state, 'pick')
+                arm_state = pick2_prepare(board)
+            arm_fine_tune(board, arm_state, 'pick')
         elif name == 'place':
             place_count += 1
             print('%d/%d place%d' % (i, len(actions), place_count), flush=True)
             if place_count == 1:
-                arm_state = NO4.place1_prepare(board)
+                arm_state = place1_prepare(board)
             else:
                 arm_state = dict(OFFICIAL_ARM)
-            NO4.arm_fine_tune(board, arm_state, 'place')
+            arm_fine_tune(board, arm_state, 'place')
         elif name == 'stand':
             ik.stand(ik.initial_pos, t=500)
 
