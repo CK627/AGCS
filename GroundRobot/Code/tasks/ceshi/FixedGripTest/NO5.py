@@ -15,6 +15,7 @@ import os
 import re
 import socket
 import sys
+import threading
 import time
 
 import cv2
@@ -59,6 +60,7 @@ MOVE_SPEED = 50
 TURN_SPEED = 30
 CENTER_TOL = 40
 CORRECT_MOVE = 20
+camera_lock = threading.Lock()
 
 
 def lan_ip():
@@ -171,7 +173,8 @@ def open_vision(color, min_area):
     cam = open_camera()
 
     def detector():
-        f = capture(cam)
+        with camera_lock:
+            f = capture(cam)
         if f is None:
             return None
         frame = cv2.remap(correct_camera(f, rotate), mapx, mapy, cv2.INTER_LINEAR)
@@ -187,6 +190,13 @@ def open_vision(color, min_area):
         return result
 
     return cam, detector
+
+
+def video_loop(detector, stop_event):
+    """持续取帧并推流，保证视频始终有画面。"""
+    while not stop_event.is_set():
+        detector()
+        time.sleep(0.1)
 
 
 def lab_view(frame, lab, color):
@@ -237,6 +247,8 @@ def keep_center_with_tracking(ik, tracker):
         return
     cx, _ = latest['center']
     offset = cx - 320
+    direction = '右偏' if offset > 0 else ('左偏' if offset < 0 else '居中')
+    print('检测到色块 cx=%d %s%d' % (cx, direction, abs(offset)), flush=True)
     if abs(offset) <= CENTER_TOL:
         return
     if offset > 0:
@@ -309,6 +321,10 @@ def main():
     board = make_board()
     ik = make_ik(board)
     cam, detector = open_vision(args.color, args.min_area)
+    video_stop = threading.Event()
+    video_thread = threading.Thread(
+        target=video_loop, args=(detector, video_stop), daemon=True)
+    video_thread.start()
 
     if task_server is not None:
         print('视频推流: http://%s:5000/video.mjpeg' % lan_ip(), flush=True)
@@ -371,6 +387,7 @@ def main():
             move_straight(ik, pending_forward)
 
     stop_tracking(tracker)
+    video_stop.set()
     cam.camera_close()
     ik.stand(ik.initial_pos, t=500)
     print('NO5 运行结束', flush=True)
