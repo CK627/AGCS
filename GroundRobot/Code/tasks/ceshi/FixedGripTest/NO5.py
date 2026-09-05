@@ -215,7 +215,7 @@ def main():
     parser = argparse.ArgumentParser(description='NO5 摄像头直线引导')
     parser.add_argument('--color', default='blue',
                         choices=['red', 'green', 'blue', 'yellow', 'cz1'])
-    parser.add_argument('--min-area', type=int, default=300)
+    parser.add_argument('--min-area', type=int, default=50)
     args = parser.parse_args()
 
     with open(ROUTE_PATH, 'r', encoding='utf-8') as f:
