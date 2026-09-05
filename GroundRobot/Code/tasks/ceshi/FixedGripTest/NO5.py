@@ -338,10 +338,7 @@ def main():
 
         if pending_forward:
             print('%d/%d 直行 %dmm' % (i, len(actions), pending_forward), flush=True)
-            if tracker is not None:
-                move_straight(ik, pending_forward)
-            else:
-                move_straight_adjust(ik, detector, pending_forward)
+            move_straight_adjust(ik, detector, pending_forward)
             pending_forward = 0
 
         if name in ('turn_left', 'turn_right'):
@@ -366,10 +363,7 @@ def main():
             ik.stand(ik.initial_pos, t=500)
 
     if pending_forward:
-        if tracker is not None:
-            move_straight(ik, pending_forward)
-        else:
-            move_straight_adjust(ik, detector, pending_forward)
+        move_straight_adjust(ik, detector, pending_forward)
 
     stop_tracking(tracker)
     video_stop.set()
