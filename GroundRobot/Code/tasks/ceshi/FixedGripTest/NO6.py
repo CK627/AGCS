@@ -297,7 +297,7 @@ def move_one_chunk(ik, move, forward):
         ik.back(ik.initial_pos, 2, move, MOVE_SPEED, 1)
 
 
-def move_straight_imu_color(ik, board, detector, imu_state, target_yaw, distance_mm, tilt):
+def move_straight_imu_color(ik, board, detector, imu_state, target_yaw, distance_mm, tilt, color_enabled):
     """直线阶段：IMU 保持航向 + 颜色左右微调 + 前进。"""
     remaining = abs(int(distance_mm))
     forward = distance_mm >= 0
@@ -310,7 +310,8 @@ def move_straight_imu_color(ik, board, detector, imu_state, target_yaw, distance
             else:
                 ik.turn_right(ik.initial_pos, 2, 1, TURN_SPEED, 1)
             time.sleep(0.05)
-        color_keep_center(ik, board, detector, tilt)
+        if color_enabled:
+            color_keep_center(ik, board, detector, tilt)
         move = min(100, remaining)
         move_one_chunk(ik, move, forward)
         remaining -= move
@@ -386,6 +387,9 @@ def main():
     pick_count = 0
     place_count = 0
     tilt = {'pulse': 260}
+    color_enabled = True
+    first_place_done = False
+    turns_after_first_place = 0
 
     for i, act in enumerate(actions, 1):
         name = act.get('action')
@@ -399,15 +403,23 @@ def main():
         if pending_forward:
             print('%d/%d 直行 %dmm' % (i, len(actions), pending_forward), flush=True)
             move_straight_imu_color(
-                ik, board, detector, imu_state, target_yaw, pending_forward, tilt)
+                ik, board, detector, imu_state, target_yaw, pending_forward, tilt, color_enabled)
             pending_forward = 0
 
         if name == 'turn_left':
+            if first_place_done:
+                turns_after_first_place += 1
+                if turns_after_first_place >= 2:
+                    color_enabled = True
             angle = int(act.get('angle', 90))
             print('%d/%d IMU左转 %d' % (i, len(actions), angle), flush=True)
             imu_turn(ik, board, imu_state, angle)
             target_yaw = imu_state['yaw']
         elif name == 'turn_right':
+            if first_place_done:
+                turns_after_first_place += 1
+                if turns_after_first_place >= 2:
+                    color_enabled = True
             angle = int(act.get('angle', 90))
             print('%d/%d IMU右转 %d' % (i, len(actions), angle), flush=True)
             imu_turn(ik, board, imu_state, -angle)
@@ -422,12 +434,17 @@ def main():
             print('%d/%d place%d' % (i, len(actions), place_count), flush=True)
             pulses = {int(k): int(v) for k, v in act.get('pulses', {}).items()} if act.get('pulses') else None
             do_place(board, place_count, pulses)
+            if place_count == 1:
+                color_enabled = False
+                first_place_done = True
+                turns_after_first_place = 0
+                print('第一次放下完成，暂时关闭颜色识别', flush=True)
         elif name == 'stand':
             ik.stand(ik.initial_pos, t=500)
 
     if pending_forward:
         move_straight_imu_color(
-            ik, board, detector, imu_state, target_yaw, pending_forward, tilt)
+            ik, board, detector, imu_state, target_yaw, pending_forward, tilt, color_enabled)
 
     video_stop.set()
     cam.camera_close()
