@@ -42,9 +42,6 @@ ROUTE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), 'fixed_route.json')
 
 OFFICIAL_ARM = {21: 500, 22: 705, 23: 90, 24: 330}
-PICK1 = {21: 880, 22: 355, 23: 400, 24: 250}
-PLACE1 = {21: 500, 22: 475, 23: 275, 24: 250}
-PICK2 = {21: 735, 22: 610, 23: 205, 24: 410}
 
 GRIPPER_CLOSE = 700
 GRIPPER_OPEN = 400
@@ -135,7 +132,7 @@ def arm_fine_tune(board, state, kind):
 
 def pick1_prepare(board, pulses=None):
     """准备第一次夹取：先 21，再 22-23-24。"""
-    p = pulses or PICK1
+    p = pulses
     print('pick1：先处理 21，再移动 22-23-24', flush=True)
     set_servos(board, p, [21])
     set_servos(board, p, [22, 23, 24])
@@ -144,7 +141,7 @@ def pick1_prepare(board, pulses=None):
 
 def pick2_prepare(board, pulses=None):
     """准备第二次夹取：22-23-(24+100) -> 21 -> 24。"""
-    p = pulses or PICK2
+    p = pulses
     print('pick2：22-23-(24+100) -> 21 -> 24', flush=True)
     temp = dict(p)
     temp[24] = p[24] + 100
@@ -156,7 +153,7 @@ def pick2_prepare(board, pulses=None):
 
 def place1_prepare(board, pulses=None):
     """准备第一次放下：使用记录的 21-24 放下脉宽。"""
-    p = pulses or PLACE1
+    p = pulses
     print('place1：使用记录的 21-24 放下脉宽', flush=True)
     set_servos(board, p, [21, 22, 23, 24])
     return dict(p)
