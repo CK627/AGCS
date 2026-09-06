@@ -55,6 +55,7 @@ GYRO_SCALE_RIGHT = 1.15
 HEADING_TOL_DEG = 2.0
 COLOR_CENTER_TOL = 120
 COLOR_CORRECT_MM = 10
+COLOR_MIN_RADIUS = 30
 camera_lock = threading.Lock()
 
 
@@ -261,6 +262,9 @@ def color_keep_center(ik, board, detector, tilt, color_state):
         print('24 号下移微调 -> %d' % tilt['pulse'], flush=True)
         return
     cx = det.get('bbox_center_x', det['center'][0])
+    if det.get('radius', 0) < COLOR_MIN_RADIUS:
+        print('目标较远，暂不做颜色微调，依赖 IMU 保持航向', flush=True)
+        return
     if color_state['ref_cx'] is None:
         color_state['ref_cx'] = cx
         print('设置颜色参考中心 cx=%.1f' % cx, flush=True)
@@ -395,10 +399,12 @@ def main():
             angle = int(act.get('angle', 90))
             print('%d/%d IMU左转 %d' % (i, len(actions), angle), flush=True)
             imu_turn(ik, board, imu_state, angle)
+            target_yaw = imu_state['yaw']
         elif name == 'turn_right':
             angle = int(act.get('angle', 90))
             print('%d/%d IMU右转 %d' % (i, len(actions), angle), flush=True)
             imu_turn(ik, board, imu_state, -angle)
+            target_yaw = imu_state['yaw']
         elif name == 'pick':
             pick_count += 1
             print('%d/%d pick%d' % (i, len(actions), pick_count), flush=True)
