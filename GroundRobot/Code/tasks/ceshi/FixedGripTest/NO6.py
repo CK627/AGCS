@@ -389,14 +389,6 @@ def main():
 
     board = make_board()
     ik = make_ik(board)
-    battery_mv = read_battery_mv(board)
-    if battery_mv is None:
-        print('无法读取电池电压，按正常距离执行', flush=True)
-        low_voltage = False
-    else:
-        voltage = battery_mv / 1000.0
-        print('电池电压: %.2fV' % voltage, flush=True)
-        low_voltage = voltage < LOW_VOLTAGE
     extra_applied = False
     imu_state = init_imu(board)
     cam, detector = open_vision(args.color, args.min_area)
@@ -436,10 +428,15 @@ def main():
             continue
 
         if pending_forward:
-            if pick_count == 0 and low_voltage and not extra_applied:
-                pending_forward += EXTRA_MM
+            if pick_count == 0 and not extra_applied:
+                battery_mv = read_battery_mv(board)
+                if battery_mv is not None:
+                    voltage = battery_mv / 1000.0
+                    print('第一次夹取前电压: %.2fV' % voltage, flush=True)
+                    if voltage < LOW_VOLTAGE:
+                        pending_forward += EXTRA_MM
+                        print('低电压补偿：额外前进 %dmm' % EXTRA_MM, flush=True)
                 extra_applied = True
-                print('低电压补偿：第一次夹取前额外前进 %dmm' % EXTRA_MM, flush=True)
             print('%d/%d 直行 %dmm' % (i, len(actions), pending_forward), flush=True)
             segment_color = color_enabled and not (23 <= i <= 53)
             if color_enabled and not segment_color:
