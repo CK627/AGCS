@@ -264,6 +264,13 @@ def color_keep_center(ik, board, detector, tilt):
         print('目标较远，暂不做颜色微调，依赖 IMU 保持航向', flush=True)
         return
     offset = cx - 320
+    if offset > 0:
+        direction = '右'
+    elif offset < 0:
+        direction = '左'
+    else:
+        direction = '中'
+    print('检测到色块 cx=%.1f offset=%+.1f %s' % (cx, offset, direction), flush=True)
     if abs(offset) <= COLOR_CENTER_TOL:
         return
     if offset > 0:
