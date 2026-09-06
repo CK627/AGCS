@@ -56,6 +56,7 @@ HEADING_TOL_DEG = 2.0
 COLOR_CENTER_TOL = 120
 COLOR_CORRECT_MM = 7
 COLOR_MIN_RADIUS = 0
+COLOR_DIRECTION_SIGN = 1
 camera_lock = threading.Lock()
 
 
@@ -269,10 +270,16 @@ def color_keep_center(ik, board, detector, tilt):
     if abs(offset) <= COLOR_CENTER_TOL:
         return
     if offset > 0:
-        ik.right_move(ik.initial_pos, 2, COLOR_CORRECT_MM, MOVE_SPEED, 1)
+        if COLOR_DIRECTION_SIGN > 0:
+            ik.right_move(ik.initial_pos, 2, COLOR_CORRECT_MM, MOVE_SPEED, 1)
+        else:
+            ik.left_move(ik.initial_pos, 2, COLOR_CORRECT_MM, MOVE_SPEED, 1)
         print('色块右偏，机械足右移 %dmm' % COLOR_CORRECT_MM, flush=True)
     else:
-        ik.left_move(ik.initial_pos, 2, COLOR_CORRECT_MM, MOVE_SPEED, 1)
+        if COLOR_DIRECTION_SIGN > 0:
+            ik.left_move(ik.initial_pos, 2, COLOR_CORRECT_MM, MOVE_SPEED, 1)
+        else:
+            ik.right_move(ik.initial_pos, 2, COLOR_CORRECT_MM, MOVE_SPEED, 1)
         print('色块左偏，机械足左移 %dmm' % COLOR_CORRECT_MM, flush=True)
     time.sleep(0.05)
 
