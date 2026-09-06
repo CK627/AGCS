@@ -53,7 +53,7 @@ TURN_SPEED = 30
 GYRO_SCALE_LEFT = 1.15
 GYRO_SCALE_RIGHT = 1.15
 HEADING_TOL_DEG = 2.0
-COLOR_CENTER_TOL = 40
+COLOR_CENTER_TOL = 80
 COLOR_CORRECT_MM = 10
 camera_lock = threading.Lock()
 
@@ -171,6 +171,7 @@ def open_vision(color, min_area):
         if f is None:
             return None
         frame = cv2.remap(correct_camera(f, rotate), mapx, mapy, cv2.INTER_LINEAR)
+        frame = cv2.GaussianBlur(frame, (7, 7), 0)
         result = detect_color(frame, lab, color, min_area=min_area)
         if result is not None:
             x, y, w, h = cv2.boundingRect(result['contour'])
