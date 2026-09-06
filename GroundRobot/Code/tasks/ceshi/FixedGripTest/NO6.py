@@ -54,7 +54,7 @@ COLOR_CENTER_TOL = 3.0   # 色块中心允许偏差，单位：像素；偏差�
 COLOR_CORRECT_MM = 7     # 颜色左右微调每次移动的距离，单位：毫米
 COLOR_MIN_RADIUS = 0     # 色块半径小于该值时暂不进行颜色微调
 COLOR_DIRECTION_SIGN = 1  # 颜色修正方向：1=默认，-1=左右指令反向后使用
-LOW_VOLTAGE = 11.1         # 电压低于该值时，第一次夹取前补距离
+LOW_VOLTAGE = 11.2         # 电压低于该值时，第一次夹取前补距离
 EXTRA_MM = 50              # 低电压时第一次夹取前多走的距离，单位毫米
 camera_lock = threading.Lock()
 
@@ -435,7 +435,9 @@ def main():
                     print('第一次夹取前电压: %.2fV' % voltage, flush=True)
                     if voltage < LOW_VOLTAGE:
                         pending_forward += EXTRA_MM
-                        print('低电压补偿：额外前进 %dmm' % EXTRA_MM, flush=True)
+                        print('电压低于 %.1fV，额外前进 %dmm' % (LOW_VOLTAGE, EXTRA_MM), flush=True)
+                    else:
+                        print('电压正常，不额外前进', flush=True)
                 extra_applied = True
             print('%d/%d 直行 %dmm' % (i, len(actions), pending_forward), flush=True)
             segment_color = color_enabled and not (23 <= i <= 53)
