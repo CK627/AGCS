@@ -53,7 +53,7 @@ HEADING_TOL_DEG = 2.0    # 航向误差容忍范围，单位：度；越小越�
 COLOR_CENTER_TOL = 3.0   # 色块中心允许偏差，单位：像素；偏差小于该值不调整
 COLOR_CORRECT_MM = 7     # 颜色左右微调每次移动的距离，单位：毫米
 COLOR_MIN_RADIUS = 0     # 色块半径小于该值时暂不进行颜色微调
-COLOR_DIRECTION_SIGN = -1  # 颜色修正方向：1=默认，-1=左右指令反向后使用
+COLOR_DIRECTION_SIGN = 1  # 颜色修正方向：1=默认，-1=左右指令反向后使用
 camera_lock = threading.Lock()
 
 
@@ -277,15 +277,17 @@ def color_keep_center(ik, board, detector, tilt):
     if offset > 0:
         if COLOR_DIRECTION_SIGN > 0:
             ik.right_move(ik.initial_pos, 2, COLOR_CORRECT_MM, MOVE_SPEED, 1)
+            print('色块右偏，机械足右移 %dmm' % COLOR_CORRECT_MM, flush=True)
         else:
             ik.left_move(ik.initial_pos, 2, COLOR_CORRECT_MM, MOVE_SPEED, 1)
-        print('色块右偏，机械足右移 %dmm' % COLOR_CORRECT_MM, flush=True)
+            print('色块右偏，机械足左移 %dmm（方向反向）' % COLOR_CORRECT_MM, flush=True)
     else:
         if COLOR_DIRECTION_SIGN > 0:
             ik.left_move(ik.initial_pos, 2, COLOR_CORRECT_MM, MOVE_SPEED, 1)
+            print('色块左偏，机械足左移 %dmm' % COLOR_CORRECT_MM, flush=True)
         else:
             ik.right_move(ik.initial_pos, 2, COLOR_CORRECT_MM, MOVE_SPEED, 1)
-        print('色块左偏，机械足左移 %dmm' % COLOR_CORRECT_MM, flush=True)
+            print('色块左偏，机械足右移 %dmm（方向反向）' % COLOR_CORRECT_MM, flush=True)
     time.sleep(0.05)
 
 
