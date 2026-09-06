@@ -397,11 +397,13 @@ def main():
         elif name == 'pick':
             pick_count += 1
             print('%d/%d pick%d' % (i, len(actions), pick_count), flush=True)
-            do_pick(board, pick_count, act.get('pulses'))
+            pulses = {int(k): int(v) for k, v in act.get('pulses', {}).items()} if act.get('pulses') else None
+            do_pick(board, pick_count, pulses)
         elif name == 'place':
             place_count += 1
             print('%d/%d place%d' % (i, len(actions), place_count), flush=True)
-            do_place(board, place_count, act.get('pulses'))
+            pulses = {int(k): int(v) for k, v in act.get('pulses', {}).items()} if act.get('pulses') else None
+            do_place(board, place_count, pulses)
         elif name == 'stand':
             ik.stand(ik.initial_pos, t=500)
 
