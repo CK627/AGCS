@@ -43,17 +43,17 @@ ROUTE_PATH = os.path.join(
 
 OFFICIAL_ARM = {21: 500, 22: 705, 23: 90, 24: 330}  # 机械臂官方初始脉宽
 
-GRIPPER_CLOSE = 700  # 25 号夹爪闭合
-GRIPPER_OPEN = 400   # 25 号夹爪打开
-MOVE_SPEED = 50      # 直线移动速度
-TURN_SPEED = 30      # 转弯速度
-GYRO_SCALE_LEFT = 1.15   # IMU 左转修正系数
-GYRO_SCALE_RIGHT = 1.15  # IMU 右转修正系数
-HEADING_TOL_DEG = 2.0    # IMU 航向死区，单位度
-COLOR_CENTER_TOL = 3.0   # 色块中心死区，单位像素
-COLOR_CORRECT_MM = 7     # 颜色左右微调步长，单位 mm
-COLOR_MIN_RADIUS = 0     # 低于该半径不启用颜色微调
-COLOR_DIRECTION_SIGN = -1  # 颜色修正方向：1 正常，-1 反向
+GRIPPER_CLOSE = 700  # 夹取时 25 号夹爪闭合的脉宽，越大夹得越紧
+GRIPPER_OPEN = 400   # 放下时 25 号夹爪打开的脉宽，越小张得越开
+MOVE_SPEED = 50      # 六足直线前进/后退的速度，越大走得越快
+TURN_SPEED = 30      # 六足左转/右转的速度，越大转得越快
+GYRO_SCALE_LEFT = 1.15   # IMU 左转时陀螺仪积分修正比例
+GYRO_SCALE_RIGHT = 1.15  # IMU 右转时陀螺仪积分修正比例
+HEADING_TOL_DEG = 2.0    # 航向误差容忍范围，单位：度；越小越严格
+COLOR_CENTER_TOL = 3.0   # 色块中心允许偏差，单位：像素；偏差小于该值不调整
+COLOR_CORRECT_MM = 7     # 颜色左右微调每次移动的距离，单位：毫米
+COLOR_MIN_RADIUS = 0     # 色块半径小于该值时暂不进行颜色微调
+COLOR_DIRECTION_SIGN = -1  # 颜色修正方向：1=默认，-1=左右指令反向后使用
 camera_lock = threading.Lock()
 
 
