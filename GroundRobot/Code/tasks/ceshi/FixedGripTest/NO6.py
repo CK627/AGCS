@@ -127,6 +127,7 @@ def arm_fine_tune(board, state, kind):
     gripper = GRIPPER_CLOSE if kind == 'pick' else GRIPPER_OPEN
     board.bus_servo_set_position(2.0, [[25, gripper]])
     time.sleep(2.0)
+    time.sleep(0.5)
     restore_travel(board, gripper)
 
 
