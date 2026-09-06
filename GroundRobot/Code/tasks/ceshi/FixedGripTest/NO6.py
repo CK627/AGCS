@@ -41,19 +41,19 @@ except ImportError:
 ROUTE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), 'fixed_route.json')
 
-OFFICIAL_ARM = {21: 500, 22: 705, 23: 90, 24: 330}
+OFFICIAL_ARM = {21: 500, 22: 705, 23: 90, 24: 330}  # 机械臂官方初始脉宽
 
-GRIPPER_CLOSE = 700
-GRIPPER_OPEN = 400
-MOVE_SPEED = 50
-TURN_SPEED = 30
-GYRO_SCALE_LEFT = 1.15
-GYRO_SCALE_RIGHT = 1.15
-HEADING_TOL_DEG = 2.0
-COLOR_CENTER_TOL = 3.0
-COLOR_CORRECT_MM = 7
-COLOR_MIN_RADIUS = 0
-COLOR_DIRECTION_SIGN = -1
+GRIPPER_CLOSE = 700  # 25 号夹爪闭合
+GRIPPER_OPEN = 400   # 25 号夹爪打开
+MOVE_SPEED = 50      # 直线移动速度
+TURN_SPEED = 30      # 转弯速度
+GYRO_SCALE_LEFT = 1.15   # IMU 左转修正系数
+GYRO_SCALE_RIGHT = 1.15  # IMU 右转修正系数
+HEADING_TOL_DEG = 2.0    # IMU 航向死区，单位度
+COLOR_CENTER_TOL = 3.0   # 色块中心死区，单位像素
+COLOR_CORRECT_MM = 7     # 颜色左右微调步长，单位 mm
+COLOR_MIN_RADIUS = 0     # 低于该半径不启用颜色微调
+COLOR_DIRECTION_SIGN = -1  # 颜色修正方向：1 正常，-1 反向
 camera_lock = threading.Lock()
 
 
