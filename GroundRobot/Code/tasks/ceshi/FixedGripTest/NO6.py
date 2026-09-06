@@ -428,17 +428,6 @@ def main():
             continue
 
         if pending_forward:
-            if pick_count == 0 and not extra_applied:
-                battery_mv = read_battery_mv(board)
-                if battery_mv is not None:
-                    voltage = battery_mv / 1000.0
-                    print('第一次夹取前电压: %.2fV' % voltage, flush=True)
-                    if voltage < LOW_VOLTAGE:
-                        pending_forward += EXTRA_MM
-                        print('电压低于 %.1fV，额外前进 %dmm' % (LOW_VOLTAGE, EXTRA_MM), flush=True)
-                    else:
-                        print('电压正常，不额外前进', flush=True)
-                extra_applied = True
             print('%d/%d 直行 %dmm' % (i, len(actions), pending_forward), flush=True)
             segment_color = color_enabled and not (23 <= i <= 53)
             if color_enabled and not segment_color:
@@ -470,6 +459,17 @@ def main():
         elif name == 'pick':
             pick_count += 1
             print('%d/%d pick%d' % (i, len(actions), pick_count), flush=True)
+            if pick_count == 1 and not extra_applied:
+                battery_mv = read_battery_mv(board)
+                if battery_mv is not None:
+                    voltage = battery_mv / 1000.0
+                    print('第一次夹取前电压: %.2fV' % voltage, flush=True)
+                    if voltage < LOW_VOLTAGE:
+                        print('电压低于 %.1fV，额外前进 %dmm' % (LOW_VOLTAGE, EXTRA_MM), flush=True)
+                        ik.go_forward(ik.initial_pos, 2, EXTRA_MM, MOVE_SPEED, 1)
+                    else:
+                        print('电压正常，不额外前进', flush=True)
+                extra_applied = True
             pulses = {int(k): int(v) for k, v in act.get('pulses', {}).items()} if act.get('pulses') else None
             do_pick(board, pick_count, pulses)
         elif name == 'place':
