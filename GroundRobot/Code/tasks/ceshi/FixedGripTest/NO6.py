@@ -1,13 +1,17 @@
 #!/usr/bin/python3
 # coding=utf8
-"""NO6：IMU 保持航向 + 摄像头色块左右微调，分函数清晰。"""
+"""NO6：IMU 航向保持 + 摄像头色块左右微调。完全独立，不依赖 NO5。"""
 
 import argparse
 import json
 import os
+import re
+import socket
 import sys
 import threading
 import time
+
+import cv2
 
 _PKG_ROOT = os.path.dirname(
     os.path.dirname(
@@ -16,14 +20,34 @@ _PKG_ROOT = os.path.dirname(
 if _PKG_ROOT not in sys.path:
     sys.path.insert(0, _PKG_ROOT)
 
-from agcs_lib import make_board, make_ik
+from agcs_lib import (
+    make_board,
+    make_ik,
+    load_params,
+    load_lab_data,
+    load_undistort_maps,
+    detect_color,
+    correct_camera,
+    open_camera,
+    capture,
+)
 
-import NO5
+try:
+    from communication import task_server
+except ImportError:
+    task_server = None
 
 
 ROUTE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), 'fixed_route.json')
 
+OFFICIAL_ARM = {21: 500, 22: 705, 23: 90, 24: 330}
+PICK1 = {21: 840, 22: 230, 23: 645, 24: 355}
+PLACE1 = {21: 830, 22: 470, 23: 295, 24: 460}
+PICK2 = {21: 735, 22: 610, 23: 205, 24: 410}
+
+GRIPPER_CLOSE = 700
+GRIPPER_OPEN = 400
 MOVE_SPEED = 50
 TURN_SPEED = 30
 GYRO_SCALE_LEFT = 1.15
@@ -31,9 +55,157 @@ GYRO_SCALE_RIGHT = 1.15
 HEADING_TOL_DEG = 2.0
 COLOR_CENTER_TOL = 40
 COLOR_CORRECT_MM = 10
+camera_lock = threading.Lock()
+
+
+def lan_ip():
+    """获取本机局域网 IP，用于打印视频推流地址。"""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(('8.8.8.8', 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return '127.0.0.1'
+
+
+def restore_travel(board, gripper):
+    """恢复 21-24 到官方初始位置，并设置 25 夹爪状态。"""
+    board.bus_servo_set_position(
+        1.5, [[sid, OFFICIAL_ARM[sid]] for sid in [22, 23, 21, 24]])
+    time.sleep(1.5)
+    board.bus_servo_set_position(0.5, [[25, gripper]])
+    time.sleep(0.5)
+
+
+def clamp_pulse(v):
+    """限制舵机脉宽在 0-1000。"""
+    return max(0, min(1000, int(v)))
+
+
+def set_servos(board, pulses, order):
+    """按指定顺序移动多个舵机到目标脉宽。"""
+    board.bus_servo_set_position(
+        2.2, [[sid, int(pulses[sid])] for sid in order])
+    time.sleep(2.2)
+
+
+def parse_adjust(cmd):
+    """解析机械臂微调命令，例如 a/d、22w/23s10。"""
+    cmd = cmd.strip().lower()
+    if not cmd:
+        return None
+    if cmd[0] in ('a', 'd'):
+        return 21, (-1 if cmd[0] == 'a' else 1), (int(cmd[1:]) if cmd[1:] else 5)
+    m = re.match(r'^(22|23|24)([ws])(\d*)$', cmd)
+    if not m:
+        return None
+    return int(m.group(1)), (1 if m.group(2) == 'w' else -1), (int(m.group(3)) if m.group(3) else 5)
+
+
+def arm_fine_tune(board, state, kind):
+    """机械臂手动微调，回车执行夹取/放下。"""
+    print('机械臂微调：回车=%s，c=退出' % ('夹取' if kind == 'pick' else '放下'), flush=True)
+    while True:
+        print('当前 21=%d 22=%d 23=%d 24=%d'
+              % (state[21], state[22], state[23], state[24]), flush=True)
+        cmd = input('arm> ').strip().lower()
+        if cmd == '':
+            break
+        if cmd == 'c':
+            print('手动退出', flush=True)
+            sys.exit(0)
+        parsed = parse_adjust(cmd)
+        if parsed is None:
+            print('命令错误', flush=True)
+            continue
+        servo, delta, amount = parsed
+        state[servo] = clamp_pulse(state[servo] + delta * amount)
+        board.bus_servo_set_position(0.2, [[servo, state[servo]]])
+        time.sleep(0.1)
+
+    gripper = GRIPPER_CLOSE if kind == 'pick' else GRIPPER_OPEN
+    board.bus_servo_set_position(2.0, [[25, gripper]])
+    time.sleep(2.0)
+    restore_travel(board, gripper)
+
+
+def pick1_prepare(board):
+    """准备第一次夹取：先 21，再 22-23-24。"""
+    print('pick1：先处理 21，再移动 22-23-24', flush=True)
+    set_servos(board, PICK1, [21])
+    set_servos(board, PICK1, [22, 23, 24])
+    return dict(PICK1)
+
+
+def pick2_prepare(board):
+    """准备第二次夹取：22-23-(24+100) -> 21 -> 24。"""
+    print('pick2：22-23-(24+100) -> 21 -> 24', flush=True)
+    temp = dict(PICK2)
+    temp[24] = PICK2[24] + 100
+    set_servos(board, temp, [22, 23, 24])
+    set_servos(board, PICK2, [21])
+    set_servos(board, PICK2, [24])
+    return dict(PICK2)
+
+
+def place1_prepare(board):
+    """准备第一次放下：使用记录的 21-24 放下脉宽。"""
+    print('place1：使用记录的 21-24 放下脉宽', flush=True)
+    set_servos(board, PLACE1, [21, 22, 23, 24])
+    return dict(PLACE1)
+
+
+def open_vision(color, min_area):
+    """打开摄像头，返回 (cam, detector)。detector 负责检测和推流。"""
+    params = load_params()
+    rotate = params['vision'].get('camera_rotate', 0)
+    lab = load_lab_data()
+    mapx, mapy = load_undistort_maps()
+    cam = open_camera()
+
+    def detector():
+        with camera_lock:
+            f = capture(cam)
+        if f is None:
+            return None
+        frame = cv2.remap(correct_camera(f, rotate), mapx, mapy, cv2.INTER_LINEAR)
+        result = detect_color(frame, lab, color, min_area=min_area)
+        if result is not None:
+            x, y, w, h = cv2.boundingRect(result['contour'])
+            ul, ur = x, x + w
+            result['bbox_center_x'] = (ul + ur) / 2.0
+            cx, cy = result['center']
+            cv2.circle(frame, (cx, cy), int(result.get('radius', 20)), (0, 255, 0), 2)
+            cv2.putText(frame, color, (cx - 20, cy - 20),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        if task_server is not None:
+            task_server.publish_frame(frame, max_fps=10.0)
+            task_server.publish_lab_frame(lab_view(frame, lab, color), max_fps=10.0)
+        return result
+
+    return cam, detector
+
+
+def video_loop(detector, stop_event):
+    """后台持续取帧推流，保证视频始终有画面。"""
+    while not stop_event.is_set():
+        detector()
+        time.sleep(0.1)
+
+
+def lab_view(frame, lab, color):
+    """生成 LAB 阈值图，只保留识别到的颜色区域。"""
+    labf = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+    minv = tuple(int(v) for v in lab[color]['min'])
+    maxv = tuple(int(v) for v in lab[color]['max'])
+    mask = cv2.inRange(labf, minv, maxv)
+    return cv2.bitwise_and(frame, frame, mask=mask)
 
 
 def read_gz(board):
+    """读取 IMU 的 gz 角速度。"""
     try:
         data = board.get_imu()
         if data is None:
@@ -44,6 +216,7 @@ def read_gz(board):
 
 
 def init_imu(board):
+    """初始化 IMU：开启接收，标定 gz 零漂。"""
     board.enable_reception()
     vals = []
     while len(vals) < 200:
@@ -56,6 +229,7 @@ def init_imu(board):
 
 
 def update_imu(state, board):
+    """更新 IMU 偏航角。"""
     now = time.monotonic()
     dt = now - state['last_t']
     state['last_t'] = now
@@ -68,11 +242,12 @@ def update_imu(state, board):
 
 
 def angle_error(current, target):
+    """计算两个航向角的最小误差，范围 -180 到 180。"""
     return (target - current + 180.0) % 360.0 - 180.0
 
 
 def color_keep_center(ik, detector):
-    """只做色块左右微调。"""
+    """只根据色块左右中心，做机械足左右微调。"""
     det = detector()
     if det is None:
         print('未发现定位色块', flush=True)
@@ -91,6 +266,7 @@ def color_keep_center(ik, detector):
 
 
 def move_one_chunk(ik, move, forward):
+    """只走一小段前进或后退。"""
     if forward:
         ik.go_forward(ik.initial_pos, 2, move, MOVE_SPEED, 1)
     else:
@@ -98,6 +274,7 @@ def move_one_chunk(ik, move, forward):
 
 
 def move_straight_imu_color(ik, board, detector, imu_state, target_yaw, distance_mm):
+    """直线阶段：IMU 保持航向 + 颜色左右微调 + 前进。"""
     remaining = abs(int(distance_mm))
     forward = distance_mm >= 0
     while remaining > 0:
@@ -117,6 +294,7 @@ def move_straight_imu_color(ik, board, detector, imu_state, target_yaw, distance
 
 
 def imu_turn(ik, board, imu_state, delta_deg):
+    """IMU 闭环转弯到目标角度。"""
     target = imu_state['yaw'] + delta_deg
     for _ in range(40):
         update_imu(imu_state, board)
@@ -130,7 +308,26 @@ def imu_turn(ik, board, imu_state, delta_deg):
         time.sleep(0.08)
 
 
+def do_pick(board, pick_count):
+    """执行第 1/2 次夹取。"""
+    if pick_count == 1:
+        state = pick1_prepare(board)
+    else:
+        state = pick2_prepare(board)
+    arm_fine_tune(board, state, 'pick')
+
+
+def do_place(board, place_count):
+    """执行第 1/2 次放下。"""
+    if place_count == 1:
+        state = place1_prepare(board)
+    else:
+        state = dict(OFFICIAL_ARM)
+    arm_fine_tune(board, state, 'place')
+
+
 def main():
+    """主流程：按 JSON 调用移动、转弯、夹取和放下。"""
     parser = argparse.ArgumentParser(description='NO6 IMU+颜色路线运行')
     parser.add_argument('--color', default='blue',
                         choices=['red', 'green', 'blue', 'yellow', 'cz1'])
@@ -143,19 +340,19 @@ def main():
     board = make_board()
     ik = make_ik(board)
     imu_state = init_imu(board)
-    cam, detector = NO5.open_vision(args.color, args.min_area)
+    cam, detector = open_vision(args.color, args.min_area)
 
     video_stop = threading.Event()
     video_thread = threading.Thread(
-        target=NO5.video_loop, args=(detector, video_stop), daemon=True)
+        target=video_loop, args=(detector, video_stop), daemon=True)
     video_thread.start()
 
-    if NO5.task_server is not None:
-        print('视频推流: http://%s:5000/video.mjpeg' % NO5.lan_ip(), flush=True)
-        print('LAB 推流: http://%s:5000/video_lab.mjpeg' % NO5.lan_ip(), flush=True)
-        NO5.task_server.start_server()
+    if task_server is not None:
+        print('视频推流: http://%s:5000/video.mjpeg' % lan_ip(), flush=True)
+        print('LAB 推流: http://%s:5000/video_lab.mjpeg' % lan_ip(), flush=True)
+        task_server.start_server()
 
-    NO5.restore_travel(board, NO5.GRIPPER_OPEN)
+    restore_travel(board, GRIPPER_OPEN)
     print('NO6 启动，颜色目标=%s' % args.color, flush=True)
     ik.stand(ik.initial_pos, t=500)
     time.sleep(0.5)
@@ -191,11 +388,11 @@ def main():
         elif name == 'pick':
             pick_count += 1
             print('%d/%d pick%d' % (i, len(actions), pick_count), flush=True)
-            NO5.do_pick(board, pick_count)
+            do_pick(board, pick_count)
         elif name == 'place':
             place_count += 1
             print('%d/%d place%d' % (i, len(actions), place_count), flush=True)
-            NO5.do_place(board, place_count)
+            do_place(board, place_count)
         elif name == 'stand':
             ik.stand(ik.initial_pos, t=500)
 
