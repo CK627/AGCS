@@ -177,6 +177,9 @@ def open_vision(color, min_area):
         frame = cv2.remap(correct_camera(f, rotate), mapx, mapy, cv2.INTER_LINEAR)
         result = detect_color(frame, lab, color, min_area=min_area)
         if result is not None:
+            x, y, w, h = cv2.boundingRect(result['contour'])
+            ul, ur = x, x + w
+            result['bbox_center_x'] = (ul + ur) / 2.0
             cx, cy = result['center']
             cv2.circle(frame, (cx, cy), int(result.get('radius', 20)), (0, 255, 0), 2)
             cv2.putText(frame, color, (cx - 20, cy - 20),
@@ -235,14 +238,14 @@ def move_straight(ik, distance_mm):
         time.sleep(0.05)
 
 
-def move_straight_adjust(ik, detector, distance_mm):
-    """直线前进：先看色块偏移，机械足左右微调后再走。"""
+def move_straight_adjust(ik, board, detector, tilt, distance_mm):
+    """直线前进：只按目标左右中心做微调；丢失时 24 号上下微调找回。"""
     remaining = abs(int(distance_mm))
     forward = distance_mm >= 0
     while remaining > 0:
         det = detector()
         if det is not None:
-            cx, _ = det['center']
+            cx = det.get('bbox_center_x', det['center'][0])
             offset = cx - 320
             direction = '右偏' if offset > 0 else ('左偏' if offset < 0 else '居中')
             print('检测到色块 cx=%d %s%d' % (cx, direction, abs(offset)), flush=True)
@@ -256,6 +259,10 @@ def move_straight_adjust(ik, detector, distance_mm):
                 time.sleep(0.05)
         else:
             print('未发现定位色块', flush=True)
+            tilt['pulse'] = max(100, tilt['pulse'] - 5)
+            board.bus_servo_set_position(0.2, [[24, tilt['pulse']]])
+            time.sleep(0.2)
+            print('24 号下移微调 -> %d' % tilt['pulse'], flush=True)
         move = min(100, remaining)
         if forward:
             ik.go_forward(ik.initial_pos, 2, move, MOVE_SPEED, 1)
@@ -325,6 +332,7 @@ def main():
     pick_count = 0
     place_count = 0
     tracker = None
+    tilt = {'pulse': 260}
 
     for i, act in enumerate(actions, 1):
         name = act.get('action')
@@ -338,7 +346,7 @@ def main():
 
         if pending_forward:
             print('%d/%d 直行 %dmm' % (i, len(actions), pending_forward), flush=True)
-            move_straight_adjust(ik, detector, pending_forward)
+            move_straight_adjust(ik, board, detector, tilt, pending_forward)
             pending_forward = 0
 
         if name in ('turn_left', 'turn_right'):
@@ -363,7 +371,7 @@ def main():
             ik.stand(ik.initial_pos, t=500)
 
     if pending_forward:
-        move_straight_adjust(ik, detector, pending_forward)
+        move_straight_adjust(ik, board, detector, tilt, pending_forward)
 
     stop_tracking(tracker)
     video_stop.set()
