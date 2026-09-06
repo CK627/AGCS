@@ -42,7 +42,7 @@ ROUTE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), 'fixed_route.json')
 
 OFFICIAL_ARM = {21: 500, 22: 705, 23: 90, 24: 330}
-PICK1 = {21: 870, 22: 485, 23: 202, 24: 290}
+PICK1 = {21: 880, 22: 355, 23: 400, 24: 250}
 PLACE1 = {21: 830, 22: 470, 23: 295, 24: 460}
 PICK2 = {21: 735, 22: 610, 23: 205, 24: 410}
 
