@@ -250,7 +250,7 @@ def angle_error(current, target):
     return (target - current + 180.0) % 360.0 - 180.0
 
 
-def color_keep_center(ik, board, detector, tilt):
+def color_keep_center(ik, board, detector, tilt, color_state):
     """只根据色块左右中心，做机械足左右微调。"""
     det = detector()
     if det is None:
@@ -261,7 +261,11 @@ def color_keep_center(ik, board, detector, tilt):
         print('24 号下移微调 -> %d' % tilt['pulse'], flush=True)
         return
     cx = det.get('bbox_center_x', det['center'][0])
-    offset = cx - 320
+    if color_state['ref_cx'] is None:
+        color_state['ref_cx'] = cx
+        print('设置颜色参考中心 cx=%.1f' % cx, flush=True)
+        return
+    offset = cx - color_state['ref_cx']
     if abs(offset) <= COLOR_CENTER_TOL:
         return
     if offset > 0:
@@ -281,7 +285,7 @@ def move_one_chunk(ik, move, forward):
         ik.back(ik.initial_pos, 2, move, MOVE_SPEED, 1)
 
 
-def move_straight_imu_color(ik, board, detector, imu_state, target_yaw, distance_mm, tilt):
+def move_straight_imu_color(ik, board, detector, imu_state, target_yaw, distance_mm, tilt, color_state):
     """直线阶段：IMU 保持航向 + 颜色左右微调 + 前进。"""
     remaining = abs(int(distance_mm))
     forward = distance_mm >= 0
@@ -294,7 +298,7 @@ def move_straight_imu_color(ik, board, detector, imu_state, target_yaw, distance
             else:
                 ik.turn_right(ik.initial_pos, 2, 1, TURN_SPEED, 1)
             time.sleep(0.05)
-        color_keep_center(ik, board, detector, tilt)
+        color_keep_center(ik, board, detector, tilt, color_state)
         move = min(100, remaining)
         move_one_chunk(ik, move, forward)
         remaining -= move
@@ -370,6 +374,7 @@ def main():
     pick_count = 0
     place_count = 0
     tilt = {'pulse': 260}
+    color_state = {'ref_cx': None}
 
     for i, act in enumerate(actions, 1):
         name = act.get('action')
@@ -383,7 +388,7 @@ def main():
         if pending_forward:
             print('%d/%d 直行 %dmm' % (i, len(actions), pending_forward), flush=True)
             move_straight_imu_color(
-                ik, board, detector, imu_state, target_yaw, pending_forward, tilt)
+                ik, board, detector, imu_state, target_yaw, pending_forward, tilt, color_state)
             pending_forward = 0
 
         if name == 'turn_left':
@@ -409,7 +414,7 @@ def main():
 
     if pending_forward:
         move_straight_imu_color(
-            ik, board, detector, imu_state, target_yaw, pending_forward, tilt)
+            ik, board, detector, imu_state, target_yaw, pending_forward, tilt, color_state)
 
     video_stop.set()
     cam.camera_close()
