@@ -43,7 +43,7 @@ sync_dir() {
 
 # 我们专属目录：和 Git 保持一致，先清空再解包。
 sync_dir agcs_lib 1
-sync_dir tasks 1
+sync_dir tasks 0
 sync_dir communication 1
 
 # 机器人上有官方/标定文件的目录：只覆盖 Git 里已有的文件，不清空。
