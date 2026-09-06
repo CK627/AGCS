@@ -263,7 +263,7 @@ def color_keep_center(ik, board, detector, tilt):
     if det.get('radius', 0) < COLOR_MIN_RADIUS:
         print('目标较远，暂不做颜色微调，依赖 IMU 保持航向', flush=True)
         return
-    offset = cx - 320
+    offset = cx - 160
     if offset > 0:
         direction = '右'
     elif offset < 0:
