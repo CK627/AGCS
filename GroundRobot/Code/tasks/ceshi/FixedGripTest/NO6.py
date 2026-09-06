@@ -131,30 +131,33 @@ def arm_fine_tune(board, state, kind):
     restore_travel(board, gripper)
 
 
-def pick1_prepare(board):
+def pick1_prepare(board, pulses=None):
     """准备第一次夹取：先 21，再 22-23-24。"""
+    p = pulses or PICK1
     print('pick1：先处理 21，再移动 22-23-24', flush=True)
-    set_servos(board, PICK1, [21])
-    set_servos(board, PICK1, [22, 23, 24])
-    return dict(PICK1)
+    set_servos(board, p, [21])
+    set_servos(board, p, [22, 23, 24])
+    return dict(p)
 
 
-def pick2_prepare(board):
+def pick2_prepare(board, pulses=None):
     """准备第二次夹取：22-23-(24+100) -> 21 -> 24。"""
+    p = pulses or PICK2
     print('pick2：22-23-(24+100) -> 21 -> 24', flush=True)
-    temp = dict(PICK2)
-    temp[24] = PICK2[24] + 100
+    temp = dict(p)
+    temp[24] = p[24] + 100
     set_servos(board, temp, [22, 23, 24])
-    set_servos(board, PICK2, [21])
-    set_servos(board, PICK2, [24])
-    return dict(PICK2)
+    set_servos(board, p, [21])
+    set_servos(board, p, [24])
+    return dict(p)
 
 
-def place1_prepare(board):
+def place1_prepare(board, pulses=None):
     """准备第一次放下：使用记录的 21-24 放下脉宽。"""
+    p = pulses or PLACE1
     print('place1：使用记录的 21-24 放下脉宽', flush=True)
-    set_servos(board, PLACE1, [21, 22, 23, 24])
-    return dict(PLACE1)
+    set_servos(board, p, [21, 22, 23, 24])
+    return dict(p)
 
 
 def open_vision(color, min_area):
@@ -313,21 +316,21 @@ def imu_turn(ik, board, imu_state, delta_deg):
         time.sleep(0.08)
 
 
-def do_pick(board, pick_count):
+def do_pick(board, pick_count, pulses=None):
     """执行第 1/2 次夹取。"""
     if pick_count == 1:
-        state = pick1_prepare(board)
+        state = pick1_prepare(board, pulses)
     else:
-        state = pick2_prepare(board)
+        state = pick2_prepare(board, pulses)
     arm_fine_tune(board, state, 'pick')
 
 
-def do_place(board, place_count):
+def do_place(board, place_count, pulses=None):
     """执行第 1/2 次放下。"""
     if place_count == 1:
-        state = place1_prepare(board)
+        state = place1_prepare(board, pulses)
     else:
-        state = dict(OFFICIAL_ARM)
+        state = pulses or dict(OFFICIAL_ARM)
     arm_fine_tune(board, state, 'place')
 
 
@@ -394,11 +397,11 @@ def main():
         elif name == 'pick':
             pick_count += 1
             print('%d/%d pick%d' % (i, len(actions), pick_count), flush=True)
-            do_pick(board, pick_count)
+            do_pick(board, pick_count, act.get('pulses'))
         elif name == 'place':
             place_count += 1
             print('%d/%d place%d' % (i, len(actions), place_count), flush=True)
-            do_place(board, place_count)
+            do_place(board, place_count, act.get('pulses'))
         elif name == 'stand':
             ik.stand(ik.initial_pos, t=500)
 
