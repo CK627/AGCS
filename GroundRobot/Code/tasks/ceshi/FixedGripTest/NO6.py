@@ -56,6 +56,7 @@ HEADING_TOL_DEG = 2.0
 COLOR_CENTER_TOL = 120
 COLOR_CORRECT_MM = 7
 COLOR_MIN_RADIUS = 0
+ENABLE_IMU_STRAIGHT = False
 camera_lock = threading.Lock()
 
 
@@ -290,14 +291,15 @@ def move_straight_imu_color(ik, board, detector, imu_state, target_yaw, distance
     remaining = abs(int(distance_mm))
     forward = distance_mm >= 0
     while remaining > 0:
-        update_imu(imu_state, board)
-        if abs(angle_error(imu_state['yaw'], target_yaw)) > HEADING_TOL_DEG:
-            err = angle_error(imu_state['yaw'], target_yaw)
-            if err > 0:
-                ik.turn_left(ik.initial_pos, 2, 1, TURN_SPEED, 1)
-            else:
-                ik.turn_right(ik.initial_pos, 2, 1, TURN_SPEED, 1)
-            time.sleep(0.05)
+        if ENABLE_IMU_STRAIGHT:
+            update_imu(imu_state, board)
+            if abs(angle_error(imu_state['yaw'], target_yaw)) > HEADING_TOL_DEG:
+                err = angle_error(imu_state['yaw'], target_yaw)
+                if err > 0:
+                    ik.turn_left(ik.initial_pos, 2, 1, TURN_SPEED, 1)
+                else:
+                    ik.turn_right(ik.initial_pos, 2, 1, TURN_SPEED, 1)
+                time.sleep(0.05)
         color_keep_center(ik, board, detector, tilt)
         move = min(100, remaining)
         move_one_chunk(ik, move, forward)
