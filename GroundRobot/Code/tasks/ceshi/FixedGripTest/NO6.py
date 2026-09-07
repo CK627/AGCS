@@ -57,6 +57,7 @@ COLOR_CENTER_TOL = 3.0   # 色块中心允许偏差，单位：像素；偏差�
 COLOR_CORRECT_MM = 7     # 颜色左右微调每次移动的距离，单位：毫米
 COLOR_MIN_RADIUS = 0     # 色块半径小于该值时暂不进行颜色微调
 COLOR_DIRECTION_SIGN = -1  # 颜色修正方向：1=默认，-1=左右指令反向后使用
+IMU_DIRECTION_SIGN = -1    # IMU 转向方向：1=默认，-1=左右指令反向后使用
 LOW_VOLTAGE = 11.2         # 电压低于该值时，第一次夹取前补距离
 EXTRA_MM = 50              # 低电压时第一次夹取前多走的距离，单位毫米
 ENABLE_IMU_STRAIGHT = True  # 直线阶段是否启用 IMU 航向修正
@@ -342,17 +343,23 @@ def move_straight_imu_color(ik, board, detector, imu_state, target_yaw, distance
                 update_imu(imu_state, board)
                 err = angle_error(imu_state['yaw'], target_yaw)
                 if err > LEFT_TURN_TOL_DEG:
-                    action = '左转%d°' % IMU_STRAIGHT_STEP
+                    action = ('左转%d°' if IMU_DIRECTION_SIGN > 0 else '右转%d°') % IMU_STRAIGHT_STEP
                 elif err < -RIGHT_TURN_TOL_DEG:
-                    action = '右转%d°' % IMU_STRAIGHT_STEP
+                    action = ('右转%d°' if IMU_DIRECTION_SIGN > 0 else '左转%d°') % IMU_STRAIGHT_STEP
                 else:
                     break
                 print('IMU yaw=%.1f target=%.1f error=%+.1f -> %s'
                       % (imu_state['yaw'], target_yaw, err, action), flush=True)
                 if err > LEFT_TURN_TOL_DEG:
-                    ik.turn_left(ik.initial_pos, 2, IMU_STRAIGHT_STEP, TURN_SPEED, 1)
+                    if IMU_DIRECTION_SIGN > 0:
+                        ik.turn_left(ik.initial_pos, 2, IMU_STRAIGHT_STEP, TURN_SPEED, 1)
+                    else:
+                        ik.turn_right(ik.initial_pos, 2, IMU_STRAIGHT_STEP, TURN_SPEED, 1)
                 else:
-                    ik.turn_right(ik.initial_pos, 2, IMU_STRAIGHT_STEP, TURN_SPEED, 1)
+                    if IMU_DIRECTION_SIGN > 0:
+                        ik.turn_right(ik.initial_pos, 2, IMU_STRAIGHT_STEP, TURN_SPEED, 1)
+                    else:
+                        ik.turn_left(ik.initial_pos, 2, IMU_STRAIGHT_STEP, TURN_SPEED, 1)
                 time.sleep(0.05)
                 target_yaw = imu_state['yaw']
         move = min(100, remaining)
@@ -373,9 +380,15 @@ def imu_turn(ik, board, imu_state, delta_deg):
             break
         err = angle_error(imu_state['yaw'], target)
         if err > 0:
-            ik.turn_left(ik.initial_pos, 2, 5, TURN_SPEED, 1)
+            if IMU_DIRECTION_SIGN > 0:
+                ik.turn_left(ik.initial_pos, 2, 5, TURN_SPEED, 1)
+            else:
+                ik.turn_right(ik.initial_pos, 2, 5, TURN_SPEED, 1)
         else:
-            ik.turn_right(ik.initial_pos, 2, 5, TURN_SPEED, 1)
+            if IMU_DIRECTION_SIGN > 0:
+                ik.turn_right(ik.initial_pos, 2, 5, TURN_SPEED, 1)
+            else:
+                ik.turn_left(ik.initial_pos, 2, 5, TURN_SPEED, 1)
         time.sleep(0.08)
 
 
