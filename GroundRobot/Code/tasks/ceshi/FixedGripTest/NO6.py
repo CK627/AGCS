@@ -151,12 +151,12 @@ def pick1_prepare(board, pulses=None):
 
 
 def pick2_prepare(board, pulses=None):
-    """准备第二次夹取：22-23-(24+100) -> 21 -> 24。"""
+    """准备第二次夹取：22-23 -> 24=500 -> 21 -> 24=JSON值。"""
     p = pulses
-    print('pick2：22-23-(24+100) -> 21 -> 24', flush=True)
-    temp = dict(p)
-    temp[24] = p[24] + 100
-    set_servos(board, temp, [22, 23, 24])
+    print('pick2：22-23 -> 24=500 -> 21 -> 24=JSON值', flush=True)
+    set_servos(board, p, [22, 23])
+    board.bus_servo_set_position(2.2, [[24, 500]])
+    time.sleep(2.2)
     set_servos(board, p, [21])
     set_servos(board, p, [24])
     return dict(p)
