@@ -340,7 +340,14 @@ def move_straight_imu_color(ik, board, detector, imu_state, target_yaw, distance
                 target_yaw = imu_state['yaw']
         update_imu(imu_state, board)
         err = angle_error(imu_state['yaw'], target_yaw)
-        print('IMU yaw=%.1f target=%.1f error=%+.1f' % (imu_state['yaw'], target_yaw, err), flush=True)
+        if err > LEFT_TURN_TOL_DEG:
+            suggestion = ('左转%d°' if IMU_DIRECTION_SIGN > 0 else '右转%d°') % IMU_STRAIGHT_STEP
+        elif err < -RIGHT_TURN_TOL_DEG:
+            suggestion = ('右转%d°' if IMU_DIRECTION_SIGN > 0 else '左转%d°') % IMU_STRAIGHT_STEP
+        else:
+            suggestion = '保持'
+        print('IMU yaw=%.1f target=%.1f error=%+.1f 建议:%s'
+              % (imu_state['yaw'], target_yaw, err, suggestion), flush=True)
         if not color_adjusted and ENABLE_IMU_STRAIGHT:
             if err > LEFT_TURN_TOL_DEG:
                 action = ('左转%d°' if IMU_DIRECTION_SIGN > 0 else '右转%d°') % IMU_STRAIGHT_STEP
