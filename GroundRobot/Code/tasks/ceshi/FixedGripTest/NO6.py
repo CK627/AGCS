@@ -370,27 +370,38 @@ def move_straight_imu_color(ik, board, detector, imu_state, target_yaw, distance
 
 
 def imu_turn(ik, board, imu_state, delta_deg):
-    """IMU 闭环转弯到目标角度。"""
-    target = imu_state['yaw'] + delta_deg
-    for _ in range(40):
-        update_imu(imu_state, board)
-        err_now = angle_error(imu_state['yaw'], target)
-        print('IMU转弯 yaw=%.1f target=%.1f error=%+.1f'
-              % (imu_state['yaw'], target, err_now), flush=True)
-        if abs(angle_error(imu_state['yaw'], target)) <= HEADING_TOL_DEG:
-            break
-        err = angle_error(imu_state['yaw'], target)
-        if err > 0:
-            if IMU_DIRECTION_SIGN > 0:
-                ik.turn_left(ik.initial_pos, 2, 5, TURN_SPEED, 1)
-            else:
-                ik.turn_right(ik.initial_pos, 2, 5, TURN_SPEED, 1)
+    """固定步数转弯，转完后再用 IMU 判断并只修正一次。"""
+    start_yaw = imu_state['yaw']
+    target = start_yaw + delta_deg
+    remaining = abs(int(delta_deg))
+    direction = 1 if delta_deg >= 0 else -1
+    while remaining > 0:
+        step = min(5, remaining)
+        if direction > 0:
+            ik.turn_left(ik.initial_pos, 2, step, TURN_SPEED, 1)
         else:
-            if IMU_DIRECTION_SIGN > 0:
-                ik.turn_right(ik.initial_pos, 2, 5, TURN_SPEED, 1)
-            else:
-                ik.turn_left(ik.initial_pos, 2, 5, TURN_SPEED, 1)
+            ik.turn_right(ik.initial_pos, 2, step, TURN_SPEED, 1)
+        remaining -= step
         time.sleep(0.08)
+
+    time.sleep(0.2)
+    for _ in range(5):
+        update_imu(imu_state, board)
+        time.sleep(0.02)
+
+    err = angle_error(imu_state['yaw'], target)
+    print('转弯完成 yaw=%.1f target=%.1f error=%+.1f'
+          % (imu_state['yaw'], target, err), flush=True)
+
+    if abs(err) > HEADING_TOL_DEG:
+        step = IMU_STRAIGHT_STEP if err > 0 else -IMU_STRAIGHT_STEP
+        if step > 0:
+            ik.turn_left(ik.initial_pos, 2, abs(step), TURN_SPEED, 1)
+        else:
+            ik.turn_right(ik.initial_pos, 2, abs(step), TURN_SPEED, 1)
+        time.sleep(0.08)
+        update_imu(imu_state, board)
+        print('转弯后修正一次 yaw=%.1f' % imu_state['yaw'], flush=True)
 
 
 def do_pick(board, pick_count, pulses=None):
