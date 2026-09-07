@@ -49,14 +49,15 @@ MOVE_SPEED = 50      # 六足直线前进/后退的速度，越大走得越快
 TURN_SPEED = 30      # 六足左转/右转的速度，越大转得越快
 GYRO_SCALE_LEFT = 1.088   # IMU 左转时陀螺仪积分修正比例
 GYRO_SCALE_RIGHT = 1.0  # IMU 右转时陀螺仪积分修正比例
-HEADING_TOL_DEG = 2.0    # 航向误差容忍范围，单位：度；越小越严格
+HEADING_TOL_DEG = 1.0    # 航向误差容忍范围，单位：度；越小越严格
+IMU_STRAIGHT_STEP = 2    # 直线阶段 IMU 每次修正的角度
 COLOR_CENTER_TOL = 3.0   # 色块中心允许偏差，单位：像素；偏差小于该值不调整
 COLOR_CORRECT_MM = 7     # 颜色左右微调每次移动的距离，单位：毫米
 COLOR_MIN_RADIUS = 0     # 色块半径小于该值时暂不进行颜色微调
 COLOR_DIRECTION_SIGN = 1  # 颜色修正方向：1=默认，-1=左右指令反向后使用
 LOW_VOLTAGE = 11.2         # 电压低于该值时，第一次夹取前补距离
 EXTRA_MM = 50              # 低电压时第一次夹取前多走的距离，单位毫米
-ENABLE_IMU_STRAIGHT = False  # 直线阶段是否启用 IMU 航向修正
+ENABLE_IMU_STRAIGHT = True  # 直线阶段是否启用 IMU 航向修正
 camera_lock = threading.Lock()
 
 
@@ -336,9 +337,9 @@ def move_straight_imu_color(ik, board, detector, imu_state, target_yaw, distance
                 print('IMU yaw=%.1f target=%.1f error=%+.1f -> %s'
                       % (imu_state['yaw'], target_yaw, err, action), flush=True)
                 if err > 0:
-                    ik.turn_left(ik.initial_pos, 2, 1, TURN_SPEED, 1)
+                    ik.turn_left(ik.initial_pos, 2, IMU_STRAIGHT_STEP, TURN_SPEED, 1)
                 else:
-                    ik.turn_right(ik.initial_pos, 2, 1, TURN_SPEED, 1)
+                    ik.turn_right(ik.initial_pos, 2, IMU_STRAIGHT_STEP, TURN_SPEED, 1)
                 time.sleep(0.05)
         if color_enabled:
             color_keep_center(ik, board, detector, tilt, color_state)
