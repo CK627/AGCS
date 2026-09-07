@@ -226,21 +226,23 @@ def read_gz(board):
         return None
 
 
-def read_battery_mv(board):
-    """读取电池电压，返回毫伏；失败返回 None。"""
+def read_battery_running(board, samples=30, interval=0.05):
+    """实时连续采样电池电压，返回 (中位数毫伏, 平均值毫伏)。"""
     vals = []
-    for _ in range(20):
+    for _ in range(samples):
         try:
             v = board.get_battery()
             if v is not None:
                 vals.append(int(v))
         except Exception:
             pass
-        time.sleep(0.01)
+        time.sleep(interval)
     if not vals:
-        return None
+        return None, None
     vals.sort()
-    return vals[len(vals) // 2]
+    median = vals[len(vals) // 2]
+    avg = sum(vals) / len(vals)
+    return median, avg
 
 
 def init_imu(board):
@@ -494,11 +496,11 @@ def main():
             pick_count += 1
             print('%d/%d pick%d' % (i, len(actions), pick_count), flush=True)
             if pick_count == 1 and not extra_applied:
-                battery_mv = read_battery_mv(board)
-                if battery_mv is not None:
-                    voltage = battery_mv / 1000.0
-                    print('第一次夹取前电压: %.2fV' % voltage, flush=True)
-                    if voltage < LOW_VOLTAGE:
+                battery_median, battery_avg = read_battery_running(board)
+                if battery_median is not None:
+                    print('实时电压: 中位数 %.2fV, 平均 %.2fV'
+                          % (battery_median / 1000.0, battery_avg / 1000.0), flush=True)
+                    if battery_median < LOW_VOLTAGE * 1000:
                         print('电压低于 %.1fV，额外前进 %dmm' % (LOW_VOLTAGE, EXTRA_MM), flush=True)
                         ik.go_forward(ik.initial_pos, 2, EXTRA_MM, MOVE_SPEED, 1)
                     else:
