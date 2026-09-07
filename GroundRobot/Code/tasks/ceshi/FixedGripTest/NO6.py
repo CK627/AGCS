@@ -60,7 +60,9 @@ COLOR_DIRECTION_SIGN = 1  # 颜色修正方向：1=默认，-1=左右指令反�
 IMU_DIRECTION_SIGN = 1    # IMU 转向方向：1=默认，-1=左右指令反向后使用
 LOW_VOLTAGE = 11.3         # 电压低于该值时，第一次夹取前补距离
 VOLTAGE_EXTRA_K = 41.4     # 电压补偿抛物线系数
+VOLTAGE_EXTRA_MIN = 40     # 电压补偿最小距离，单位毫米
 VOLTAGE_EXTRA_MAX = 80     # 电压补偿最大距离，单位毫米
+VOLTAGE_EXTRA_LOW_V = 10.0  # 补偿达到最大距离时对应的电压
 ENABLE_IMU_STRAIGHT = True  # 直线阶段是否启用 IMU 航向修正
 camera_lock = threading.Lock()
 
@@ -247,12 +249,13 @@ def read_battery_running(board, samples=30, interval=0.05):
 
 
 def extra_distance_mm(voltage):
-    """电压越低，补偿距离按抛物线增加。"""
+    """电压从 11.3V 到 10.0V，补偿距离从 40mm 线性增加到 80mm。"""
     if voltage >= LOW_VOLTAGE:
         return 0
-    diff = LOW_VOLTAGE - voltage
-    raw = int(VOLTAGE_EXTRA_K * diff * diff)
-    return max(0, min(VOLTAGE_EXTRA_MAX, raw))
+    if voltage <= VOLTAGE_EXTRA_LOW_V:
+        return VOLTAGE_EXTRA_MAX
+    ratio = (LOW_VOLTAGE - voltage) / (LOW_VOLTAGE - VOLTAGE_EXTRA_LOW_V)
+    return int(VOLTAGE_EXTRA_MIN + (VOLTAGE_EXTRA_MAX - VOLTAGE_EXTRA_MIN) * ratio)
 
 
 def init_imu(board):
