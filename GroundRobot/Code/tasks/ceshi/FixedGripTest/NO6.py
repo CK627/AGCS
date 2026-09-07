@@ -438,6 +438,7 @@ def main():
 
         if pending_forward:
             print('%d/%d 直行 %dmm' % (i, len(actions), pending_forward), flush=True)
+            target_yaw = imu_state['yaw']
             segment_color = color_enabled and not (23 <= i <= 53)
             if color_enabled and not segment_color:
                 print('当前步数 %d 在 23-53，暂停颜色微调' % i, flush=True)
@@ -495,6 +496,7 @@ def main():
             ik.stand(ik.initial_pos, t=500)
 
     if pending_forward:
+        target_yaw = imu_state['yaw']
         segment_color = color_enabled and not (23 <= len(actions) <= 53)
         move_straight_imu_color(
             ik, board, detector, imu_state, target_yaw, pending_forward, tilt, segment_color, color_state)
