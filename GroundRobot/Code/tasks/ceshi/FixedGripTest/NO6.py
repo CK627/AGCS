@@ -50,6 +50,8 @@ TURN_SPEED = 30      # 六足左转/右转的速度，越大转得越快
 GYRO_SCALE_LEFT = 1.088   # IMU 左转时陀螺仪积分修正比例
 GYRO_SCALE_RIGHT = 1.0  # IMU 右转时陀螺仪积分修正比例
 HEADING_TOL_DEG = 1.0    # 航向误差容忍范围，单位：度；越小越严格
+LEFT_TURN_TOL_DEG = 1.0  # 直线阶段允许左偏多少才左转
+RIGHT_TURN_TOL_DEG = 8.0 # 直线阶段允许右偏多少才右转
 IMU_STRAIGHT_STEP = 5    # 直线阶段 IMU 每次修正的角度
 COLOR_CENTER_TOL = 3.0   # 色块中心允许偏差，单位：像素；偏差小于该值不调整
 COLOR_CORRECT_MM = 7     # 颜色左右微调每次移动的距离，单位：毫米
@@ -332,13 +334,16 @@ def move_straight_imu_color(ik, board, detector, imu_state, target_yaw, distance
         if ENABLE_IMU_STRAIGHT:
             for _ in range(5):
                 update_imu(imu_state, board)
-                if abs(angle_error(imu_state['yaw'], target_yaw)) <= HEADING_TOL_DEG:
-                    break
                 err = angle_error(imu_state['yaw'], target_yaw)
-                action = '左转%d°' % IMU_STRAIGHT_STEP if err > 0 else '右转%d°' % IMU_STRAIGHT_STEP
+                if err > LEFT_TURN_TOL_DEG:
+                    action = '左转%d°' % IMU_STRAIGHT_STEP
+                elif err < -RIGHT_TURN_TOL_DEG:
+                    action = '右转%d°' % IMU_STRAIGHT_STEP
+                else:
+                    break
                 print('IMU yaw=%.1f target=%.1f error=%+.1f -> %s'
                       % (imu_state['yaw'], target_yaw, err, action), flush=True)
-                if err > 0:
+                if err > LEFT_TURN_TOL_DEG:
                     ik.turn_left(ik.initial_pos, 2, IMU_STRAIGHT_STEP, TURN_SPEED, 1)
                 else:
                     ik.turn_right(ik.initial_pos, 2, IMU_STRAIGHT_STEP, TURN_SPEED, 1)
