@@ -56,6 +56,7 @@ COLOR_MIN_RADIUS = 0     # 色块半径小于该值时暂不进行颜色微调
 COLOR_DIRECTION_SIGN = 1  # 颜色修正方向：1=默认，-1=左右指令反向后使用
 LOW_VOLTAGE = 11.2         # 电压低于该值时，第一次夹取前补距离
 EXTRA_MM = 50              # 低电压时第一次夹取前多走的距离，单位毫米
+ENABLE_IMU_STRAIGHT = False  # 直线阶段是否启用 IMU 航向修正
 camera_lock = threading.Lock()
 
 
@@ -327,17 +328,18 @@ def move_straight_imu_color(ik, board, detector, imu_state, target_yaw, distance
     remaining = abs(int(distance_mm))
     forward = distance_mm >= 0
     while remaining > 0:
-        update_imu(imu_state, board)
-        if abs(angle_error(imu_state['yaw'], target_yaw)) > HEADING_TOL_DEG:
-            err = angle_error(imu_state['yaw'], target_yaw)
-            action = '左转1°' if err > 0 else '右转1°'
-            print('IMU yaw=%.1f target=%.1f error=%+.1f -> %s'
-                  % (imu_state['yaw'], target_yaw, err, action), flush=True)
-            if err > 0:
-                ik.turn_left(ik.initial_pos, 2, 1, TURN_SPEED, 1)
-            else:
-                ik.turn_right(ik.initial_pos, 2, 1, TURN_SPEED, 1)
-            time.sleep(0.05)
+        if ENABLE_IMU_STRAIGHT:
+            update_imu(imu_state, board)
+            if abs(angle_error(imu_state['yaw'], target_yaw)) > HEADING_TOL_DEG:
+                err = angle_error(imu_state['yaw'], target_yaw)
+                action = '左转1°' if err > 0 else '右转1°'
+                print('IMU yaw=%.1f target=%.1f error=%+.1f -> %s'
+                      % (imu_state['yaw'], target_yaw, err, action), flush=True)
+                if err > 0:
+                    ik.turn_left(ik.initial_pos, 2, 1, TURN_SPEED, 1)
+                else:
+                    ik.turn_right(ik.initial_pos, 2, 1, TURN_SPEED, 1)
+                time.sleep(0.05)
         if color_enabled:
             color_keep_center(ik, board, detector, tilt, color_state)
         move = min(100, remaining)
