@@ -282,15 +282,15 @@ def color_keep_center(ik, board, detector, tilt, color_state):
         board.bus_servo_set_position(0.2, [[24, tilt['pulse']]])
         time.sleep(0.2)
         print('24 号下移微调 -> %d' % tilt['pulse'], flush=True)
-        return
+        return False
     cx = det.get('bbox_center_x', det['center'][0])
     if det.get('radius', 0) < COLOR_MIN_RADIUS:
         print('目标较远，暂不做颜色微调，依赖 IMU 保持航向', flush=True)
-        return
+        return False
     if color_state['ref_cx'] is None:
         color_state['ref_cx'] = cx
         print('设置颜色参考中心 cx=%.1f' % cx, flush=True)
-        return
+        return True
     offset = cx - color_state['ref_cx']
     if offset > 0:
         direction = '右'
@@ -300,7 +300,7 @@ def color_keep_center(ik, board, detector, tilt, color_state):
         direction = '中'
     print('检测到色块 cx=%.1f offset=%+.1f %s' % (cx, offset, direction), flush=True)
     if abs(offset) <= COLOR_CENTER_TOL:
-        return
+        return False
     if offset > 0:
         if COLOR_DIRECTION_SIGN > 0:
             ik.right_move(ik.initial_pos, 2, COLOR_CORRECT_MM, MOVE_SPEED, 1)
@@ -316,6 +316,7 @@ def color_keep_center(ik, board, detector, tilt, color_state):
             ik.right_move(ik.initial_pos, 2, COLOR_CORRECT_MM, MOVE_SPEED, 1)
             print('色块左偏，机械足右移 %dmm（方向反向）' % COLOR_CORRECT_MM, flush=True)
     time.sleep(0.05)
+    return True
 
 
 def move_one_chunk(ik, move, forward):
@@ -331,7 +332,12 @@ def move_straight_imu_color(ik, board, detector, imu_state, target_yaw, distance
     remaining = abs(int(distance_mm))
     forward = distance_mm >= 0
     while remaining > 0:
-        if ENABLE_IMU_STRAIGHT:
+        color_adjusted = False
+        if color_enabled:
+            color_adjusted = color_keep_center(ik, board, detector, tilt, color_state)
+            if color_adjusted:
+                target_yaw = imu_state['yaw']
+        if not color_adjusted and ENABLE_IMU_STRAIGHT:
             for _ in range(1):
                 update_imu(imu_state, board)
                 err = angle_error(imu_state['yaw'], target_yaw)
@@ -349,9 +355,6 @@ def move_straight_imu_color(ik, board, detector, imu_state, target_yaw, distance
                     ik.turn_right(ik.initial_pos, 2, IMU_STRAIGHT_STEP, TURN_SPEED, 1)
                 time.sleep(0.05)
                 target_yaw = imu_state['yaw']
-        if color_enabled:
-            color_keep_center(ik, board, detector, tilt, color_state)
-            target_yaw = imu_state['yaw']
         move = min(100, remaining)
         move_one_chunk(ik, move, forward)
         remaining -= move
