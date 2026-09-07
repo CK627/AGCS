@@ -59,7 +59,7 @@ COLOR_MIN_RADIUS = 0     # 色块半径小于该值时暂不进行颜色微调
 COLOR_DIRECTION_SIGN = 1  # 颜色修正方向：1=默认，-1=左右指令反向后使用
 IMU_DIRECTION_SIGN = 1    # IMU 转向方向：1=默认，-1=左右指令反向后使用
 LOW_VOLTAGE = 11.3         # 电压低于该值时，第一次夹取前补距离
-EXTRA_MM = 50              # 低电压时第一次夹取前多走的距离，单位毫米
+EXTRA_MM = 70              # 低电压时第一次夹取前多走的距离，单位毫米
 ENABLE_IMU_STRAIGHT = True  # 直线阶段是否启用 IMU 航向修正
 camera_lock = threading.Lock()
 
