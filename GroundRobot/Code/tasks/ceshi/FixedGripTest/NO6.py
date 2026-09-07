@@ -330,6 +330,9 @@ def move_straight_imu_color(ik, board, detector, imu_state, target_yaw, distance
         update_imu(imu_state, board)
         if abs(angle_error(imu_state['yaw'], target_yaw)) > HEADING_TOL_DEG:
             err = angle_error(imu_state['yaw'], target_yaw)
+            action = '左转1°' if err > 0 else '右转1°'
+            print('IMU yaw=%.1f target=%.1f error=%+.1f -> %s'
+                  % (imu_state['yaw'], target_yaw, err, action), flush=True)
             if err > 0:
                 ik.turn_left(ik.initial_pos, 2, 1, TURN_SPEED, 1)
             else:
@@ -348,6 +351,9 @@ def imu_turn(ik, board, imu_state, delta_deg):
     target = imu_state['yaw'] + delta_deg
     for _ in range(40):
         update_imu(imu_state, board)
+        err_now = angle_error(imu_state['yaw'], target)
+        print('IMU转弯 yaw=%.1f target=%.1f error=%+.1f'
+              % (imu_state['yaw'], target, err_now), flush=True)
         if abs(angle_error(imu_state['yaw'], target)) <= HEADING_TOL_DEG:
             break
         err = angle_error(imu_state['yaw'], target)
