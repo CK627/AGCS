@@ -332,7 +332,7 @@ def move_straight_imu_color(ik, board, detector, imu_state, target_yaw, distance
     forward = distance_mm >= 0
     while remaining > 0:
         if ENABLE_IMU_STRAIGHT:
-            for _ in range(5):
+            for _ in range(1):
                 update_imu(imu_state, board)
                 err = angle_error(imu_state['yaw'], target_yaw)
                 if err > LEFT_TURN_TOL_DEG:
