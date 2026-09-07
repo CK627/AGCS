@@ -62,7 +62,7 @@ LOW_VOLTAGE = 11.3         # 电压低于该值时，第一次夹取前补距离
 VOLTAGE_EXTRA_K = 41.4     # 电压补偿抛物线系数
 VOLTAGE_EXTRA_MIN = 40     # 电压补偿最小距离，单位毫米
 VOLTAGE_EXTRA_MAX = 80     # 电压补偿最大距离，单位毫米
-VOLTAGE_EXTRA_LOW_V = 10.0  # 补偿达到最大距离时对应的电压
+VOLTAGE_EXTRA_LOW_V = 10.3  # 补偿达到最大距离时对应的电压
 ENABLE_IMU_STRAIGHT = True  # 直线阶段是否启用 IMU 航向修正
 camera_lock = threading.Lock()
 
