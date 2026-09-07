@@ -348,8 +348,10 @@ def move_straight_imu_color(ik, board, detector, imu_state, target_yaw, distance
                 else:
                     ik.turn_right(ik.initial_pos, 2, IMU_STRAIGHT_STEP, TURN_SPEED, 1)
                 time.sleep(0.05)
+                target_yaw = imu_state['yaw']
         if color_enabled:
             color_keep_center(ik, board, detector, tilt, color_state)
+            target_yaw = imu_state['yaw']
         move = min(100, remaining)
         move_one_chunk(ik, move, forward)
         remaining -= move
