@@ -43,7 +43,7 @@ ROUTE_PATH = os.path.join(
 
 OFFICIAL_ARM = {21: 500, 22: 705, 23: 90, 24: 330}  # 机械臂官方初始脉宽
 
-GRIPPER_CLOSE = 700  # 夹取时 25 号夹爪闭合的脉宽，越大夹得越紧
+GRIPPER_CLOSE = 650  # 夹取时 25 号夹爪闭合的脉宽，越大夹得越紧
 GRIPPER_OPEN = 400   # 放下时 25 号夹爪打开的脉宽，越小张得越开
 MOVE_SPEED = 50      # 六足直线前进/后退的速度，越大走得越快
 TURN_SPEED = 30      # 六足左转/右转的速度，越大转得越快
