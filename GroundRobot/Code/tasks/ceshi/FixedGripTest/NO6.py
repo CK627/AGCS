@@ -58,7 +58,7 @@ COLOR_CORRECT_MM = 7     # 颜色左右微调每次移动的距离，单位：�
 COLOR_MIN_RADIUS = 0     # 色块半径小于该值时暂不进行颜色微调
 COLOR_DIRECTION_SIGN = 1  # 颜色修正方向：1=默认，-1=左右指令反向后使用
 IMU_DIRECTION_SIGN = -1    # IMU 转向方向：1=默认，-1=左右指令反向后使用
-LOW_VOLTAGE = 11.2         # 电压低于该值时，第一次夹取前补距离
+LOW_VOLTAGE = 11.3         # 电压低于该值时，第一次夹取前补距离
 EXTRA_MM = 50              # 低电压时第一次夹取前多走的距离，单位毫米
 ENABLE_IMU_STRAIGHT = True  # 直线阶段是否启用 IMU 航向修正
 camera_lock = threading.Lock()
@@ -338,18 +338,18 @@ def move_straight_imu_color(ik, board, detector, imu_state, target_yaw, distance
             color_adjusted = color_keep_center(ik, board, detector, tilt, color_state)
             if color_adjusted:
                 target_yaw = imu_state['yaw']
+        update_imu(imu_state, board)
+        err = angle_error(imu_state['yaw'], target_yaw)
+        print('IMU yaw=%.1f target=%.1f error=%+.1f' % (imu_state['yaw'], target_yaw, err), flush=True)
         if not color_adjusted and ENABLE_IMU_STRAIGHT:
-            for _ in range(1):
-                update_imu(imu_state, board)
-                err = angle_error(imu_state['yaw'], target_yaw)
-                if err > LEFT_TURN_TOL_DEG:
-                    action = ('左转%d°' if IMU_DIRECTION_SIGN > 0 else '右转%d°') % IMU_STRAIGHT_STEP
-                elif err < -RIGHT_TURN_TOL_DEG:
-                    action = ('右转%d°' if IMU_DIRECTION_SIGN > 0 else '左转%d°') % IMU_STRAIGHT_STEP
-                else:
-                    break
-                print('IMU yaw=%.1f target=%.1f error=%+.1f -> %s'
-                      % (imu_state['yaw'], target_yaw, err, action), flush=True)
+            if err > LEFT_TURN_TOL_DEG:
+                action = ('左转%d°' if IMU_DIRECTION_SIGN > 0 else '右转%d°') % IMU_STRAIGHT_STEP
+            elif err < -RIGHT_TURN_TOL_DEG:
+                action = ('右转%d°' if IMU_DIRECTION_SIGN > 0 else '左转%d°') % IMU_STRAIGHT_STEP
+            else:
+                action = None
+            if action:
+                print('IMU 修正 -> %s' % action, flush=True)
                 if err > LEFT_TURN_TOL_DEG:
                     if IMU_DIRECTION_SIGN > 0:
                         ik.turn_left(ik.initial_pos, 2, IMU_STRAIGHT_STEP, TURN_SPEED, 1)
