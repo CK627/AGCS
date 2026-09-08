@@ -542,7 +542,6 @@ def main():
         elif name == 'place':
             place_count += 1
             print('%d/%d place%d' % (i, len(actions), place_count), flush=True)
-            apply_voltage_compensation(board, ik)
             pulses = {int(k): int(v) for k, v in act.get('pulses', {}).items()} if act.get('pulses') else None
             do_place(board, place_count, pulses)
             if place_count == 1:
