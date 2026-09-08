@@ -258,6 +258,23 @@ def extra_distance_mm(voltage):
     return int(VOLTAGE_EXTRA_MIN + (VOLTAGE_EXTRA_MAX - VOLTAGE_EXTRA_MIN) * ratio)
 
 
+def apply_voltage_compensation(board, ik):
+    """夹取/放下前读取实时电压，需要时额外前进补偿距离。"""
+    median_mv, avg_mv = read_battery_running(board)
+    if median_mv is None:
+        print('无法读取电压，跳过电压补偿', flush=True)
+        return
+    voltage = median_mv / 1000.0
+    extra_mm = extra_distance_mm(voltage)
+    print('实时电压: 中位数 %.2fV, 平均 %.2fV'
+          % (voltage, avg_mv / 1000.0), flush=True)
+    if extra_mm > 0:
+        print('电压补偿：额外前进 %dmm' % extra_mm, flush=True)
+        ik.go_forward(ik.initial_pos, 2, extra_mm, MOVE_SPEED, 1)
+    else:
+        print('电压正常，不额外前进', flush=True)
+
+
 def init_imu(board):
     """初始化 IMU：开启接收，标定 gz 零漂。"""
     board.enable_reception()
@@ -519,23 +536,13 @@ def main():
         elif name == 'pick':
             pick_count += 1
             print('%d/%d pick%d' % (i, len(actions), pick_count), flush=True)
-            if pick_count == 1 and not extra_applied:
-                battery_median, battery_avg = read_battery_running(board)
-                if battery_median is not None:
-                    print('实时电压: 中位数 %.2fV, 平均 %.2fV'
-                          % (battery_median / 1000.0, battery_avg / 1000.0), flush=True)
-                    extra_mm = extra_distance_mm(battery_median / 1000.0)
-                    if extra_mm > 0:
-                        print('电压补偿：额外前进 %dmm' % extra_mm, flush=True)
-                        ik.go_forward(ik.initial_pos, 2, extra_mm, MOVE_SPEED, 1)
-                    else:
-                        print('电压正常，不额外前进', flush=True)
-                extra_applied = True
+            apply_voltage_compensation(board, ik)
             pulses = {int(k): int(v) for k, v in act.get('pulses', {}).items()} if act.get('pulses') else None
             do_pick(board, pick_count, pulses)
         elif name == 'place':
             place_count += 1
             print('%d/%d place%d' % (i, len(actions), place_count), flush=True)
+            apply_voltage_compensation(board, ik)
             pulses = {int(k): int(v) for k, v in act.get('pulses', {}).items()} if act.get('pulses') else None
             do_place(board, place_count, pulses)
             if place_count == 1:
