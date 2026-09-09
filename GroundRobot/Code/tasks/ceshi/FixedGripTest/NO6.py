@@ -499,6 +499,7 @@ def main():
     first_place_done = False
     turns_after_first_place = 0
     color_state = {'ref_cx': None}
+    left_turn_compensated = False
 
     for i, act in enumerate(actions, 1):
         name = act.get('action')
@@ -521,6 +522,7 @@ def main():
             move_straight_imu_color(
                 ik, board, detector, imu_state, target_yaw, pending_forward, tilt, segment_color, color_state)
             pending_forward = 0
+            left_turn_compensated = False
 
         if name == 'turn_left':
             if first_place_done:
@@ -529,9 +531,10 @@ def main():
                     color_enabled = True
                     color_state['ref_cx'] = None
             angle = int(act.get('angle', 90))
-            if is_low_voltage(board):
+            if is_low_voltage(board) and not left_turn_compensated:
                 angle += 5
                 print('低电压左转补偿：额外多转 5°', flush=True)
+                left_turn_compensated = True
             print('%d/%d IMU左转 %d' % (i, len(actions), angle), flush=True)
             imu_turn(ik, board, imu_state, angle)
             target_yaw = imu_state['yaw']
