@@ -275,6 +275,12 @@ def apply_voltage_compensation(board, ik):
         print('电压正常，不额外前进', flush=True)
 
 
+def is_low_voltage(board):
+    """快速判断当前电压是否低于阈值。"""
+    median_mv, _ = read_battery_running(board, samples=10, interval=0.02)
+    return median_mv is not None and median_mv / 1000.0 < LOW_VOLTAGE
+
+
 def init_imu(board):
     """初始化 IMU：开启接收，标定 gz 零漂。"""
     board.enable_reception()
@@ -505,6 +511,9 @@ def main():
 
         if pending_forward:
             print('%d/%d 直行 %dmm' % (i, len(actions), pending_forward), flush=True)
+            if pending_forward < 0 and is_low_voltage(board):
+                pending_forward -= 10
+                print('低电压后退补偿：额外多退 10mm', flush=True)
             target_yaw = imu_state['yaw']
             segment_color = color_enabled and not (23 <= i <= 53)
             if color_enabled and not segment_color:
@@ -520,6 +529,9 @@ def main():
                     color_enabled = True
                     color_state['ref_cx'] = None
             angle = int(act.get('angle', 90))
+            if is_low_voltage(board):
+                angle += 5
+                print('低电压左转补偿：额外多转 5°', flush=True)
             print('%d/%d IMU左转 %d' % (i, len(actions), angle), flush=True)
             imu_turn(ik, board, imu_state, angle)
             target_yaw = imu_state['yaw']
@@ -553,6 +565,9 @@ def main():
             ik.stand(ik.initial_pos, t=500)
 
     if pending_forward:
+        if pending_forward < 0 and is_low_voltage(board):
+            pending_forward -= 10
+            print('低电压后退补偿：额外多退 10mm', flush=True)
         target_yaw = imu_state['yaw']
         segment_color = color_enabled and not (23 <= len(actions) <= 53)
         move_straight_imu_color(
