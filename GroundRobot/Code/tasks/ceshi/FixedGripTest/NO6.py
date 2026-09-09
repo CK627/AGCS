@@ -253,7 +253,7 @@ def extra_distance_mm(voltage):
         return 0
     if voltage <= VOLTAGE_EXTRA_LOW_V:
         return VOLTAGE_EXTRA_MAX
-    ratio = (LOW_VOLTAGE - voltage) / (LOW_VOLTAGE - VOLTAGE_EXTRA_LOW_V)
+    ratio = (LOW_VOLTAGE - voltage) / (LOW_VOLTAGE - VOLTAGE_EXTRA_LOW_V) * 0.75
     return int(VOLTAGE_EXTRA_MIN + (VOLTAGE_EXTRA_MAX - VOLTAGE_EXTRA_MIN) * ratio)
 
 
