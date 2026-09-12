@@ -22,3 +22,6 @@ from agcs_lib.vision import (
 )
 from agcs_lib.orientation import block_orientation, orientation_error
 from agcs_lib.ClampRemoval import fixed_clamp, clamp_removal
+from agcs_lib.depth import DepthCamera, DepthCameraError
+from agcs_lib.pcl import icp_plane, compute_normals, register_sequence, voxel_downsample, apply_transform
+from agcs_lib.marker import MarkerDetector
