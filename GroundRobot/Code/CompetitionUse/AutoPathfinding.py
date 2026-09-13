@@ -1,9 +1,11 @@
 #!/usr/bin/python3
 # coding=utf8
-"""比赛步骤 2.2 自动寻路：扫描找目标 → 转身对准 → 小步前进逼近 → 深度判距到位。
+"""比赛步骤 2.2 自动寻路：平滑扫描找目标 → 连续追踪线程居中 → 转身对准 → 小步逼近 → 深度判距到位。
 
 完全独立：只 import 标准库 + pip 库（cv2/numpy/flask）+ 官方 SDK（common）。
-不依赖 agcs_lib。深度走 OpenNI2、彩色走 /dev/video0。
+不依赖 agcs_lib。深度走 OpenNI2、彩色走 /dev/video0。无避障。
+
+上报 status：state / position_m / heading_deg / last_result / message。
 
 用法（先 sudo systemctl stop spiderpi）：
     cd /home/pi/spiderpi/CompetitionUse
@@ -31,22 +33,30 @@ LAB = {
     'blue':   {'min': (97, 122, 50), 'max': (255, 153, 104)},
 }
 
-# ---- 扫描参数（相机斜向下，24号越小越朝下，这里扫「朝下→朝前」一段）----
+# ---- 扫描参数 ----
 PAN_PULSES = [0, 200, 400, 600, 800, 1000]     # 21 号水平扫描档位
-TILT_PULSES = [100, 180, 260, 340, 420, 500]   # 24 号俯仰扫描档位
-SETTLE_S = 0.3                                  # 每步到位等待
+TILT_PULSES = [100, 180, 260, 340, 420, 500]   # 24 号俯仰扫描档位（相机朝下）
+TILT_SCAN_STEP = 20      # 24 号平滑扫描步长
+PAN_SCAN_STEP = 20       # 21 号平滑扫描步长
+SCAN_MOVE_MS = 0.05      # 24 号每步移动时间
+SCAN_SETTLE_MS = 0.06    # 每步到位等待
+PAN_MOVE_MS = 0.001      # 21 号每步移动时间
+PAN_SETTLE_MS = 0.06     # 每步到位等待
 
 # ---- 追踪/逼近参数 ----
 P_GAIN = 0.1
 DEAD_X, DEAD_Y = 40, 60
 FRAME_CX, FRAME_CY = 320, 240
-PAN_BAND = 80          # 21 号偏离 500 多少算偏（转身阈值）
-PAN_TURN_DEG = 5       # 身体每次转身角度
+TRACK_INTERVAL = 0.03
+PAN_BAND = 80           # 21 号偏离 500 的转身阈值
+PAN_TURN_DEG = 5        # 身体每次转身角度
 BODY_TURN_SPEED = 80
-WALK_MM = 40           # 每步前进 mm
+WALK_MM = 40            # 每步前进 mm
 WALK_SPEED = 50
-MAX_APPROACH = 15      # 最多逼近步数
-STOP_DEPTH_CM = 25     # 深度判距停止距离 cm
+MAX_APPROACH = 12       # 最多逼近步数
+STOP_DEPTH_CM = 25      # 深度判距停止距离 cm
+CENTER_WAIT = 0.8       # 每步走后等云台重新居中的时间窗
+LOST_LIMIT = 15         # 连续丢帧超过该值才放弃逼近
 
 
 # ---------------- 颜色检测（内联）----------------
@@ -171,7 +181,7 @@ class DepthCam:
 
 # ---------------- Flask 状态/推流（内联）----------------
 STATUS = {'state': 'IDLE', 'position_m': {'x': 0.0, 'y': 0.0}, 'heading_deg': 0.0,
-          'message': ''}
+          'last_result': None, 'message': ''}
 _LATEST_JPEG = None
 _JPEG_LOCK = threading.Lock()
 
@@ -229,68 +239,299 @@ def lan_ip():
         s.close()
 
 
-# ---------------- 寻路逻辑 ----------------
-def set_cam(board, x, y):
-    board.bus_servo_set_position(0.02, [[24, int(y)], [21, int(x)]])
+# ---------------- 摄像头后台线程（连续取帧，线程安全）----------------
+class Camera:
+    def __init__(self, cap):
+        self.cap = cap
+        self.frame = None
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self):
+        while not self._stop.is_set():
+            ok, f = self.cap.read()
+            if ok:
+                with self._lock:
+                    self.frame = f
+            time.sleep(0.01)
+
+    def read(self):
+        with self._lock:
+            return self.frame
+
+    def stop(self):
+        self._stop.set()
 
 
-def read_frame(cap):
-    ok, frame = cap.read()
-    return frame if ok else None
+# ---------------- 连续追踪线程（复刻 ColorTracker 纯 P 控制）----------------
+class Tracker:
+    def __init__(self, board, detect):
+        self.board = board
+        self.detect = detect
+        self.x_dis, self.y_dis = 500, 260
+        self.latest = None
+        self.lost_frames = 0
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread = None
+
+    def _update(self, r):
+        cx, cy = r['center']
+        if abs(cx - FRAME_CX) >= DEAD_X:
+            self.x_dis += int(P_GAIN * (FRAME_CX - cx))
+            self.x_dis = max(0, min(1000, self.x_dis))
+        if abs(cy - FRAME_CY) >= DEAD_Y:
+            self.y_dis += int(P_GAIN * (FRAME_CY - cy))
+            self.y_dis = max(0, min(1000, self.y_dis))
+        self.board.bus_servo_set_position(0.02, [[24, self.y_dis], [21, self.x_dis]])
+        with self._lock:
+            self.latest = {'center': (cx, cy), 'radius': r.get('radius', 20),
+                           'area': r.get('area', 0), 'x_dis': self.x_dis, 'y_dis': self.y_dis}
+            self.lost_frames = 0
+
+    def _run(self):
+        while not self._stop.is_set():
+            r = self.detect()
+            if r is None:
+                with self._lock:
+                    self.latest = None
+                    self.lost_frames += 1
+            else:
+                self._update(r)
+            time.sleep(TRACK_INTERVAL)
+
+    def start(self):
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def get(self):
+        with self._lock:
+            return self.latest
+
+    def lost(self):
+        with self._lock:
+            return self.lost_frames
+
+    def stop(self):
+        self._stop.set()
 
 
-def search(board, cap, detect, color):
-    """扫描找目标：先复位看一眼，再 24 号上下扫 + 21 号左右扫。返回 detect 结果或 None。"""
-    set_cam(board, 500, 260)
-    time.sleep(SETTLE_S)
-    f = read_frame(cap)
-    if f is not None:
+# ---------------- 寻路主体 ----------------
+class Pathfinder:
+    def __init__(self, board, ik, cam, depth, color):
+        self.board = board
+        self.ik = ik
+        self.cam = cam
+        self.depth = depth
+        self.color = color
+        self.x_dis, self.y_dis = 500, 260
+        self.tracker = None
+
+    def set_cam(self, x, y):
+        self.x_dis = max(0, min(1000, int(x)))
+        self.y_dis = max(0, min(1000, int(y)))
+        self.board.bus_servo_set_position(0.02, [[24, self.y_dis], [21, self.x_dis]])
+
+    def detect(self):
+        f = self.cam.read()
+        if f is None:
+            return None
         publish_frame(f)
-        r = detect(f)
+        return detect_color(f, self.color)
+
+    def confirm(self, tries=4, need_hits=2):
+        """目标连续若干帧且居中才算确认，避免边缘/噪声误判。"""
+        hits, last = 0, None
+        for _ in range(tries):
+            r = self.detect()
+            if r is not None:
+                cx, cy = r['center']
+                if 200 <= cx <= 440 and 120 <= cy <= 380:
+                    hits += 1
+                    last = r
+            time.sleep(0.08)
+        return last if (last is not None and hits >= need_hits) else None
+
+    def lock_on(self, det):
+        """检测到目标后云台转向居中，再确认。"""
+        for _ in range(12):
+            cx, cy = det['center']
+            if 200 <= cx <= 440 and 120 <= cy <= 380:
+                return self.confirm()
+            self.x_dis = max(0, min(1000, int(self.x_dis + 0.2 * (320 - cx))))
+            self.y_dis = max(0, min(1000, int(self.y_dis + 0.2 * (240 - cy))))
+            self.set_cam(self.x_dis, self.y_dis)
+            time.sleep(0.05)
+            det = self.detect()
+            if det is None:
+                return None
+        return self.confirm()
+
+    def smooth_tilt(self, x, target_y):
+        """21 固定 x，24 平滑移到 target_y，途中持续检测。"""
+        self.x_dis = max(0, min(1000, int(x)))
+        self.board.bus_servo_set_position(0.05, [[21, self.x_dis]])
+        direction = 1 if target_y >= self.y_dis else -1
+        while self.y_dis != target_y:
+            nxt = self.y_dis + direction * TILT_SCAN_STEP
+            nxt = min(nxt, target_y) if direction > 0 else max(nxt, target_y)
+            self.y_dis = nxt
+            self.board.bus_servo_set_position(SCAN_MOVE_MS, [[24, self.y_dis], [21, self.x_dis]])
+            time.sleep(SCAN_MOVE_MS + SCAN_SETTLE_MS)
+            r = self.detect()
+            if r is not None:
+                cr = self.lock_on(r)
+                if cr is not None:
+                    return cr
+            if nxt == target_y:
+                break
+        return None
+
+    def smooth_pan(self, target_x):
+        """21 平滑移到 target_x，途中持续检测。"""
+        target_x = max(0, min(1000, int(target_x)))
+        direction = 1 if target_x >= self.x_dis else -1
+        while self.x_dis != target_x:
+            nxt = self.x_dis + direction * PAN_SCAN_STEP
+            nxt = min(nxt, target_x) if direction > 0 else max(nxt, target_x)
+            self.x_dis = nxt
+            self.board.bus_servo_set_position(PAN_MOVE_MS, [[21, self.x_dis]])
+            time.sleep(PAN_MOVE_MS + PAN_SETTLE_MS)
+            r = self.detect()
+            if r is not None:
+                cr = self.lock_on(r)
+                if cr is not None:
+                    return cr
+            if nxt == target_x:
+                break
+        return None
+
+    def vertical_sweep(self, x):
+        self.y_dis = TILT_PULSES[0]
+        self.board.bus_servo_set_position(0.3, [[24, self.y_dis], [21, int(x)]])
+        time.sleep(0.3)
+        for y in TILT_PULSES:
+            r = self.smooth_tilt(x, y)
+            if r is not None:
+                return r
+        return None
+
+    def search(self):
+        self.set_cam(500, 260)
+        time.sleep(0.3)
+        r = self.detect()
+        if r is not None:
+            cr = self.lock_on(r)
+            if cr is not None:
+                return cr
+
+        r = self.vertical_sweep(500)
         if r is not None:
             return r
 
-    for y in TILT_PULSES:
-        set_cam(board, 500, y)
-        time.sleep(SETTLE_S)
-        f = read_frame(cap)
-        if f is not None:
-            publish_frame(f)
-            r = detect(f)
+        for x in PAN_PULSES:
+            if x == 500:
+                continue
+            self.y_dis = TILT_PULSES[0]
+            self.board.bus_servo_set_position(0.3, [[24, self.y_dis], [21, int(x)]])
+            time.sleep(0.3)
+            r = self.smooth_pan(x)
             if r is not None:
                 return r
+            r = self.vertical_sweep(x)
+            if r is not None:
+                return r
+        return None
 
-    for x in PAN_PULSES:
-        if x == 500:
-            continue
-        set_cam(board, x, TILT_PULSES[0])
-        time.sleep(SETTLE_S)
-        for y in TILT_PULSES:
-            set_cam(board, x, y)
-            time.sleep(SETTLE_S)
-            f = read_frame(cap)
-            if f is not None:
-                publish_frame(f)
-                r = detect(f)
+    def distance_cm(self, cx, cy):
+        if self.depth is None:
+            return None
+        d = self.depth.read(100)
+        if d is None:
+            return None
+        h, w = d.shape
+        px = min(max(int(cx), 0), w - 1)
+        py = min(max(int(cy), 0), h - 1)
+        z = int(d[py, px])
+        return z / 10.0 if z > 0 else None
+
+    def approach(self, det):
+        """启动追踪线程，转身对准 + 小步前进逼近，深度判距到位。"""
+        cx, cy = det['center']
+        print('找到目标 中心=(%d,%d)' % (cx, cy))
+        self.tracker = Tracker(self.board, self.detect)
+        self.tracker.start()
+
+        # 转身对准：追踪线程让 21 跟着目标，转身体让 21 回中
+        for _ in range(MAX_APPROACH):
+            r = self.tracker.get()
+            if r is None:
+                time.sleep(0.05)
+                continue
+            dx = int(r['x_dis']) - 500
+            if abs(dx) <= PAN_BAND:
+                break
+            ang = PAN_TURN_DEG if dx > 0 else -PAN_TURN_DEG
+            (self.ik.turn_left if ang > 0 else self.ik.turn_right)(
+                self.ik.initial_pos, 2, abs(ang), BODY_TURN_SPEED, 1)
+            time.sleep(0.4)
+
+        # 逼近
+        for step in range(MAX_APPROACH):
+            deadline = time.time() + CENTER_WAIT
+            r = None
+            while time.time() < deadline:
+                r = self.tracker.get()
                 if r is not None:
-                    return r
-    return None
+                    break
+                time.sleep(0.03)
+            if r is None:
+                if self.tracker.lost() >= LOST_LIMIT:
+                    set_status(last_result='failed', message='连续丢失目标')
+                    print('连续丢失目标，放弃逼近')
+                    return None
+                continue
 
+            cx, cy = r['center']
+            dx = int(r['x_dis']) - 500
 
-def distance_cm(depth, cx, cy):
-    """深度相机读 (cx,cy) 处距离(cm)；无有效读数返回 None。"""
-    if depth is None:
+            if abs(dx) > PAN_BAND:
+                ang = PAN_TURN_DEG if dx > 0 else -PAN_TURN_DEG
+                (self.ik.turn_left if ang > 0 else self.ik.turn_right)(
+                    self.ik.initial_pos, 2, abs(ang), BODY_TURN_SPEED, 1)
+                time.sleep(0.4)
+                continue
+
+            d_cm = self.distance_cm(cx, cy)
+            wx = (cx - FRAME_CX) / 570.0 * (d_cm / 100.0) if d_cm else 0.0  # 粗略横向位置
+            pos = {'x': round(wx, 3), 'y': round(d_cm / 100.0, 3) if d_cm else 0.0}
+            heading = round(math.degrees(math.atan2(wx, d_cm / 100.0)), 1) if d_cm else 0.0
+            msg = '追踪 #%d 中心=(%d,%d) 距离=%s' % (
+                step + 1, cx, cy, ('%.1fcm' % d_cm) if d_cm is not None else '无')
+            print(msg)
+            set_status(state='NAV', position_m=pos, heading_deg=heading, message=msg)
+
+            if d_cm is not None and d_cm <= STOP_DEPTH_CM:
+                print('到位(距离 %.1fcm)' % d_cm)
+                set_status(state='DONE', last_result='done', message='寻路到位')
+                return (cx, cy)
+
+            self.ik.go_forward(self.ik.initial_pos, 2, WALK_MM, WALK_SPEED, 1)
+            time.sleep(0.05)
+
+        set_status(last_result='failed', message='逼近步数用尽')
         return None
-    d = depth.read(100)
-    if d is None:
-        return None
-    h, w = d.shape
-    px = min(max(int(cx), 0), w - 1)
-    py = min(max(int(cy), 0), h - 1)
-    z = int(d[py, px])
-    if z <= 0:
-        return None
-    return z / 10.0
+
+    def run(self):
+        set_status(state='SEARCH', message='扫描找目标')
+        det = self.search()
+        if det is None:
+            set_status(state='SEARCH', last_result='failed', message='未找到目标')
+            return None
+        return self.approach(det)
 
 
 def main():
@@ -309,6 +550,7 @@ def main():
     cap.set(cv2.CAP_PROP_AUTO_WB, 1)
     for _ in range(5):
         cap.read()
+    cam = Camera(cap)
 
     depth = None
     try:
@@ -320,79 +562,20 @@ def main():
     start_server()
     print('推流: http://%s:5000/video.mjpeg' % lan_ip(), flush=True)
 
-    # 立正
     ik.stand(ik.initial_pos, t=500)
     time.sleep(0.5)
-    set_status(state='SEARCH', message='2.2 自动寻路')
 
-    def detect(frame):
-        return detect_color(frame, args.color)
-
-    print('开始扫描找目标...')
-    det = search(board, cap, detect, args.color)
-    if det is None:
-        print('未找到目标')
-        set_status(state='SEARCH', message='未找到目标')
-        board.bus_servo_set_position(0.5, [[24, 260], [21, 500]])
-        cap.release()
-        if depth is not None:
-            depth.close()
-        return
-
-    print('找到目标，开始逼近...')
-    x_dis, y_dis = 500, 260
+    pf = Pathfinder(board, ik, cam, depth, args.color)
     try:
-        for step in range(MAX_APPROACH):
-            f = read_frame(cap)
-            if f is None:
-                continue
-            publish_frame(f)
-            r = detect(f)
-            if r is None:
-                set_status(state='SEARCH', message='追踪中 未发现目标')
-                time.sleep(0.05)
-                continue
-            cx, cy = r['center']
-
-            # 云台追踪：把目标居中
-            if abs(cx - FRAME_CX) >= DEAD_X:
-                x_dis += int(P_GAIN * (FRAME_CX - cx))
-                x_dis = max(0, min(1000, x_dis))
-            if abs(cy - FRAME_CY) >= DEAD_Y:
-                y_dis += int(P_GAIN * (FRAME_CY - cy))
-                y_dis = max(0, min(1000, y_dis))
-            set_cam(board, x_dis, y_dis)
-
-            # 转身对准：21 号偏离 500 就转身体，把云台拉回朝前
-            dx = x_dis - 500
-            if abs(dx) > PAN_BAND:
-                ang = PAN_TURN_DEG if dx > 0 else -PAN_TURN_DEG
-                (ik.turn_left if ang > 0 else ik.turn_right)(ik.initial_pos, 2, abs(ang),
-                                                             BODY_TURN_SPEED, 1)
-                time.sleep(0.4)
-                continue
-
-            # 判距到位
-            d_cm = distance_cm(depth, cx, cy)
-            msg = '追踪 #%d 中心=(%d,%d) 距离=%s' % (step + 1, cx, cy,
-                                                    ('%.1fcm' % d_cm) if d_cm is not None else '无')
-            print(msg)
-            set_status(state='SEARCH', message=msg)
-            if d_cm is not None and d_cm <= STOP_DEPTH_CM:
-                print('到位(距离 %.1fcm <= %.1fcm)' % (d_cm, STOP_DEPTH_CM))
-                set_status(state='DONE', message='寻路到位')
-                break
-
-            # 前进一小步
-            ik.go_forward(ik.initial_pos, 2, WALK_MM, WALK_SPEED, 1)
-            time.sleep(0.1)
-        else:
-            set_status(state='SEARCH', message='逼近步数用尽')
+        pf.run()
     except KeyboardInterrupt:
         pass
     finally:
+        if pf.tracker is not None:
+            pf.tracker.stop()
         board.bus_servo_set_position(0.5, [[24, 260], [21, 500]])
         ik.stand(ik.initial_pos, t=500)
+        cam.stop()
         cap.release()
         if depth is not None:
             depth.close()
