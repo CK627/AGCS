@@ -55,9 +55,7 @@ def main():
         task_server.set_status(state='TRACKING', message='2.1 视觉追踪，目标颜色=%s' % args.color)
 
     from agcs_lib.tracker import ColorTracker
-    from agcs_lib.sensors import show_status
 
-    show_status(rt.display, 1)
     tracker = ColorTracker(rt.board, rt.detect)
     tracker.start()
 
@@ -80,7 +78,6 @@ def main():
         tracker.stop()
         _common.reset_gimbal(rt.board)
         _common.close_runtime(rt)
-        show_status(rt.display, 0)
         if task_server is not None:
             task_server.set_status(state='IDLE', message='追踪结束')
 
