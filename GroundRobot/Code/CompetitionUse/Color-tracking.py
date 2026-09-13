@@ -1,13 +1,13 @@
 #!/usr/bin/python3
 # coding=utf8
-"""比赛步骤 2.1 视觉追踪（固定追踪黄色）：云台 PID 跟随黄色块，回传地面站。
+"""比赛步骤 2.1 视觉追踪：云台 PID 跟随色块，回传地面站。
 
 启动 task_server（5000 端口），带标注画面推给地面站 /video.mjpeg，
 仪表盘状态设为 TRACKING（中枢轮询 /status 判定；2.1 是人工勾选）。
 
 用法（先 sudo systemctl stop spiderpi）：
     cd /home/pi/spiderpi/CompetitionUse
-    python3 Color-tracking.py
+    python3 Color-tracking.py --color yellow
 """
 import os
 import sys
@@ -33,9 +33,10 @@ except ImportError:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='2.1 视觉追踪（固定黄色）')
+    parser = argparse.ArgumentParser(description='2.1 视觉追踪')
+    parser.add_argument('--color', default='yellow',
+                        choices=['red', 'green', 'blue', 'yellow'])
     args = parser.parse_args()
-    args.color = 'yellow'  # 固定追踪黄色
 
     logger = setup_logger('competition_track')
     logger.info('视觉追踪启动：color=%s', args.color)
