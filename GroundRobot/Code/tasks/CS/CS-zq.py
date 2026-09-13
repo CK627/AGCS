@@ -32,12 +32,12 @@ def main():
     parser.add_argument('--min-area', type=int, default=50)
     args = parser.parse_args()
 
-    logger = setup_logger('CS-zq')
+    logger = setup_logger()
     logger.info('[CS-zq] %s', action_msg('启动夹取单测', action='color=%s' % args.color))
 
     board = make_board()
     ik = make_ik(board)
-    ak = make_arm_ik(board)
+    ak = make_arm_ik()
     params = load_params()
     rotate = params['vision'].get('camera_rotate', 0)
     lab = load_lab_data()

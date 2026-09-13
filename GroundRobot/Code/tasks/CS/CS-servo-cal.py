@@ -48,11 +48,11 @@ def main():
     parser.add_argument('--out', default=None)
     args = parser.parse_args()
 
-    logger = setup_logger('CS-servo-cal')
+    logger = setup_logger()
     logger.info('[CS-servo-cal] %s', action_msg('启动标定', action='color=%s %d-%d' % (args.color, args.start, args.end)))
 
     board = make_board()
-    ak = make_arm_ik(board)
+    ak = make_arm_ik()
     params = load_params()
     rotate = params['vision'].get('camera_rotate', 0)
     lab = load_lab_data()
