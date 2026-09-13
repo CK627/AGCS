@@ -12,6 +12,7 @@
 import os
 import sys
 import time
+import math
 import argparse
 
 _PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -58,6 +59,7 @@ def main():
 
     tracker = ColorTracker(rt.board, rt.detect)
     tracker.start()
+    depth_cam = rt.depth  # 可能为 None（深度相机初始化失败时）
 
     logger.info('追踪开始（Ctrl+C 退出）')
     try:
@@ -66,12 +68,30 @@ def main():
             if task_server is not None:
                 if latest is not None:
                     cx, cy = latest['center']
+                    pos = {'x': 0.0, 'y': 0.0}
+                    heading = 0.0
+                    # 深度测色块 3D 位置 → 位置(x,y 米) + 朝向(方位角度)
+                    if depth_cam is not None:
+                        d = depth_cam.read_depth(timeout_ms=200)
+                        if d is not None:
+                            h, w = d.shape
+                            px = min(max(int(cx), 0), w - 1)
+                            py = min(max(int(cy), 0), h - 1)
+                            z = int(d[py, px])
+                            if z > 0:
+                                wc = depth_cam.depth_to_world(px, py, float(z))
+                                if wc is not None:
+                                    pos = {'x': round(wc[0] / 1000.0, 3),
+                                           'y': round(wc[2] / 1000.0, 3)}
+                                    heading = round(math.degrees(math.atan2(wc[0], wc[2])), 1)
                     task_server.set_status(
                         state='TRACKING',
+                        position_m=pos,
+                        heading_deg=heading,
                         message='追踪中 中心=(%d,%d) area=%.0f' % (cx, cy, latest['area']))
                 else:
                     task_server.set_status(state='TRACKING', message='追踪中 未发现目标')
-            time.sleep(0.5)
+            time.sleep(0.3)
     except KeyboardInterrupt:
         pass
     finally:
