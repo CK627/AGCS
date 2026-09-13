@@ -88,9 +88,11 @@ def main():
                         state='TRACKING',
                         position_m=pos,
                         heading_deg=heading,
-                        message='追踪中 中心=(%d,%d) area=%.0f' % (cx, cy, latest['area']))
+                        message='追踪中 目标=%s 中心=(%d,%d) area=%.0f' % (args.color, cx, cy, latest['area']))
                 else:
-                    task_server.set_status(state='TRACKING', message='追踪中 未发现目标')
+                    task_server.set_status(
+                        state='TRACKING',
+                        message='追踪中 目标=%s 未发现目标' % args.color)
             time.sleep(0.3)
     except KeyboardInterrupt:
         pass
