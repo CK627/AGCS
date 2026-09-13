@@ -101,7 +101,7 @@ VOLTAGE_EXTRA_LOW_V = 10.3  # 补偿达到最大距离时对应的电压
 
 
 # ---------- 模型 + 雅可比（阶段二） ----------
-DEFAULT_MODEL = 'models/base.pt'  # 默认模型路径（相对 spiderpi 根目录）
+DEFAULT_MODEL = 'models/fake_bug.onnx'  # 默认模型路径（相对 spiderpi 根目录）
 MODEL_CONF = 0.35          # 模型置信度阈值
 JAC_DELTA = 20             # 标定时每个舵机的扰动脉宽
 CALIB_SAMPLES = 5          # 标定时 bbox 中心平均帧数
@@ -281,44 +281,71 @@ def video_loop(detector, stop_event):
 
 
 class ModelDetector:
-    """Ultralytics YOLO 检测器，detect() 返回 bbox dict 或 None。"""
+    """ONNX YOLO 检测器（onnxruntime 本地推理），detect() 返回 bbox dict 或 None。"""
+
+    NAME = 'fake bug'  # 单类目标（模型 best.onnx 训练的类别）
 
     def __init__(self, model_path, conf, classes, read_frame, publish):
-        try:
-            from ultralytics import YOLO
-        except ImportError:
-            raise SystemExit('未安装 ultralytics，请先在树莓派执行: pip3 install ultralytics')
-        self.model = YOLO(model_path)
+        import onnxruntime as ort
+        opts = ort.SessionOptions()
+        opts.intra_op_num_threads = 4  # Pi5 四核并行
+        self.sess = ort.InferenceSession(model_path, opts, providers=['CPUExecutionProvider'])
+        self.input_name = self.sess.get_inputs()[0].name
+        self.output_name = self.sess.get_outputs()[0].name
         self.conf = conf
         self.classes = set(classes) if classes else None
         self.read_frame = read_frame
         self.publish = publish
 
+    def _letterbox(self, img):
+        """等比缩放到 640x640 补灰边，返回 (画布, 缩放比, pad_x, pad_y)。"""
+        h0, w0 = img.shape[:2]
+        r = min(640 / w0, 640 / h0)
+        new_w, new_h = int(round(w0 * r)), int(round(h0 * r))
+        pad_x, pad_y = (640 - new_w) // 2, (640 - new_h) // 2
+        canvas = np.full((640, 640, 3), 114, dtype=np.uint8)
+        canvas[pad_y:pad_y + new_h, pad_x:pad_x + new_w] = cv2.resize(img, (new_w, new_h))
+        return canvas, r, pad_x, pad_y
+
     def detect(self):
         """检测一帧，返回 {'x','y','w','h','conf','name'} 或 None，并推流标注画面。"""
+        if self.classes and self.NAME not in self.classes:
+            return None
         frame = self.read_frame()
         if frame is None:
             return None
+        h0, w0 = frame.shape[:2]
+        canvas, r, pad_x, pad_y = self._letterbox(frame)
+        blob = canvas[:, :, ::-1].transpose(2, 0, 1)[None].astype(np.float32) / 255.0
+        out = self.sess.run([self.output_name], {self.input_name: blob})[0][0]  # [5, 8400]
+
+        best = None  # (x1, y1, x2, y2, score)
+        for i in range(out.shape[1]):
+            score = float(out[4, i])
+            if score < self.conf:
+                continue
+            cx, cy, w, h = out[0, i], out[1, i], out[2, i], out[3, i]
+            x1 = (cx - w / 2 - pad_x) / r
+            y1 = (cy - h / 2 - pad_y) / r
+            x2 = (cx + w / 2 - pad_x) / r
+            y2 = (cy + h / 2 - pad_y) / r
+            x1 = max(0, min(w0, x1))
+            y1 = max(0, min(h0, y1))
+            x2 = max(0, min(w0, x2))
+            y2 = max(0, min(h0, y2))
+            if x2 - x1 < 2 or y2 - y1 < 2:
+                continue
+            if best is None or score > best[4]:
+                best = (x1, y1, x2, y2, score)
+
         result = None
-        results = self.model.predict(frame, verbose=False, imgsz=640)[0]
-        names = results.names
-        for box in results.boxes:
-            cls = int(box.cls[0])
-            conf = float(box.conf[0])
-            name = names.get(cls, str(cls))
-            if conf < self.conf:
-                continue
-            if self.classes and name not in self.classes:
-                continue
-            x1, y1, x2, y2 = [int(v) for v in box.xyxy[0]]
-            w, h = x2 - x1, y2 - y1
-            if w < 2 or h < 2:
-                continue
-            result = {'x': x1, 'y': y1, 'w': w, 'h': h, 'conf': conf, 'name': name}
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
-            cv2.putText(frame, '%s %.2f' % (name, conf), (x1, y1 - 5),
+        if best is not None:
+            x1, y1, x2, y2, score = best
+            result = {'x': int(x1), 'y': int(y1), 'w': int(x2 - x1), 'h': int(y2 - y1),
+                      'conf': float(score), 'name': self.NAME}
+            cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 2)
+            cv2.putText(frame, '%s %.2f' % (self.NAME, score), (int(x1), int(y1) - 5),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-            break
         self.publish(frame)
         return result
 
