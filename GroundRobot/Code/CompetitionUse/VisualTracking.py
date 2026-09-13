@@ -75,6 +75,25 @@ def detect_color(frame, color, min_area=50):
     return {'center': (cx, cy), 'radius': radius, 'area': float(best_area)}
 
 
+def lab_view(frame, color):
+    """LAB 阈值图：只保留检测到的颜色区域（上采样回原分辨率，供调试推流）。"""
+    img = frame.copy()
+    ycrcb = cv2.cvtColor(img, cv2.COLOR_BGR2YCR_CB)
+    ch = list(cv2.split(ycrcb))
+    cv2.equalizeHist(ch[0], ch[0])
+    cv2.merge(ch, ycrcb)
+    img = cv2.cvtColor(ycrcb, cv2.COLOR_YCR_CB2BGR)
+    img = cv2.resize(img, (320, 240), interpolation=cv2.INTER_NEAREST)
+    img = cv2.GaussianBlur(img, (5, 5), 5)
+    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+    lo, hi = LAB[color]['min'], LAB[color]['max']
+    mask = cv2.inRange(lab, lo, hi)
+    mask = cv2.erode(mask, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
+    mask = cv2.dilate(mask, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
+    mask = cv2.resize(mask, (frame.shape[1], frame.shape[0]), interpolation=cv2.INTER_NEAREST)
+    return cv2.bitwise_and(frame, frame, mask=mask)
+
+
 # ---------------- OpenNI2 深度（内联 agcs_lib.depth.DepthCamera 的最小部分）----------------
 class _OniFrame(ctypes.Structure):
     _fields_ = [
@@ -197,6 +216,18 @@ def publish_frame(frame, max_fps=10.0):
             _LATEST_JPEG = jpg.tobytes()
 
 
+_LATEST_LAB_JPEG = None
+_LAB_LOCK = threading.Lock()
+
+
+def publish_lab(frame):
+    global _LATEST_LAB_JPEG
+    ok, jpg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
+    if ok:
+        with _LAB_LOCK:
+            _LATEST_LAB_JPEG = jpg.tobytes()
+
+
 def start_server():
     import logging
     # 抑制 Flask 开发服务器的启动横幅 + 请求日志（红字 WARNING + 一堆 GET 日志）
@@ -217,6 +248,19 @@ def start_server():
             while True:
                 with _JPEG_LOCK:
                     jpg = _LATEST_JPEG
+                if jpg is None:
+                    time.sleep(0.05)
+                    continue
+                yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + jpg + b'\r\n')
+                time.sleep(0.1)
+        return Response(gen(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+    @app.route('/video_lab.mjpeg')
+    def video_lab():
+        def gen():
+            while True:
+                with _LAB_LOCK:
+                    jpg = _LATEST_LAB_JPEG
                 if jpg is None:
                     time.sleep(0.05)
                     continue
@@ -282,6 +326,7 @@ def main():
                 continue
             r = detect_color(frame, args.color)
             publish_frame(frame)
+            publish_lab(lab_view(frame, args.color))
             if r is not None:
                 cx, cy = r['center']
                 if abs(cx - FRAME_CX) >= DEAD_X:
