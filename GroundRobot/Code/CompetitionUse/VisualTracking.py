@@ -7,7 +7,7 @@
 
 用法（先 sudo systemctl stop spiderpi）：
     cd /home/pi/spiderpi/CompetitionUse
-    python3 Color-tracking.py --color yellow
+    python3 VisualTracking.py --color yellow
 """
 import os
 import sys
