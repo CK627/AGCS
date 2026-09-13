@@ -86,14 +86,16 @@ def compute_normals(points, k=12):
 
 
 def icp_plane(source, target, target_normals, init_R=None, init_t=None,
-              max_iter=40, dist_thresh=150.0):
+              max_iter=40, dist_thresh=150.0, tree=None):
     """点到平面 ICP（比点到点对平地/大面场景的平移约束更好）。
 
     返回 (R, t, err)：使 R@source+t 对齐 target。需要 target 的法向量。
+    tree：可选的预建 cKDTree(target)，复用可省掉每次建树开销。
     """
     R = np.eye(3) if init_R is None else init_R.copy()
     t = np.zeros(3) if init_t is None else init_t.copy()
-    tree = cKDTree(target)
+    if tree is None:
+        tree = cKDTree(target)
     prev_err = np.inf
     err = np.inf
     for _ in range(max_iter):
@@ -143,6 +145,27 @@ def register_sequence(clouds, init_angles_deg, voxel_size=20.0):
         R0 = rot_y(init_angles_deg[i - 1])  # 名义转角作初值
         R, t, _ = icp_plane(downs[i], downs[i - 1], normals[i - 1],
                             init_R=R0, init_t=np.zeros(3))
+        R_prev, t_prev = poses[-1]
+        poses.append((R_prev @ R, R_prev @ t + t_prev))
+    return poses
+
+
+def register_route(clouds, odom_poses, voxel_size=20.0):
+    """按路线里程计配准一串点云（含平移 + 旋转），用点到平面 ICP 精修。
+
+    clouds: list[(N,3)]，按采集顺序。
+    odom_poses: list[(R, t)]，每个云相对第 0 个云的里程计名义位姿（3x3, 3）。
+    返回 list[(R, t)]：把第 i 个云变换到第 0 个云坐标系的精修位姿。
+    """
+    downs = [voxel_downsample(c, voxel_size) for c in clouds]
+    normals = [compute_normals(d) for d in downs]
+    poses = [(np.eye(3), np.zeros(3))]
+    for i in range(1, len(downs)):
+        # 里程计相对位姿（第 i 个云相对第 i-1 个云）作为 ICP 初值
+        R0 = odom_poses[i - 1][0].T @ odom_poses[i][0]
+        t0 = odom_poses[i - 1][0].T @ (odom_poses[i][1] - odom_poses[i - 1][1])
+        R, t, _ = icp_plane(downs[i], downs[i - 1], normals[i - 1],
+                            init_R=R0, init_t=t0)
         R_prev, t_prev = poses[-1]
         poses.append((R_prev @ R, R_prev @ t + t_prev))
     return poses

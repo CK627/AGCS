@@ -9,6 +9,7 @@ IMU 航向漂移。
 地图文件(.npz)由 tasks/CS/CS-build-map.py 生成，含 pts(N,3) + normals(N,3)。
 """
 import numpy as np
+from scipy.spatial import cKDTree
 
 from agcs_lib.pcl import icp_plane, voxel_downsample
 
@@ -20,6 +21,7 @@ class Localizer:
         d = np.load(map_path)
         self.map_pts = d['pts'].astype(np.float32)
         self.map_normals = d['normals'].astype(np.float32)
+        self.map_tree = cKDTree(self.map_pts)  # 建一次，复用，省每次定位建树开销
 
     def localize_points(self, points, init_R=None, init_t=None, voxel_size=20.0):
         """用点云 (N,3) 定位（相机坐标系）。
@@ -36,7 +38,7 @@ class Localizer:
             init_t = np.zeros(3)
         R, t, err = icp_plane(pts, self.map_pts, self.map_normals,
                               init_R=init_R, init_t=init_t, dist_thresh=200.0,
-                              max_iter=40)
+                              max_iter=40, tree=self.map_tree)
         return R, t, err
 
     def localize(self, depth, depth_cam, init_R=None, init_t=None, voxel_size=20.0):

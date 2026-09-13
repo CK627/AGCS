@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 # coding=utf8
-"""传感器封装：超声波测距、点阵显示。"""
+"""传感器封装：超声波测距。"""
 import time
 
 
@@ -32,14 +32,11 @@ def dist_cm(ultrasonic, samples=3):
 
 
 def make_display(clk=8, dio=7):
-    """创建点阵 TM1640，失败返回 None。"""
-    try:
-        from sensor.dot_matrix_sensor import TM1640
-        display = TM1640(clk=clk, dio=dio)
-        display.clear()
-        return display
-    except Exception:
-        return None
+    """点阵模块已移除：不再初始化点阵，直接返回 None。
+
+    show_status() 收到 None 会静默跳过，所以各处的 show_status 调用都成了空操作。
+    """
+    return None
 
 
 def show_status(display, v):

@@ -60,14 +60,12 @@ def detect_color(img, lab_data, color='red', size=(320, 240), min_area=50):
     """在 img 中检测指定颜色目标（LAB 阈值），返回 dict(center, radius, area, color, contour)。"""
     img_copy = img.copy()
     img_h, img_w = img.shape[:2]
-    # 官方 color_track 直方图均衡（Y 通道），增强弱光/环境下的颜色识别
-    _ycrcb = cv2.cvtColor(img_copy, cv2.COLOR_BGR2YCR_CB)
-    _ch = cv2.split(_ycrcb)
-    cv2.equalizeHist(_ch[0], _ch[0])
-    cv2.merge(_ch, _ycrcb)
-    img_copy = cv2.cvtColor(_ycrcb, cv2.COLOR_YCR_CB2BGR)
+    # 与官方 LAB_Tool(lab_adjust.py) 的预处理保持一致，否则标定值对不上：
+    # LAB_Tool 只做 GaussianBlur(3,3) → BGR2LAB，没有直方图均衡。
+    # 这里保留 resize 到 size（面积/半径按 320x240 算，夹取阈值依赖它），
+    # 去掉 YCrCb 直方图均衡、模糊核改成 (3,3)，让运行时颜色和标定时一致。
     frame_resize = cv2.resize(img_copy, size, interpolation=cv2.INTER_NEAREST)
-    frame_gb = cv2.GaussianBlur(frame_resize, (5, 5), 5)
+    frame_gb = cv2.GaussianBlur(frame_resize, (3, 3), 3)
     frame_lab = cv2.cvtColor(frame_gb, cv2.COLOR_BGR2LAB)
     frame_mask = cv2.inRange(
         frame_lab,

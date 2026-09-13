@@ -33,7 +33,6 @@ MacYoLo/
 .claude/
 
 # 模型权重
-*.onnx
 *.pt
 *.pth
 

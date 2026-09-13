@@ -53,7 +53,7 @@ PAN_TURN_DEG = 5        # 身体每次转身角度
 BODY_TURN_SPEED = 80
 WALK_MM = 40            # 每步前进 mm
 WALK_SPEED = 50
-MAX_APPROACH = 12       # 最多逼近步数
+MAX_APPROACH = 40       # 最多逼近步数（深度判距/太近才停，步数只是兜底）
 STOP_DEPTH_CM = 25      # 深度判距停止距离 cm
 CENTER_WAIT = 0.8       # 每步走后等云台重新居中的时间窗
 LOST_LIMIT = 15         # 连续丢帧超过该值才放弃逼近
@@ -175,8 +175,8 @@ class DepthCam:
 
 
 # ---------------- Flask 状态/推流（内联）----------------
-STATUS = {'state': 'IDLE', 'position_m': {'x': 0.0, 'y': 0.0}, 'heading_deg': 0.0,
-          'last_result': None, 'message': ''}
+STATUS = {'state': 'PATHFINDING', 'position_m': {'x': 0.0, 'y': 0.0}, 'heading_deg': 0.0,
+          'last_result': None, 'message': '自动寻路'}
 _LATEST_JPEG = None
 _JPEG_LOCK = threading.Lock()
 
@@ -442,16 +442,25 @@ class Pathfinder:
         return None
 
     def distance_cm(self, cx, cy):
+        """读目标中心周围一块区域的深度，取有效值中位数(cm)。
+
+        色块中心反射不到结构光（深度=0），取周围区域中位数绕过「深度黑洞」；
+        整个区域全无效说明目标太近（低于深度相机最小测距），返回 0.0 视为已靠近。
+        """
         if self.depth is None:
             return None
         d = self.depth.read(100)
         if d is None:
             return None
         h, w = d.shape
-        px = min(max(int(cx), 0), w - 1)
-        py = min(max(int(cy), 0), h - 1)
-        z = int(d[py, px])
-        return z / 10.0 if z > 0 else None
+        rr = 30
+        x0 = max(0, int(cx) - rr); x1 = min(w, int(cx) + rr)
+        y0 = max(0, int(cy) - rr); y1 = min(h, int(cy) + rr)
+        valid = d[y0:y1, x0:x1]
+        valid = valid[valid > 0]
+        if valid.size == 0:
+            return 0.0
+        return float(np.median(valid)) / 10.0
 
     def approach(self, det):
         """启动追踪线程，转身对准 + 小步前进逼近，深度判距到位。"""
@@ -507,11 +516,11 @@ class Pathfinder:
             msg = '追踪 #%d 中心=(%d,%d) 距离=%s' % (
                 step + 1, cx, cy, ('%.1fcm' % d_cm) if d_cm is not None else '无')
             print(msg)
-            set_status(state='NAV', position_m=pos, heading_deg=heading, message=msg)
+            set_status(state='PATHFINDING', position_m=pos, heading_deg=heading, message=msg)
 
             if d_cm is not None and d_cm <= STOP_DEPTH_CM:
                 print('到位(距离 %.1fcm)' % d_cm)
-                set_status(state='DONE', last_result='done', message='寻路到位')
+                set_status(state='PATHFINDING', last_result='done', message='寻路到位')
                 return (cx, cy)
 
             self.ik.go_forward(self.ik.initial_pos, 2, WALK_MM, WALK_SPEED, 1)
@@ -521,10 +530,10 @@ class Pathfinder:
         return None
 
     def run(self):
-        set_status(state='SEARCH', message='扫描找目标')
+        set_status(state='PATHFINDING', message='扫描找目标')
         det = self.search()
         if det is None:
-            set_status(state='SEARCH', last_result='failed', message='未找到目标')
+            set_status(state='PATHFINDING', last_result='failed', message='未找到目标')
             return None
         return self.approach(det)
 
@@ -574,7 +583,7 @@ def main():
         cap.release()
         if depth is not None:
             depth.close()
-        set_status(state='IDLE', message='寻路结束')
+        set_status(state='PATHFINDING', message='寻路结束')
 
 
 if __name__ == '__main__':
