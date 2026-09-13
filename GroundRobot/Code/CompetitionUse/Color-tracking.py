@@ -40,7 +40,7 @@ def main():
     args = parser.parse_args()
 
     logger = setup_logger('competition_track')
-    logger.info('视觉追踪启动：color=%s', args.color)
+    logger.info('视觉追踪启动')
 
     if progress_signal is not None:
         progress_signal.notify_hub('robot', 1)  # 失败仅告警，不中断
@@ -53,7 +53,7 @@ def main():
 
     if task_server is not None:
         task_server.start_server()
-        task_server.set_status(state='TRACKING', message='2.1 视觉追踪，目标颜色=%s' % args.color)
+        task_server.set_status(state='TRACKING', message='2.1 视觉追踪')
 
     from agcs_lib.tracker import ColorTracker
 
@@ -88,11 +88,11 @@ def main():
                         state='TRACKING',
                         position_m=pos,
                         heading_deg=heading,
-                        message='追踪中 目标=%s 中心=(%d,%d) area=%.0f' % (args.color, cx, cy, latest['area']))
+                        message='追踪中 中心=(%d,%d) area=%.0f' % (cx, cy, latest['area']))
                 else:
                     task_server.set_status(
                         state='TRACKING',
-                        message='追踪中 目标=%s 未发现目标' % args.color)
+                        message='追踪中 未发现目标')
             time.sleep(0.3)
     except KeyboardInterrupt:
         pass
