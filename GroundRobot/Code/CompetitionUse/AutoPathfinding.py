@@ -60,7 +60,7 @@ LOST_LIMIT = 15         # 连续丢帧超过该值才放弃逼近
 
 
 # ---------------- 颜色检测（内联）----------------
-def detect_color(frame, color, min_area=150):
+def detect_color(frame, color, min_area=50):
     img = frame.copy()
     h0, w0 = img.shape[:2]
     ycrcb = cv2.cvtColor(img, cv2.COLOR_BGR2YCR_CB)

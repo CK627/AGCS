@@ -42,7 +42,7 @@ FRAME_CX, FRAME_CY = 320, 240
 
 
 # ---------------- 颜色检测（内联 agcs_lib.vision.detect_color 的 LAB 管线）----------------
-def detect_color(frame, color, min_area=150):
+def detect_color(frame, color, min_area=50):
     """在 frame(640x480 BGR) 里检测颜色块，返回 dict(center, radius, area) 或 None。"""
     img = frame.copy()
     h0, w0 = img.shape[:2]
