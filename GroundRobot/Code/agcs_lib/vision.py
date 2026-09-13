@@ -128,13 +128,17 @@ def pixel_to_arm_coord(K, R, T, center, initial_coord=(0, 15, 5)):
 
 
 def load_undistort_maps(size=(640, 480)):
-    """加载相机畸变校正映射，返回 (mapx, mapy)。"""
-    from calibration.CalibrationConfig import calibration_param_path
-    param_data = np.load(calibration_param_path + '.npz')
-    mtx = param_data['mtx_array']
-    dist = param_data['dist_array']
-    newcameramtx, _ = cv2.getOptimalNewCameraMatrix(mtx, dist, size, 0, size)
-    mapx, mapy = cv2.initUndistortRectifyMap(mtx, dist, None, newcameramtx, size, 5)
+    """返回畸变校正映射 (mapx, mapy)。
+
+    摄像头已换成奥比中光 Astra Pro（低畸变镜头）。旧相机的鱼眼标定
+    （fx≈424、畸变 k1=-0.408）不再适用，拿它去校正 Astra Pro 会过度校正、
+    画面变形。这里返回单位映射，等效跳过畸变校正。
+
+    以后若重新标定 Astra Pro，把下面改回加载 calibration_param.npz 即可。
+    """
+    w, h = size
+    mapx, mapy = np.meshgrid(np.arange(w, dtype=np.float32),
+                             np.arange(h, dtype=np.float32))
     return mapx, mapy
 
 
