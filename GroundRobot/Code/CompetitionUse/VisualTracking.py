@@ -27,7 +27,7 @@ from common.ros_robot_controller_sdk import Board
 # ---- LAB 颜色阈值（从 config/lab_config.yaml 内联，重新标定后改这里）----
 LAB = {
     'red':    {'min': (0, 130, 115), 'max': (255, 170, 145)},
-    'yellow': {'min': (150, 105, 158), 'max': (255, 128, 185)},
+    'yellow': {'min': (0, 105, 140), 'max': (255, 128, 185)},
     'green':  {'min': (0, 105, 125), 'max': (255, 128, 156)},
     'blue':   {'min': (97, 122, 50), 'max': (255, 153, 104)},
 }
