@@ -27,7 +27,7 @@ from common.ros_robot_controller_sdk import Board
 # ---- LAB 颜色阈值（从 config/lab_config.yaml 内联，重新标定后改这里）----
 LAB = {
     'red':    {'min': (0, 130, 115), 'max': (255, 170, 145)},
-    'yellow': {'min': (0, 105, 140), 'max': (255, 128, 185)},
+    'yellow': {'min': (150, 105, 158), 'max': (255, 128, 185)},
     'green':  {'min': (0, 105, 125), 'max': (255, 128, 156)},
     'blue':   {'min': (97, 122, 50), 'max': (255, 153, 104)},
 }
@@ -46,13 +46,8 @@ def detect_color(frame, color, min_area=50):
     """在 frame(640x480 BGR) 里检测颜色块，返回 dict(center, radius, area) 或 None。"""
     img = frame.copy()
     h0, w0 = img.shape[:2]
-    ycrcb = cv2.cvtColor(img, cv2.COLOR_BGR2YCR_CB)
-    ch = list(cv2.split(ycrcb))
-    cv2.equalizeHist(ch[0], ch[0])
-    cv2.merge(ch, ycrcb)
-    img = cv2.cvtColor(ycrcb, cv2.COLOR_YCR_CB2BGR)
     img = cv2.resize(img, (320, 240), interpolation=cv2.INTER_NEAREST)
-    img = cv2.GaussianBlur(img, (5, 5), 5)
+    img = cv2.GaussianBlur(img, (3, 3), 3)
     lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
     lo, hi = LAB[color]['min'], LAB[color]['max']
     mask = cv2.inRange(lab, lo, hi)
@@ -78,13 +73,8 @@ def detect_color(frame, color, min_area=50):
 def lab_view(frame, color):
     """LAB 阈值图：只保留检测到的颜色区域（上采样回原分辨率，供调试推流）。"""
     img = frame.copy()
-    ycrcb = cv2.cvtColor(img, cv2.COLOR_BGR2YCR_CB)
-    ch = list(cv2.split(ycrcb))
-    cv2.equalizeHist(ch[0], ch[0])
-    cv2.merge(ch, ycrcb)
-    img = cv2.cvtColor(ycrcb, cv2.COLOR_YCR_CB2BGR)
     img = cv2.resize(img, (320, 240), interpolation=cv2.INTER_NEAREST)
-    img = cv2.GaussianBlur(img, (5, 5), 5)
+    img = cv2.GaussianBlur(img, (3, 3), 3)
     lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
     lo, hi = LAB[color]['min'], LAB[color]['max']
     mask = cv2.inRange(lab, lo, hi)
