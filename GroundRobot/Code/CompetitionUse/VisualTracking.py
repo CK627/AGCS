@@ -198,6 +198,12 @@ def publish_frame(frame, max_fps=10.0):
 
 
 def start_server():
+    import logging
+    # 抑制 Flask 开发服务器的启动横幅 + 请求日志（红字 WARNING + 一堆 GET 日志）
+    logging.getLogger('werkzeug').setLevel(logging.ERROR)
+    import flask.cli
+    flask.cli.show_server_banner = lambda *a, **k: None
+
     from flask import Flask, Response, jsonify
     app = Flask(__name__)
 
