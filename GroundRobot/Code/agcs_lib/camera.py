@@ -13,6 +13,8 @@ def open_camera():
     # 官方 Camera 默认 SATURATION=40，Astra Pro 会被洗淡颜色（红块检测不到），恢复 128
     if cam.cap is not None:
         cam.cap.set(cv2.CAP_PROP_SATURATION, 128)
+        # 官方 Camera 没开自动白平衡，画面偏暖（绿色会被认成黄色），这里开启
+        cam.cap.set(cv2.CAP_PROP_AUTO_WB, 1)
     return cam
 
 
