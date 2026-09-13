@@ -411,8 +411,8 @@ class Pathfinder:
 
     def vertical_sweep(self, x):
         self.y_dis = TILT_PULSES[0]
-        self.board.bus_servo_set_position(0.3, [[24, self.y_dis], [21, int(x)]])
-        time.sleep(0.3)
+        self.board.bus_servo_set_position(0.8, [[24, self.y_dis], [21, int(x)]])
+        time.sleep(0.8)
         for y in TILT_PULSES:
             r = self.smooth_tilt(x, y)
             if r is not None:
@@ -436,8 +436,8 @@ class Pathfinder:
             if x == 500:
                 continue
             self.y_dis = TILT_PULSES[0]
-            self.board.bus_servo_set_position(0.3, [[24, self.y_dis], [21, int(x)]])
-            time.sleep(0.3)
+            self.board.bus_servo_set_position(0.8, [[24, self.y_dis], [21, int(x)]])
+            time.sleep(0.8)
             r = self.smooth_pan(x)
             if r is not None:
                 return r
