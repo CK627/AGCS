@@ -67,7 +67,7 @@ OFFICIAL_ARM = {21: 500, 22: 705, 23: 90, 24: 330}  # 机械臂官方初始脉�
 GRIPPER_CLOSE = 700  # 25 号夹爪闭合脉宽
 GRIPPER_OPEN = 400   # 25 号夹爪张开脉宽
 ARM_SERVOS = [21, 22, 23, 24]   # 机械臂 4 个舵机
-PULL_UP_22 = 600   # 第一次夹取后 22 后仰先拔起来的目标脉宽
+PULL_UP_23 = 200   # 第一次夹取后 23 后仰先拔起来的目标脉宽
 
 
 # ---------- 六足运动 ----------
@@ -202,7 +202,7 @@ def arm_fine_tune(board, state, kind, pull_up=False):
     time.sleep(0.5)
     if pull_up:
         # 22 后仰先把目标拔起来，再恢复初始位置
-        board.bus_servo_set_position(1.0, [[22, PULL_UP_22]])
+        board.bus_servo_set_position(1.0, [[23, PULL_UP_23]])
         time.sleep(1.0)
     restore_travel(board, gripper)
 
