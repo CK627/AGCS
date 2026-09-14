@@ -67,6 +67,7 @@ OFFICIAL_ARM = {21: 500, 22: 705, 23: 90, 24: 330}  # 机械臂官方初始脉�
 GRIPPER_CLOSE = 700  # 25 号夹爪闭合脉宽
 GRIPPER_OPEN = 400   # 25 号夹爪张开脉宽
 ARM_SERVOS = [21, 22, 23, 24]   # 机械臂 4 个舵机
+PULL_UP_22 = 600   # 第一次夹取后 22 后仰先拔起来的目标脉宽
 
 
 # ---------- 六足运动 ----------
@@ -174,7 +175,7 @@ def parse_adjust(cmd):
     return int(m.group(1)), (1 if m.group(2) == 'w' else -1), (int(m.group(3)) if m.group(3) else 5)
 
 
-def arm_fine_tune(board, state, kind):
+def arm_fine_tune(board, state, kind, pull_up=False):
     """机械臂手动微调，回车执行夹取/放下。"""
     print('机械臂微调：回车=%s，c=退出' % ('夹取' if kind == 'pick' else '放下'), flush=True)
     while True:
@@ -199,6 +200,10 @@ def arm_fine_tune(board, state, kind):
     board.bus_servo_set_position(2.0, [[25, gripper]])
     time.sleep(2.0)
     time.sleep(0.5)
+    if pull_up:
+        # 22 后仰先把目标拔起来，再恢复初始位置
+        board.bus_servo_set_position(1.0, [[22, PULL_UP_22]])
+        time.sleep(1.0)
     restore_travel(board, gripper)
 
 
@@ -438,6 +443,20 @@ def init_imu(board):
         time.sleep(0.005)
     bias = sum(vals) / len(vals)
     return {'bias': bias, 'yaw': 0.0, 'last_t': time.monotonic()}
+
+
+def reset_imu(board, imu_state):
+    """转弯后重新标定 gz 零漂并清零航向积分（消除累积漂移导致的误纠）。"""
+    vals = []
+    while len(vals) < 100:
+        gz = read_gz(board)
+        if gz is not None:
+            vals.append(gz)
+        time.sleep(0.005)
+    if vals:
+        imu_state['bias'] = sum(vals) / len(vals)
+    imu_state['yaw'] = 0.0
+    imu_state['last_t'] = time.monotonic()
 
 
 def update_imu(state, board):
@@ -794,7 +813,7 @@ def do_pick(board, pick_count, pulses, model_det, calib):
             print('精对准未完全居中，进入手动微调', flush=True)
     else:
         print('无标定数据，跳过模型精对准，进入手动微调', flush=True)
-    arm_fine_tune(board, state, 'pick')
+    arm_fine_tune(board, state, 'pick', pull_up=(pick_count == 1))
 
 
 def do_place(board, place_count, pulses=None):
@@ -943,6 +962,7 @@ def main():
                 left_turn_compensated = True
             print('%d/%d IMU左转 %d' % (i, len(actions), angle), flush=True)
             imu_turn(ik, board, imu_state, angle)
+            reset_imu(board, imu_state)
             target_yaw = imu_state['yaw']
             if localize_heading(depth_cam, localizer, imu_state) is not None:
                 target_yaw = imu_state['yaw']
@@ -955,6 +975,7 @@ def main():
             angle = int(act.get('angle', 90))
             print('%d/%d IMU右转 %d' % (i, len(actions), angle), flush=True)
             imu_turn(ik, board, imu_state, -angle)
+            reset_imu(board, imu_state)
             target_yaw = imu_state['yaw']
             if localize_heading(depth_cam, localizer, imu_state) is not None:
                 target_yaw = imu_state['yaw']
