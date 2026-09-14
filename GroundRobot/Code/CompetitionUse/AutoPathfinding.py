@@ -578,7 +578,6 @@ def main():
         print('深度相机初始化失败: %s' % e)
 
     start_server()
-    print('推流: http://%s:5000/video.mjpeg' % lan_ip(), flush=True)
 
     ik.stand(ik.initial_pos, t=500)
     time.sleep(0.5)

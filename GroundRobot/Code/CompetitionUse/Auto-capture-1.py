@@ -840,8 +840,6 @@ def main():
     video_thread.start()
 
     if task_server is not None:
-        print('视频推流: http://%s:5000/video.mjpeg' % lan_ip(), flush=True)
-        print('LAB 推流: http://%s:5000/video_lab.mjpeg' % lan_ip(), flush=True)
         task_server.start_server()
 
     restore_travel(board, GRIPPER_OPEN)

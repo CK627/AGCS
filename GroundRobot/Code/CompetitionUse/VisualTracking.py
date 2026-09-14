@@ -267,7 +267,6 @@ def main():
         print('深度相机初始化失败: %s' % e)
 
     start_server()
-    print('推流: http://%s:5000/video.mjpeg' % lan_ip(), flush=True)
     set_status(state='TRACKING', message='2.1 视觉追踪')
 
     x_dis, y_dis = START_X, START_Y

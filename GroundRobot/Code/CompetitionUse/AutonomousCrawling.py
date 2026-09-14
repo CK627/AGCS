@@ -185,7 +185,6 @@ def main():
     cam = Camera(cap)
 
     start_server()
-    print('推流: http://%s:5000/video.mjpeg' % lan_ip(), flush=True)
     set_status(state='Grab', message='固定路线夹取')
 
     try:
