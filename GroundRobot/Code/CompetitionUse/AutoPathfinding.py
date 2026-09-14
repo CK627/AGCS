@@ -497,6 +497,8 @@ class Pathfinder:
             time.sleep(0.4)
 
         # 逼近
+        last_distance = None
+        lost_steps = 0
         for step in range(MAX_APPROACH):
             self.tracker.reset_lost()
             deadline = time.time() + CENTER_WAIT
@@ -507,6 +509,12 @@ class Pathfinder:
                     break
                 time.sleep(0.03)
             if r is None:
+                lost_steps += 1
+                if last_distance is not None and last_distance > STOP_DEPTH_CM and lost_steps <= 5:
+                    print('目标丢失，按距离 %.1fcm 继续前进' % last_distance, flush=True)
+                    self.ik.go_forward(self.ik.initial_pos, 2, WALK_MM, WALK_SPEED, 1)
+                    time.sleep(0.05)
+                    continue
                 if self.tracker.lost() >= LOST_LIMIT:
                     set_status(last_result='failed', message='连续丢失目标')
                     print('连续丢失目标，放弃逼近')
@@ -524,6 +532,8 @@ class Pathfinder:
                 continue
 
             d_cm = self.distance_cm(cx, cy)
+            last_distance = d_cm
+            lost_steps = 0
             wx = (cx - FRAME_CX) / 570.0 * (d_cm / 100.0) if d_cm else 0.0  # 粗略横向位置
             pos = {'x': round(wx, 3), 'y': round(d_cm / 100.0, 3) if d_cm else 0.0}
             heading = round(math.degrees(math.atan2(wx, d_cm / 100.0)), 1) if d_cm else 0.0
