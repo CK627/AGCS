@@ -53,7 +53,7 @@ RIGHT_TURN_TOL_DEG = 8.0 # 直线阶段允许右偏多少才右转
 IMU_STRAIGHT_STEP = 1    # 直线阶段 IMU 每次修正的角度
 COLOR_CENTER_TOL = 3.0   # 色块中心允许偏差，单位：像素；偏差小于该值不调整
 COLOR_CORRECT_MM = 7     # 向右微调每次移动的距离，单位：毫米
-LEFT_CORRECT_MM = 15     # 向左微调每次移动的距离，单位：毫米（向左力度加大）
+LEFT_CORRECT_MM = 10     # 向左微调每次移动的距离，单位：毫米（向左力度加大）
 COLOR_MIN_RADIUS = 0     # 色块半径小于该值时暂不进行颜色微调
 COLOR_DIRECTION_SIGN = 1  # 颜色修正方向：1=默认，-1=左右指令反向后使用
 IMU_DIRECTION_SIGN = 1    # IMU 转向方向：1=默认，-1=左右指令反向后使用
