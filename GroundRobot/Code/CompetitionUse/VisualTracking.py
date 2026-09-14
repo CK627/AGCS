@@ -226,12 +226,21 @@ def start_server():
 
 def lan_ip():
     import socket
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    import subprocess
     try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(('8.8.8.8', 80))
         return s.getsockname()[0]
-    finally:
-        s.close()
+    except Exception:
+        pass
+    # 直连(AP)模式没有外网，退回从网卡枚举本机 IP
+    try:
+        out = subprocess.check_output(['hostname', '-I']).decode().strip()
+        ips = [x for x in out.split()
+               if x.startswith(('192.168', '10.', '172.'))]
+        return ips[0] if ips else (out.split()[0] if out else '127.0.0.1')
+    except Exception:
+        return '127.0.0.1'
 
 
 def main():
