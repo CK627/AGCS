@@ -49,9 +49,9 @@ DEAD_X, DEAD_Y = 40, 60
 FRAME_CX, FRAME_CY = 320, 240
 TRACK_INTERVAL = 0.03
 PAN_BAND = 80           # 21 号偏离 500 的转身阈值
-PAN_TURN_DEG = 5        # 身体每次转身角度
+PAN_TURN_DEG = 3        # 身体每次转身角度
 BODY_TURN_SPEED = 80
-WALK_MM = 40            # 每步前进 mm
+WALK_MM = 20            # 每步前进 mm
 WALK_SPEED = 50
 MAX_APPROACH = 40       # 最多逼近步数（深度判距/太近才停，步数只是兜底）
 STOP_DEPTH_CM = 25      # 深度判距停止距离 cm
@@ -310,6 +310,10 @@ class Tracker:
         with self._lock:
             return self.lost_frames
 
+    def reset_lost(self):
+        with self._lock:
+            self.lost_frames = 0
+
     def stop(self):
         self._stop.set()
 
@@ -485,6 +489,7 @@ class Pathfinder:
 
         # 逼近
         for step in range(MAX_APPROACH):
+            self.tracker.reset_lost()
             deadline = time.time() + CENTER_WAIT
             r = None
             while time.time() < deadline:
