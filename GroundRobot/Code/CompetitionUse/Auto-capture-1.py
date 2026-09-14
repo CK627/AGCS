@@ -86,7 +86,7 @@ ENABLE_IMU_STRAIGHT = True  # 直线阶段是否启用 IMU 航向修正
 COLOR_CENTER_TOL = 3.0     # 色块中心允许偏差，像素
 COLOR_CORRECT_MM = 7       # 颜色左右微调每次移动距离，毫米
 COLOR_MIN_RADIUS = 0       # 色块半径小于该值暂不微调
-COLOR_DIRECTION_SIGN = -1   # 颜色修正方向：1=默认，-1=反向
+COLOR_DIRECTION_SIGN = 1   # 颜色修正方向：1=默认，-1=反向
 IMU_DIRECTION_SIGN = 1     # IMU 转向方向：1=默认，-1=反向
 
 
@@ -456,7 +456,7 @@ def color_keep_center(ik, board, detector, tilt, color_state):
         time.sleep(0.2)
         print('24 号下移微调 -> %d' % tilt['pulse'], flush=True)
         return False
-    cx = det['center'][0]  # 直接用质心(640宽坐标系)，bbox_center_x 是 320宽混算的，别用
+    cx = det.get('bbox_center_x', det['center'][0])
     if det.get('radius', 0) < COLOR_MIN_RADIUS:
         print('目标较远，暂不做颜色微调，依赖 IMU 保持航向', flush=True)
         return False
@@ -814,6 +814,8 @@ def main():
             segment_color = color_enabled and not (23 <= i <= 53)
             if color_enabled and not segment_color:
                 print('当前步数 %d 在 23-53，暂停颜色微调' % i, flush=True)
+            if segment_color:
+                color_state['ref_cx'] = None  # 每个直行段开头重新取「一开始检测到的色块」作固定参考点
             move_straight_imu_color(
                 ik, board, color_detector, imu_state, target_yaw,
                 pending_forward, tilt, segment_color, color_state)
@@ -872,6 +874,8 @@ def main():
             print('低电压后退补偿：额外多退 10mm', flush=True)
         target_yaw = imu_state['yaw']
         segment_color = color_enabled and not (23 <= len(actions) <= 53)
+        if segment_color:
+            color_state['ref_cx'] = None
         move_straight_imu_color(
             ik, board, color_detector, imu_state, target_yaw,
             pending_forward, tilt, segment_color, color_state)
