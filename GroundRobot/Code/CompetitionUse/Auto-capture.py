@@ -474,7 +474,10 @@ def do_place(board, place_count, pulses=None):
     if place_count == 1:
         state = place1_prepare(board, pulses)
     else:
-        state = pulses or dict(OFFICIAL_ARM)
+        p = pulses or dict(OFFICIAL_ARM)
+        print('place2：使用记录的 21-24 放下脉宽', flush=True)
+        set_servos(board, p, [21, 22, 23, 24])
+        state = dict(p)
     arm_fine_tune(board, state, 'place')
 
 
