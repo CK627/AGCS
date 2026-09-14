@@ -17,7 +17,7 @@ cd Code
 ./pull_from_robot.sh pi@10.194.228.89      # 拉回机器人上现场标定的配置/SDK
 
 # 连机器人 & 调试前必停自启服务（抢串口 /dev/ttyAMA0）
-ssh pi@10.194.228.89       # 密码 raspberrypi
+ssh pi@10.194.228.89       # 密码：先 export SSHPASS=<机器人密码>
 sudo systemctl stop spiderpi               # joystick 若在跑也停
 
 # 跑主入口
@@ -29,7 +29,7 @@ python3 auto_fetch.py --detector yolo --model models/worm_best.onnx   # 虫识�
 ls -t /home/pi/spiderpi/logs/*/*.log | head -1 | xargs tail -50
 
 # 单文件手工同步
-sshpass -p raspberrypi scp 文件 pi@10.194.228.89:/home/pi/spiderpi/...
+sshpass -e scp 文件 pi@10.194.228.89:/home/pi/spiderpi/...  # 先 export SSHPASS
 ```
 
 无测试框架、无 lint、无构建——"验证"就是在机器人上跑。`Code/tasks/ceshi/` 是单测脚本（CS-zq 纯 IK 夹取、CS-sx 搜索等），按需手动运行。
