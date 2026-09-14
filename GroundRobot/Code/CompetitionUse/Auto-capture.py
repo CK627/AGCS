@@ -54,7 +54,7 @@ IMU_STRAIGHT_STEP = 1    # 直线阶段 IMU 每次修正的角度
 COLOR_CENTER_TOL = 3.0   # 色块中心允许偏差，单位：像素；偏差小于该值不调整
 COLOR_CORRECT_MM = 7     # 颜色左右微调每次移动的距离，单位：毫米
 COLOR_MIN_RADIUS = 0     # 色块半径小于该值时暂不进行颜色微调
-COLOR_DIRECTION_SIGN = 1  # 颜色修正方向：1=默认，-1=左右指令反向后使用
+COLOR_DIRECTION_SIGN = -1  # 颜色修正方向：1=默认，-1=左右指令反向后使用
 IMU_DIRECTION_SIGN = 1    # IMU 转向方向：1=默认，-1=左右指令反向后使用
 LOW_VOLTAGE = 11.3         # 电压低于该值时，第一次夹取前补距离
 VOLTAGE_EXTRA_MIN = 40     # 电压补偿最小距离，单位毫米
@@ -342,7 +342,7 @@ def color_keep_center(ik, board, detector, tilt, color_state):
         time.sleep(0.2)
         print('24 号下移微调 -> %d' % tilt['pulse'], flush=True)
         return False
-    cx = det.get('bbox_center_x', det['center'][0])
+    cx = det['center'][0]  # 直接用质心(640宽坐标系)，bbox_center_x 是 320宽混算的，别用
     if det.get('radius', 0) < COLOR_MIN_RADIUS:
         print('目标较远，暂不做颜色微调，依赖 IMU 保持航向', flush=True)
         return False
