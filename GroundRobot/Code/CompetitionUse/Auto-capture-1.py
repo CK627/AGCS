@@ -99,7 +99,7 @@ VOLTAGE_EXTRA_LOW_V = 10.3  # 补偿达到最大距离时对应的电压
 
 
 # ---------- 模型 + 雅可比（阶段二） ----------
-DEFAULT_MODEL = 'models/worm_best.onnx'  # 默认模型路径（相对 spiderpi 根目录）
+DEFAULT_MODEL = 'models/best.onnx'  # 默认模型路径（相对 spiderpi 根目录）
 MODEL_CONF = 0.35          # 模型置信度阈值
 JAC_DELTA = 20             # 标定时每个舵机的扰动脉宽
 CALIB_SAMPLES = 5          # 标定时 bbox 中心平均帧数
