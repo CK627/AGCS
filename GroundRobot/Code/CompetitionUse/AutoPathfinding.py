@@ -262,10 +262,10 @@ class Camera:
 
 # ---------------- 连续追踪线程（复刻 ColorTracker 纯 P 控制）----------------
 class Tracker:
-    def __init__(self, board, detect):
+    def __init__(self, board, detect, x_dis=500, y_dis=260):
         self.board = board
         self.detect = detect
-        self.x_dis, self.y_dis = 500, 260
+        self.x_dis, self.y_dis = x_dis, y_dis
         self.latest = None
         self.lost_frames = 0
         self._lock = threading.Lock()
@@ -470,7 +470,7 @@ class Pathfinder:
         """启动追踪线程，转身对准 + 小步前进逼近，深度判距到位。"""
         cx, cy = det['center']
         print('找到目标 中心=(%d,%d)' % (cx, cy))
-        self.tracker = Tracker(self.board, self.detect)
+        self.tracker = Tracker(self.board, self.detect, self.x_dis, self.y_dis)
         self.tracker.start()
 
         # 转身对准：追踪线程让 21 跟着目标，转身体让 21 回中
