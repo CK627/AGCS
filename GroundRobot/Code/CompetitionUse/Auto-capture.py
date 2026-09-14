@@ -43,6 +43,7 @@ OFFICIAL_ARM = {21: 500, 22: 705, 23: 90, 24: 330}  # 机械臂官方初始脉�
 
 GRIPPER_CLOSE = 700  # 夹取时 25 号夹爪闭合的脉宽，越大夹得越紧
 GRIPPER_OPEN = 400   # 放下时 25 号夹爪打开的脉宽，越小张得越开
+PULL_UP_23 = 200     # 第一次夹取后 23 后仰先拔起来的目标脉宽
 MOVE_SPEED = 50      # 六足直线前进/后退的速度，越大走得越快
 TURN_SPEED = 30      # 六足左转/右转的速度，越大转得越快
 GYRO_SCALE_LEFT = 1.177   # IMU 左转时陀螺仪积分修正比例
@@ -135,7 +136,7 @@ def parse_adjust(cmd):
     return int(m.group(1)), (1 if m.group(2) == 'w' else -1), (int(m.group(3)) if m.group(3) else 5)
 
 
-def arm_fine_tune(board, state, kind):
+def arm_fine_tune(board, state, kind, pull_up=False):
     """机械臂手动微调，回车执行夹取/放下。"""
     print('机械臂微调：回车=%s，c=退出' % ('夹取' if kind == 'pick' else '放下'), flush=True)
     while True:
@@ -160,6 +161,10 @@ def arm_fine_tune(board, state, kind):
     board.bus_servo_set_position(2.0, [[25, gripper]])
     time.sleep(2.0)
     time.sleep(0.5)
+    if pull_up:
+        # 23 后仰先把目标拔起来，再恢复初始位置
+        board.bus_servo_set_position(1.0, [[23, PULL_UP_23]])
+        time.sleep(1.0)
     restore_travel(board, gripper)
 
 
@@ -315,6 +320,20 @@ def init_imu(board):
     return {'bias': bias, 'yaw': 0.0, 'last_t': time.monotonic()}
 
 
+def reset_imu(board, imu_state):
+    """转弯后重新标定 gz 零漂并清零航向积分（消除累积漂移导致的误纠）。"""
+    vals = []
+    while len(vals) < 100:
+        gz = read_gz(board)
+        if gz is not None:
+            vals.append(gz)
+        time.sleep(0.005)
+    if vals:
+        imu_state['bias'] = sum(vals) / len(vals)
+    imu_state['yaw'] = 0.0
+    imu_state['last_t'] = time.monotonic()
+
+
 def update_imu(state, board):
     """更新 IMU 偏航角。"""
     now = time.monotonic()
@@ -467,7 +486,7 @@ def do_pick(board, pick_count, pulses=None):
         state = pick1_prepare(board, pulses)
     else:
         state = pick2_prepare(board, pulses)
-    arm_fine_tune(board, state, 'pick')
+    arm_fine_tune(board, state, 'pick', pull_up=(pick_count == 1))
 
 
 def do_place(board, place_count, pulses=None):
@@ -575,6 +594,7 @@ def main():
                 left_turn_compensated = True
             print('%d/%d IMU左转 %d' % (i, len(actions), angle), flush=True)
             imu_turn(ik, board, imu_state, angle)
+            reset_imu(board, imu_state)
             target_yaw = imu_state['yaw']
             report(heading_deg=norm_heading(imu_state['yaw']),
                    message='左转 %d°' % angle)
@@ -587,6 +607,7 @@ def main():
             angle = int(act.get('angle', 90))
             print('%d/%d IMU右转 %d' % (i, len(actions), angle), flush=True)
             imu_turn(ik, board, imu_state, -angle)
+            reset_imu(board, imu_state)
             target_yaw = imu_state['yaw']
             report(heading_deg=norm_heading(imu_state['yaw']),
                    message='右转 %d°' % angle)
