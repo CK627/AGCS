@@ -108,6 +108,14 @@ MAX_PULSE_STEP = 40        # 精对准单步舵机最大增量
 MAX_ALIGN_ITER = 8         # 精对准最大迭代次数
 
 
+# ---------- 模型直接靠近 ----------
+MODEL_STOP_W = 140         # 目标 bbox 宽度达到该值(像素)视为够近，停止靠近
+MODEL_STEP_MM = 30         # 靠近每步前进 mm
+MODEL_SEARCH_TURN = 15     # 未检测到目标时左转搜索角度
+MODEL_CENTER_TOL = 40      # 目标中心允许偏差(像素)，小于该值不左右移
+MODEL_MAX_STEP = 80        # 靠近最多步数
+
+
 camera_lock = threading.Lock()
 
 
@@ -657,6 +665,37 @@ def fine_align(board, detector, calib, arm_state):
     return False
 
 
+def model_approach(board, ik, model_det, stop_w=MODEL_STOP_W):
+    """用 YOLO 模型直接检测目标并慢慢靠近：左右居中 + 前进，直到 bbox 宽度够大。
+
+    不依赖固定路线。检测不到就左转搜索；检测到就按目标中心左右平移、再前进一小步。
+    """
+    for i in range(MODEL_MAX_STEP):
+        det = model_det.detect()
+        if det is None:
+            print('未检测到目标，左转搜索', flush=True)
+            ik.turn_left(ik.initial_pos, 2, MODEL_SEARCH_TURN, TURN_SPEED, 1)
+            time.sleep(0.4)
+            continue
+        cx = det['x'] + det['w'] / 2.0
+        w = det['w']
+        print('模型检测 #%d cx=%.1f w=%d conf=%.2f' % (i, cx, w, det.get('conf', 0)),
+              flush=True)
+        if w >= stop_w:
+            print('目标已够近(w=%d)，停止靠近' % w, flush=True)
+            return det
+        if cx < 320 - MODEL_CENTER_TOL:
+            ik.left_move(ik.initial_pos, 2, LEFT_CORRECT_MM, MOVE_SPEED, 1)
+            print('目标偏左，左移 %dmm' % LEFT_CORRECT_MM, flush=True)
+        elif cx > 320 + MODEL_CENTER_TOL:
+            ik.right_move(ik.initial_pos, 2, COLOR_CORRECT_MM, MOVE_SPEED, 1)
+            print('目标偏右，右移 %dmm' % COLOR_CORRECT_MM, flush=True)
+        ik.go_forward(ik.initial_pos, 2, MODEL_STEP_MM, MOVE_SPEED, 1)
+        time.sleep(0.1)
+    print('靠近步数用尽，未到目标', flush=True)
+    return None
+
+
 def load_calib(pick_num):
     """读取第 pick_num 次夹取的雅可比标定，无文件返回 None。"""
     p = calib_path(pick_num)
@@ -750,6 +789,8 @@ def main():
     parser.add_argument('--classes', default='', help='目标类别，逗号分隔；留空=接受所有类别')
     parser.add_argument('--calibrate', type=int, choices=[1, 2], default=None,
                         help='只做第 1/2 次夹取的雅可比标定')
+    parser.add_argument('--approach', action='store_true',
+                        help='直接启用模型检测并慢慢靠近(不走固定路线)')
     args = parser.parse_args()
 
     with open(ROUTE_PATH, 'r', encoding='utf-8') as f:
@@ -777,6 +818,22 @@ def main():
     # 标定模式：只摆臂 + 标定，不走完整路线
     if args.calibrate is not None:
         run_calibrate(board, model_det, args.calibrate, actions)
+        restore_travel(board, GRIPPER_OPEN)
+        video_stop.set()
+        cam.camera_close()
+        return
+
+    # 模型直接靠近模式：不走固定路线，直接启用模型检测并慢慢靠近，够近后夹取
+    if args.approach:
+        print('模型直接靠近模式', flush=True)
+        ik.stand(ik.initial_pos, t=500)
+        time.sleep(0.5)
+        det = model_approach(board, ik, model_det)
+        if det is not None:
+            picks = find_pick_actions(actions)
+            pulses = picks[0]['pulses'] if picks else None
+            calib = load_calib(1)
+            do_pick(board, 1, pulses, model_det, calib)
         restore_travel(board, GRIPPER_OPEN)
         video_stop.set()
         cam.camera_close()
