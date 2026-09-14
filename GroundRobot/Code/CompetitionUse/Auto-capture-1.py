@@ -84,7 +84,8 @@ ENABLE_IMU_STRAIGHT = True  # 直线阶段是否启用 IMU 航向修正
 
 # ---------- 颜色（阶段一） ----------
 COLOR_CENTER_TOL = 3.0     # 色块中心允许偏差，像素
-COLOR_CORRECT_MM = 7       # 颜色左右微调每次移动距离，毫米
+COLOR_CORRECT_MM = 7       # 向右微调每次移动距离，毫米
+LEFT_CORRECT_MM = 10       # 向左微调每次移动距离，毫米（向左力度加大）
 COLOR_MIN_RADIUS = 0       # 色块半径小于该值暂不微调
 COLOR_DIRECTION_SIGN = 1   # 颜色修正方向：1=默认，-1=反向
 IMU_DIRECTION_SIGN = 1     # IMU 转向方向：1=默认，-1=反向
@@ -479,12 +480,12 @@ def color_keep_center(ik, board, detector, tilt, color_state):
             ik.right_move(ik.initial_pos, 2, COLOR_CORRECT_MM, MOVE_SPEED, 1)
             print('色块右偏，机械足右移 %dmm' % COLOR_CORRECT_MM, flush=True)
         else:
-            ik.left_move(ik.initial_pos, 2, COLOR_CORRECT_MM, MOVE_SPEED, 1)
-            print('色块右偏，机械足左移 %dmm（方向反向）' % COLOR_CORRECT_MM, flush=True)
+            ik.left_move(ik.initial_pos, 2, LEFT_CORRECT_MM, MOVE_SPEED, 1)
+            print('色块右偏，机械足左移 %dmm（方向反向）' % LEFT_CORRECT_MM, flush=True)
     else:
         if COLOR_DIRECTION_SIGN > 0:
-            ik.left_move(ik.initial_pos, 2, COLOR_CORRECT_MM, MOVE_SPEED, 1)
-            print('色块左偏，机械足左移 %dmm' % COLOR_CORRECT_MM, flush=True)
+            ik.left_move(ik.initial_pos, 2, LEFT_CORRECT_MM, MOVE_SPEED, 1)
+            print('色块左偏，机械足左移 %dmm' % LEFT_CORRECT_MM, flush=True)
         else:
             ik.right_move(ik.initial_pos, 2, COLOR_CORRECT_MM, MOVE_SPEED, 1)
             print('色块左偏，机械足右移 %dmm（方向反向）' % COLOR_CORRECT_MM, flush=True)
@@ -825,7 +826,7 @@ def main():
         if name == 'turn_left':
             if first_place_done:
                 turns_after_first_place += 1
-                if turns_after_first_place >= 2:
+                if turns_after_first_place >= 6:
                     color_enabled = True
                     color_state['ref_cx'] = None
             angle = int(act.get('angle', 90))
@@ -839,7 +840,7 @@ def main():
         elif name == 'turn_right':
             if first_place_done:
                 turns_after_first_place += 1
-                if turns_after_first_place >= 2:
+                if turns_after_first_place >= 6:
                     color_enabled = True
                     color_state['ref_cx'] = None
             angle = int(act.get('angle', 90))
@@ -857,6 +858,7 @@ def main():
         elif name == 'place':
             place_count += 1
             print('%d/%d place%d' % (i, len(actions), place_count), flush=True)
+            apply_voltage_compensation(board, ik)
             pulses = {int(k): int(v) for k, v in act.get('pulses', {}).items()} \
                 if act.get('pulses') else None
             do_place(board, place_count, pulses)
