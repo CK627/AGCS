@@ -567,7 +567,7 @@ def main():
         if name == 'turn_left':
             if first_place_done:
                 turns_after_first_place += 1
-                if turns_after_first_place >= 2:
+                if turns_after_first_place >= 6:
                     color_enabled = True
                     color_state['ref_cx'] = None
             angle = int(act.get('angle', 90))
@@ -583,7 +583,7 @@ def main():
         elif name == 'turn_right':
             if first_place_done:
                 turns_after_first_place += 1
-                if turns_after_first_place >= 2:
+                if turns_after_first_place >= 6:
                     color_enabled = True
                     color_state['ref_cx'] = None
             angle = int(act.get('angle', 90))
@@ -604,6 +604,7 @@ def main():
         elif name == 'place':
             place_count += 1
             print('%d/%d place%d' % (i, len(actions), place_count), flush=True)
+            apply_voltage_compensation(board, ik)
             pulses = {int(k): int(v) for k, v in act.get('pulses', {}).items()} if act.get('pulses') else None
             do_place(board, place_count, pulses)
             report(message='第 %d 次放下完成' % place_count)
