@@ -832,7 +832,10 @@ def main():
     ik = make_ik(board)
     cam, read_frame, color_detector, publish = open_vision(args.color, args.min_area)
     classes = [c.strip() for c in args.classes.split(',') if c.strip()]
-    model_det = ModelDetector(args.model, args.conf, classes, read_frame, publish)
+    # 相对路径按 spiderpi 根目录解析（模型/地图在 ~/spiderpi/models/ 下，不在 CompetitionUse/ 下）
+    model_path = args.model if os.path.isabs(args.model) else os.path.join(_PKG_ROOT, args.model)
+    map_path = args.map if os.path.isabs(args.map) else os.path.join(_PKG_ROOT, args.map)
+    model_det = ModelDetector(model_path, args.conf, classes, read_frame, publish)
 
     video_stop = threading.Event()
     video_thread = threading.Thread(
@@ -872,13 +875,13 @@ def main():
     # 深度定位（可选，用于校正 IMU 航向漂移）
     depth_cam = None
     localizer = None
-    if os.path.exists(args.map):
+    if os.path.exists(map_path):
         try:
             depth_cam = DepthCamera()
             depth_cam.open()
             depth_cam.start_depth()
-            localizer = Localizer(args.map)
-            print('深度定位已启用，地图=%s' % args.map, flush=True)
+            localizer = Localizer(map_path)
+            print('深度定位已启用，地图=%s' % map_path, flush=True)
         except Exception as e:
             print('深度定位初始化失败: %s' % e, flush=True)
             if depth_cam is not None:
