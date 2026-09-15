@@ -102,7 +102,7 @@ ls -t /home/pi/spiderpi/logs/*/autocapture/*.log | head -1 | xargs tail -80
 - **`detect()` 契约**：`detect(min_area)` 返回 `dict(center=(cx,cy), radius, area, color, contour)` 或 `None`。search / competition 脚本 / tracker 都消费这个接口；换 YOLO 检测器只改调用处的闭包内部，下游不动。
 - **参数全部在 `config/robot_params.yaml`**，经 `load_params()` 读入。顶层组：`vision` / `walk` / `obstacle` / `nav` / `arm` / `search` / `align` / `gimbal_fetch` / `grab`。调行为 = 改 yaml。注意：删掉过一批 gimbal 调参键，代码用 `.get(key, 默认值)` 兜底不崩，但 settle 等待回落默认值（见 `进度清单.md` §7.3）。
 - **距离判定**：主距离用**深度相机**（Astra Pro，mm）；视觉面积估距 `dist = area_k / sqrt(area)`（`gimbal_fetch.area_k`）仅作粗略参考；超声波只做避障（近距离乱跳）。
-- **像素→机械臂坐标**：单目用 `geometry.py`（地面平面假设 + `pick_z` 高度参数）；深度相机直接测 `(x,y,z)`，不走平面假设。手眼标定 `config/camera_cal.yaml` 的 `block_params` 只存在于机器人端，本地 `load_block_params()` 失败属正常；`cam2arm.yaml` 本地仍是占位值（R=I,t=0），需现场标定（标定脚本 `calib_cam2arm.py` 已随 `9ef5f09` 删除，`git show 9ef5f09^:./Code/CompetitionUse/calib_cam2arm.py` 取回）。
+- **像素→机械臂坐标**：单目用 `geometry.py`（地面平面假设 + `pick_z` 高度参数）；深度相机直接测 `(x,y,z)`，不走平面假设。手眼标定 `config/camera_cal.yaml` 的 `block_params` 只存在于机器人端，本地 `load_block_params()` 失败属正常；`cam2arm.yaml` 本地仍是占位值（R=I,t=0），需现场标定（标定脚本 `CompetitionUse/calib_cam2arm.py`：ArUco 标记 + Kabsch 点对应，采 ≥3 个不共线点解 R/t 写回 cam2arm.yaml）。
 - **日志**：`logs.py`，`action_msg(progress, reason, action)` 拼结构化中文消息；写到 `/home/pi/spiderpi/logs/<日期>/<时-分>.log`，debug 只进文件。
 
 ## 深度相机（Astra Pro）—— 高度问题的解法
