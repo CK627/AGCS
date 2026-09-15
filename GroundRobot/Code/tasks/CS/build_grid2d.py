@@ -1,17 +1,19 @@
 #!/usr/bin/python3
 # coding=utf8
-"""2D 建图：原地转一圈 + 深度压 2D → 累加成 2D 地图。
+"""2D 建图：沿路线边走边采，2D ICP 增量建图（符合田间作业）。
 
-机器人放到作业空间大致中心（不放植株），原地转一圈（IMU 反馈转角），每转一步
-取深度点云压成 2D（墙/障碍轮廓），按当前航向旋转到世界系，累加。输出
-map2d.npz（pts: (N,2)，世界 mm，原点 = 机器人起点）。
+机器人沿 fixed_route.json 走一遍（只走 forward/back/turn，跳过 pick/place/stand），
+每走一步取深度点云压成 2D 墙/障碍轮廓，用 ICP 匹配到已建地图精化位姿，再累加。
+输出 map2d.npz（pts: (N,2) 世界 mm，原点 = 起点）。
 
-相比 3D 建图：没有顶棚/护栏干扰、点少、快。
+位姿：theta=航向(度, 0=+y 前)，t=位置(mm)。相机 2D 点(x右,y前) → 世界 =
+R(theta)@点 + t。odometry 用「命令步数/角度」作初值，ICP 精化。
 
 用法（先 sudo systemctl stop spiderpi）：
-    python3 build_grid2d.py --out /tmp/map2d.npz --views 24 --pitch 45
+    python3 build_grid2d.py --route CompetitionUse/fixed_route.json --out /tmp/map2d.npz --pitch 45
 """
 import argparse
+import json
 import os
 import sys
 import time
@@ -22,52 +24,9 @@ _PKG_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 if _PKG_ROOT not in sys.path:
     sys.path.insert(0, _PKG_ROOT)
 
-from agcs_lib import DepthCamera, make_board, make_ik, stand
-from agcs_lib.pcl2d import depth_to_2d, voxel_2d
-
-
-def read_gz(board):
-    try:
-        data = board.get_imu()
-        return float(data[5]) if data is not None else None
-    except Exception:
-        return None
-
-
-def init_imu(board):
-    board.enable_reception()
-    vals = []
-    while len(vals) < 200:
-        gz = read_gz(board)
-        if gz is not None:
-            vals.append(gz)
-        time.sleep(0.005)
-    return {'bias': sum(vals) / len(vals) if vals else 0.0,
-            'yaw': 0.0, 'last_t': time.monotonic()}
-
-
-def update_yaw(state, board):
-    now = time.monotonic()
-    dt = now - state['last_t']
-    state['last_t'] = now
-    gz = read_gz(board)
-    if gz is None:
-        return
-    state['yaw'] += (gz - state['bias']) * dt * 1.18
-
-
-def turn_to_heading(ik, board, imu_state, target_yaw):
-    for _ in range(40):
-        update_yaw(imu_state, board)
-        err = target_yaw - imu_state['yaw']
-        if abs(err) <= 1.0:
-            return
-        step = min(5.0, abs(err))
-        if err > 0:
-            ik.turn_left(ik.initial_pos, 2, int(step), 60, 1)
-        else:
-            ik.turn_right(ik.initial_pos, 2, int(step), 60, 1)
-        time.sleep(0.25)
+from agcs_lib import (DepthCamera, make_board, make_ik, stand,
+                      turn_left, turn_right, go_forward, go_back)
+from agcs_lib.pcl2d import depth_to_2d, voxel_2d, icp_2d
 
 
 def _rot2(deg):
@@ -76,15 +35,29 @@ def _rot2(deg):
     return np.array([[c, -s], [s, c]], dtype=np.float32)
 
 
+def capture_2d(cam, pitch, min_h, max_h):
+    """采一帧深度压 2D，返回 (M,2) 相机系点。"""
+    d = cam.read_depth(timeout_ms=2000)
+    if d is None:
+        return None
+    pcl = cam.depth_to_pointcloud(d)
+    valid = ~np.isnan(pcl[:, :, 0])
+    pts3d = pcl[valid].reshape(-1, 3).astype(np.float32)
+    return depth_to_2d(pts3d, pitch, min_h, max_h)
+
+
 def main():
-    parser = argparse.ArgumentParser(description='2D 建图（原地转一圈）')
+    parser = argparse.ArgumentParser(description='2D 建图（沿路线边走边采）')
+    parser.add_argument('--route', default='fixed_route.json')
     parser.add_argument('--out', default='/tmp/map2d.npz')
-    parser.add_argument('--views', type=int, default=24, help='360° 视角数')
     parser.add_argument('--pitch', type=float, default=45.0, help='相机下俯角(度)')
     parser.add_argument('--min-h', type=float, default=150.0, help='墙高度带下限(mm)')
     parser.add_argument('--max-h', type=float, default=1500.0, help='墙高度带上限(mm)')
     parser.add_argument('--voxel', type=float, default=50.0, help='2D 下采样体素(mm)')
     args = parser.parse_args()
+
+    with open(args.route, 'r', encoding='utf-8') as f:
+        actions = json.load(f)
 
     cam = DepthCamera()
     cam.open()
@@ -94,34 +67,57 @@ def main():
     ik = make_ik(board)
     stand(ik)
     time.sleep(1.5)
-    imu_state = init_imu(board)
 
-    map_parts = []
-    step = 360.0 / args.views
-    target_yaw = 0.0
+    theta = 0.0            # 航向(度)
+    t = np.zeros(2, dtype=np.float32)  # 位置(mm)
+    map_parts = []         # 累计地图（世界系 2D 点）
     try:
-        for v in range(args.views):
-            time.sleep(0.5)  # 站稳
-            d = cam.read_depth(timeout_ms=2000)
-            if d is None:
-                print('视角 %d/%d 深度读取失败' % (v + 1, args.views), flush=True)
+        for i, act in enumerate(actions, 1):
+            name = act.get('action')
+            moved = False
+            if name == 'forward':
+                step = int(act.get('step', 100))
+                fwd = np.array([np.sin(np.radians(theta)), np.cos(np.radians(theta))])
+                t = t + step * fwd
+                go_forward(ik, step=step, speed=50)
+                moved = True
+            elif name == 'back':
+                step = int(act.get('step', 50))
+                fwd = np.array([np.sin(np.radians(theta)), np.cos(np.radians(theta))])
+                t = t - step * fwd
+                go_back(ik, step=step)
+                moved = True
+            elif name == 'turn_left':
+                angle = int(act.get('angle', 90))
+                theta += angle
+                turn_left(ik, angle=angle, speed=60)
+                moved = True
+            elif name == 'turn_right':
+                angle = int(act.get('angle', 90))
+                theta -= angle
+                turn_right(ik, angle=angle, speed=60)
+                moved = True
             else:
-                pcl = cam.depth_to_pointcloud(d)
-                valid = ~np.isnan(pcl[:, :, 0])
-                pts3d = pcl[valid].reshape(-1, 3).astype(np.float32)
-                pts2d = depth_to_2d(pts3d, args.pitch, args.min_h, args.max_h)
-                if len(pts2d) < 20:
-                    print('视角 %d/%d 2D 点太少(%d)' % (v + 1, args.views, len(pts2d)),
-                          flush=True)
-                else:
-                    world = (_rot2(target_yaw) @ pts2d.T).T  # 转世界
-                    map_parts.append(world)
-                    print('视角 %d/%d yaw=%.1f° 2D点=%d'
-                          % (v + 1, args.views, target_yaw, len(pts2d)), flush=True)
-            if v < args.views - 1:
-                target_yaw += step
-                turn_to_heading(ik, board, imu_state, target_yaw)
-                time.sleep(0.5)
+                continue  # pick/place/stand 跳过
+
+            time.sleep(0.3)
+            pts2d = capture_2d(cam, args.pitch, args.min_h, args.max_h)
+            if pts2d is None or len(pts2d) < 20:
+                print('%d/%d %s 2D点太少' % (i, len(actions), name), flush=True)
+                continue
+
+            # ICP 精化位姿（有地图后）
+            if len(map_parts) > 0:
+                map_all = voxel_2d(np.vstack(map_parts), args.voxel)
+                res = icp_2d(pts2d, map_all, init_theta=np.radians(theta), init_t=t)
+                if res is not None:
+                    theta = np.degrees(res[0])
+                    t = res[1]
+
+            world = (_rot2(theta) @ pts2d.T).T + t
+            map_parts.append(world)
+            print('%d/%d %s theta=%.1f° t=(%.0f,%.0f) 2D点=%d'
+                  % (i, len(actions), name, theta, t[0], t[1], len(pts2d)), flush=True)
     finally:
         cam.close()
         stand(ik)
@@ -129,9 +125,10 @@ def main():
     if not map_parts:
         print('FAIL：没有采到 2D 点', flush=True)
         return
-    pts = np.vstack(map_parts)
-    pts = voxel_2d(pts, args.voxel)
-    os.makedirs(os.path.dirname(args.out), exist_ok=True)
+    pts = voxel_2d(np.vstack(map_parts), args.voxel)
+    outdir = os.path.dirname(args.out)
+    if outdir:
+        os.makedirs(outdir, exist_ok=True)
     np.savez_compressed(args.out, pts=pts)
     print('已存 %s (%d 点)，x %.0f..%.0f y %.0f..%.0f'
           % (args.out, len(pts), pts[:, 0].min(), pts[:, 0].max(),
