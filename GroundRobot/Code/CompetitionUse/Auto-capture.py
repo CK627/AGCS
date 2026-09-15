@@ -605,7 +605,6 @@ def main():
 
     board = make_board()
     ik = make_ik(board)
-    extra_applied = False
     imu_state = init_imu(board)
     cam, detector = open_vision(args.color, args.min_area)
 

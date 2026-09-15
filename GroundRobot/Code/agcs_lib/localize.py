@@ -6,7 +6,9 @@
 ICP 匹配到预建地图，得到相机/机器人在世界（地图）坐标系下的位姿，用来校正
 IMU 航向漂移。
 
-地图文件(.npz)由 tasks/CS/CS-build-map.py 生成，含 pts(N,3) + normals(N,3)。
+地图文件(.npz)含 pts(N,3) + normals(N,3)，由建图脚本生成。建图脚本原在
+tasks/CS/CS-build-map.py，已随 9ef5f09 删除，要重扫地图从 git 取回：
+    git show 9ef5f09^:./Code/tasks/CS/CS-build-map.py > /tmp/CS-build-map.py
 """
 import numpy as np
 from scipy.spatial import cKDTree

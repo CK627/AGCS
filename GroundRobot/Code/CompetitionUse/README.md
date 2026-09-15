@@ -20,7 +20,7 @@
 
 | 脚本 | 作用 |
 |------|------|
-| `fixed_route.json` | 2.5 固定路线动作序列（前进/转弯/夹取/放下脉宽）。**机器人上那份比本地新，别整目录同步** |
+| `fixed_route.json` | 2.5 固定路线动作序列（前进/转弯/夹取/放下脉宽）。本地这份是 **89 步**（pick 在第 11 / 55 步）；现场调过路线后两边会走岔，**同步前先 diff，别整目录覆盖** |
 | `NO6-NO7-流程说明.md` | NO6/NO7 的设计与踩坑记录（改这两个脚本前先读） |
 | `1.py` | 临时测试：NO6 寻路 + YOLO 夹取（不读 JSON 的 pick，place 仍读 JSON） |
 
@@ -37,7 +37,7 @@ python3 VisualTracking.py --color yellow                     # 2.1
 python3 AutoPathfinding.py --color yellow                    # 2.2
 python3 AutonomousCrawling.py                                # 2.3
 python3 Auto-capture.py --color red                          # 2.5 正常版
-python3 Auto-capture-1.py --model models/fake_bug.onnx --color blue   # 2.5 进阶版(YOLO)
+python3 Auto-capture-1.py --model models/best.onnx --color blue   # 2.5 进阶版(YOLO)
 ```
 
 ## 说明

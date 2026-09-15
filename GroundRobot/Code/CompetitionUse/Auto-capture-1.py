@@ -1,17 +1,21 @@
 #!/usr/bin/python3
 # coding=utf8
-"""NO7：两级对准夹取。
+"""NO7：两级对准夹取（文件名 `Auto-capture-1.py`，旧称 NO7）。
 
 阶段一：完全沿用 NO6 的「颜色左右微调 + IMU 航向保持」导航，把机器人带到固定夹取点附近。
-阶段二：到夹取点后，用真实模型（默认 models/base.pt）检测目标矩形框，再通过标定好的
+阶段二：到夹取点后，用真实模型（默认 models/best.onnx）检测目标矩形框，再通过标定好的
         雅可比矩阵把像素误差换算成机械臂 21-24 号舵机增量，自动做精对准。
 对准结束后仍保留手动微调 + 回车夹取 / c 退出，验证流程不变。
 
 标定（一次性，每个夹取点做一次）：
-    python3 NO7.py --calibrate 1 --model models/base.pt --color red
-    python3 NO7.py --calibrate 2 --model models/base.pt --color red
+    python3 Auto-capture-1.py --calibrate 1 --model models/best.onnx --color red
+    python3 Auto-capture-1.py --calibrate 2 --model models/best.onnx --color red
 运行：
-    python3 NO7.py --model models/base.pt --color red
+    python3 Auto-capture-1.py --model models/best.onnx --color red
+
+其它模式：
+    --approach      不走固定路线，直接让模型边找边靠近再夹
+    --imu-straight off / --turn-tol N   现场调直线段航向修正
 """
 
 import argparse

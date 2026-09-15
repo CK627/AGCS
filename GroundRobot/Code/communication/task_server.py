@@ -54,6 +54,10 @@ latest_jpeg_lock = threading.Lock()
 latest_lab_jpeg = None
 latest_lab_lock = threading.Lock()
 _last_publish_time = 0.0
+# LAB 流必须有自己的限流时间戳。两个 publish_* 在采集闭包里是背靠背调用的
+# （同一时刻、同一个 max_fps），共用一份时间戳时先调用的那个会把后一个整个吃掉：
+# 颜色流正常刷新，LAB 流一帧都发不出去，/video_lab.mjpeg 永远只有 "no lab video"。
+_last_lab_publish_time = 0.0
 
 
 def publish_frame(frame, max_fps=10.0):
@@ -83,13 +87,19 @@ def publish_frame(frame, max_fps=10.0):
 
 
 def publish_lab_frame(frame, max_fps=10.0):
-    """发布 LAB 阈值图到 /video_lab.mjpeg。"""
-    global latest_lab_jpeg, _last_publish_time
+    """发布 LAB 阈值图到 /video_lab.mjpeg。
+
+    限流是与 publish_frame **各自独立**的（用 _last_lab_publish_time）——两个函数
+    在采集闭包里背靠背调用，共用时间戳会让 LAB 流被颜色流全部挤掉。检查与打戳
+    放在同一把锁里，和 publish_frame 保持一致，避免并发下双发。
+    """
+    global latest_lab_jpeg, _last_lab_publish_time
     interval = 1.0 / max(max_fps, 1.0)
     now = time.time()
-    if now - _last_publish_time < interval:
-        return
-    _last_publish_time = now
+    with latest_lab_lock:
+        if now - _last_lab_publish_time < interval:
+            return
+        _last_lab_publish_time = now
     try:
         import cv2
         ok, buf = cv2.imencode(
