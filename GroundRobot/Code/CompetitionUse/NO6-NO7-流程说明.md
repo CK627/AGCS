@@ -187,7 +187,9 @@ NO6 收尾会立正 → 上报 `END` → 停 5s 供中枢确认。
 并据此加了 `GYRO_FILTER_SAMPLES` 中位数滤波 + `dt` 钳位 + 直行段前重标零漂。**那版改动
 现场跑下来更糟**（yaw 每块掉 13~16°、每条命令都左转、一路转飞），已整体回退。
 
-重新定位，这次的结论有实测支撑（`CompetitionUse/imu_probe.py`，可复跑）：
+重新定位，这次的结论有实测支撑（`CompetitionUse/imu_probe.py`，可复跑。该探针已随
+2026-09-15 的非比赛文件清理删除，需要复跑先用
+`git show 9ef5f09^:./Code/CompetitionUse/imu_probe.py > CompetitionUse/imu_probe.py` 取回）：
 
 | 测的东西 | 结果 | 说明 |
 |---|---|---|

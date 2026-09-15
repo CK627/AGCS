@@ -3,7 +3,7 @@
 """比赛步骤 2.1 视觉追踪（默认黄色）：云台 21/24 PID 跟随色块 + 深度估位置。
 
 完全独立：只 import 标准库 + pip 库（cv2/numpy/flask）+ 官方 SDK（common）。
-不依赖 agcs_lib / _common / ColorTracker / communication.task_server。
+不依赖 agcs_lib / ColorTracker / communication.task_server。
 
 深度走 OpenNI2(libOpenNI2.so，ctypes 直调)、彩色走 /dev/video0(uvcvideo)。
 

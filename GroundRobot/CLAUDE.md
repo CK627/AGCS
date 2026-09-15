@@ -42,7 +42,7 @@ ls -t /home/pi/spiderpi/logs/*/*.log | head -1 | xargs tail -50
 ls -t /home/pi/spiderpi/logs/*/autocapture/*.log | head -1 | xargs tail -80
 ```
 
-无测试框架、无 lint、无构建——"验证"就是在机器人上跑。`Code/tasks/CS/` 是 30+ 个单测 / 标定 / 建图脚本（CS-zq 纯 IK 夹取、CS-sx 搜索、scan_2d 建图、calib_pitch 标俯仰等），按需手动运行。
+无测试框架、无 lint、无构建——"验证"就是在机器人上跑。`Code/tasks/`（30+ 个单测 / 标定 / 建图脚本，CS-zq 纯 IK 夹取、CS-sx 搜索、scan_2d 建图、calib_pitch 标俯仰等）已于 2026-09-15 随非比赛文件一起删除（commit `9ef5f09`，机器人侧同步删）。需要时从 git 取回，例如 `git show 9ef5f09^:./Code/tasks/CS/CS-zq.py`。
 
 ## 代码架构
 
@@ -60,7 +60,7 @@ ls -t /home/pi/spiderpi/logs/*/autocapture/*.log | head -1 | xargs tail -80
 
 ### `Code/` 分层（关键抽象）
 
-`Code/` 镜像机器人 `~/spiderpi`。核心是 **`agcs_lib/` 二开封装层**：业务代码（`CompetitionUse/`、`tasks/`、`tasks/CS/`）只 import `agcs_lib`，绝不直接 import 官方 SDK（`common` / `calibration` / `arm_ik` / `sensor`）。`agcs_lib/__init__.py` 统一 re-export 工厂函数。
+`Code/` 镜像机器人 `~/spiderpi`。核心是 **`agcs_lib/` 二开封装层**：业务代码（`CompetitionUse/`）只 import `agcs_lib`，绝不直接 import 官方 SDK（`common` / `calibration` / `arm_ik` / `sensor`）。`agcs_lib/__init__.py` 统一 re-export 工厂函数。
 
 | 模块 | 职责 |
 |------|------|
@@ -80,7 +80,6 @@ ls -t /home/pi/spiderpi/logs/*/autocapture/*.log | head -1 | xargs tail -80
 | `agcs_lib/tracker.py` | 独立线程 PID 云台跟踪，主线程经 `latest()` 取数据 |
 | `agcs_lib/sensors.py` / `camera.py` / `logs.py` / `params.py` / `hardware.py` / `orientation.py` / `ClampRemoval.py` / `restore.py` | 超声波+点阵 / 取帧 / 日志 / 参数 / Board / 朝向角 / 固定夹持与复位 |
 | `communication/task_server.py` | Flask 服务（`/status` `/task` `/video.mjpeg`），机器人↔地面站通信 |
-| `tasks/auto_fetch.py` | **旧主入口**（search → grab_official），已被比赛脚本取代 |
 | `functions/` `advanced/` `kinematic_routines/` `spiderpi_sdk/` | 官方文件，别动 |
 
 ### 当前主线：比赛流程 `CompetitionUse/`
@@ -94,8 +93,9 @@ ls -t /home/pi/spiderpi/logs/*/autocapture/*.log | head -1 | xargs tail -80
 | 2.3 | `AutonomousCrawling.py` | 固定路线夹取→人脸识别→递物 | 仅官方 SDK |
 | 2.5 | `Auto-capture.py`（NO6） | JSON 路线 + IMU 航向 + 颜色微调 + 固定脉宽夹取/放下 | `agcs_lib` + `task_server` |
 | 2.5 进阶 | `Auto-capture-1.py`（NO7） | NO6 全套 + YOLO 检测 + 雅可比精对准 | 同上 + `calib_pick1/2.json`、`models/best.onnx` |
+| 2.5 试验 | `1.py`（**临时测试**） | **NO6 寻路 + YOLO 夹取**：读 JSON 的行动路线，但**不读 pick**，改用 YOLO 找目标；place 仍读 JSON | 同上 |
 
-辅助：`_common.py`（2.1~2.5 公共初始化 `build_runtime`）、`fixed_route.json`（2.5 路线动作序列）、`depth_3d_grasp.py`（方案 A 深度 3D 抓取验证）、`calib_cam2arm.py`（手眼标定，一次性）。
+辅助：`fixed_route.json`（2.5 路线动作序列）。`1.py` **不复制代码**——用 importlib 把 `Auto-capture-1.py` 当模块加载，只把 `do_pick`/`run_calibrate` 猴补丁成 YOLO 版（文件名带连字符是非法模块名，普通 import 做不到）。**注意：YOLO 靠近是「看着画面」走的，夹取点之后的路线里程基准会偏**，详见 `进度清单.md` §7.4。
 
 **NO6/NO7 关键设计**（改这两个脚本前读 `NO6-NO7-流程说明.md`）：forward/back 不立即执行，累加到 `pending_forward` 遇非直行动作才一次性走掉；距离切 100mm chunk 小步闭环；航向由 `agcs_lib/imu.py` 后台线程连续积分，IMU 只修一次转向误差就 `reset_imu()` 归零（`--imu-straight off` 可整体关掉直线段修正）；直线段航向死区**必须左右对称**（`TURN_TOL_DEG=3.0`，`--turn-tol` 可调）——写不对称会把机身稳态推向一侧，装在身上的相机跟着歪，颜色微调就一路往那边平移；颜色微调是平移、**不能**重置 `target_yaw`（重置等于把已攒下的航向误差一笔勾销，误差永不收敛）；夹取/放下前按电压补偿步长；第一次放下后关颜色微调、累计 6 次转弯再开。
 
@@ -104,7 +104,7 @@ ls -t /home/pi/spiderpi/logs/*/autocapture/*.log | head -1 | xargs tail -80
 - **`detect()` 契约**：`detect(min_area)` 返回 `dict(center=(cx,cy), radius, area, color, contour)` 或 `None`。search / competition 脚本 / tracker 都消费这个接口；换 YOLO 检测器只改调用处的闭包内部，下游不动。
 - **参数全部在 `config/robot_params.yaml`**，经 `load_params()` 读入。顶层组：`vision` / `walk` / `obstacle` / `nav` / `arm` / `search` / `align` / `gimbal_fetch` / `grab`。调行为 = 改 yaml。注意：删掉过一批 gimbal 调参键，代码用 `.get(key, 默认值)` 兜底不崩，但 settle 等待回落默认值（见 `进度清单.md` §7.3）。
 - **距离判定**：主距离用**深度相机**（Astra Pro，mm）；视觉面积估距 `dist = area_k / sqrt(area)`（`gimbal_fetch.area_k`）仅作粗略参考；超声波只做避障（近距离乱跳）。
-- **像素→机械臂坐标**：单目用 `geometry.py`（地面平面假设 + `pick_z` 高度参数）；深度相机直接测 `(x,y,z)`，不走平面假设。手眼标定 `config/camera_cal.yaml` 的 `block_params` 只存在于机器人端，本地 `load_block_params()` 失败属正常；`cam2arm.yaml` 本地仍是占位值（R=I,t=0），需现场 `calib_cam2arm.py` 标定。
+- **像素→机械臂坐标**：单目用 `geometry.py`（地面平面假设 + `pick_z` 高度参数）；深度相机直接测 `(x,y,z)`，不走平面假设。手眼标定 `config/camera_cal.yaml` 的 `block_params` 只存在于机器人端，本地 `load_block_params()` 失败属正常；`cam2arm.yaml` 本地仍是占位值（R=I,t=0），需现场标定（标定脚本 `calib_cam2arm.py` 已随 `9ef5f09` 删除，`git show 9ef5f09^:./Code/CompetitionUse/calib_cam2arm.py` 取回）。
 - **日志**：`logs.py`，`action_msg(progress, reason, action)` 拼结构化中文消息；写到 `/home/pi/spiderpi/logs/<日期>/<时-分>.log`，debug 只进文件。
 
 ## 深度相机（Astra Pro）—— 高度问题的解法
@@ -118,7 +118,7 @@ ls -t /home/pi/spiderpi/logs/*/autocapture/*.log | head -1 | xargs tail -80
 - **关节**：21=底座横转、22=肩、23=肘、24=腕俯仰（相机装这里）、25=夹爪。搜索动 21/24 + 六足，夹取动 21-25。相机看的方向完全由 21/24 脉宽决定（0~1000，500=朝前，24 起始 260）。
 - **机械臂复位位**：`arm.reset_pulses = {21:500, 22:705, 23:90, 24:330, 25:700}`。**本机 IK 与实物有偏差**：复位用标定好的固定脉宽，夹取才用 IK，两者别混。
 - **IMU 只有陀螺仪没有磁力计**：yaw 是 gz 按 dt 积分出的相对值，会缓慢漂移。长路线必须「每转一次弯就 `reset_imu()` 重标零漂 + yaw 归零」，误差不跨段传播；NO7 另用深度 ICP 对预建地图校正航向。
-- **IMU 必须密集采样**（`agcs_lib/imu.py` 的 `ImuTracker` 后台线程，约 105Hz）。官方 SDK 的 `imu_queue` 是 `maxsize=1` 且满了就丢，`get_imu()` 只能拿到「上次取走之后到达的第一个样本」——**两次调用之间的样本全丢**。所以**绝不能**「要用的时候读一个样本」再乘上一段多秒的 `dt`，那会灌进随机方向的假转角，直线段控制会发散（2026-09-15 现场就是这么转飞的）。`get_imu()` 只读队列不写串口，后台线程不会跟舵机指令抢 `/dev/ttyAMA0`。现场排查用 `CompetitionUse/imu_probe.py`。
+- **IMU 必须密集采样**（`agcs_lib/imu.py` 的 `ImuTracker` 后台线程，约 105Hz）。官方 SDK 的 `imu_queue` 是 `maxsize=1` 且满了就丢，`get_imu()` 只能拿到「上次取走之后到达的第一个样本」——**两次调用之间的样本全丢**。所以**绝不能**「要用的时候读一个样本」再乘上一段多秒的 `dt`，那会灌进随机方向的假转角，直线段控制会发散（2026-09-15 现场就是这么转飞的）。`get_imu()` 只读队列不写串口，后台线程不会跟舵机指令抢 `/dev/ttyAMA0`。现场排查用 `CompetitionUse/imu_probe.py`（已随 `9ef5f09` 删除，`git show 9ef5f09^:./Code/CompetitionUse/imu_probe.py > /tmp/imu_probe.py` 取回）。
 - `board.bus_servo_read_position()` 本机**只能写、不能读**物理脉宽（返回 None）。
 - **串口 `/dev/ttyAMA0` 同一时刻只能一个进程**占，调试前必 `systemctl stop spiderpi`（joystick 也停）。
 - 超声波近距离读数乱跳（-1、突跳几十 cm），不可作主距离。
@@ -128,7 +128,7 @@ ls -t /home/pi/spiderpi/logs/*/autocapture/*.log | head -1 | xargs tail -80
 
 ## 当前状态与工作约定
 
-- **主线是比赛流程脚本，不是夹取算法**。寻路（`search.py`）与夹取高度（深度相机）都已解决；`tasks/auto_fetch.py` 是旧入口，别当主入口改。
+- **主线是比赛流程脚本，不是夹取算法**。寻路（`search.py`）与夹取高度（深度相机）都已解决。旧的 `tasks/auto_fetch.py` 主入口已随 `9ef5f09` 删除（`_common.py` 当初就是为它抽的公共初始化，也随之成了死代码）。
 - **当前卡点**：NO6/NO7 第一次夹取后的「拔起」方向/幅度，动的是 22 号「肩」。**基准是夹取位不是复位位**——拔起发生在夹爪闭合之后，此时 22 号停在路线 JSON 的夹取位（当前路线 `22:395`），`restore_travel` 还没跑；所以「往上抬」= 把 22 调到**比夹取位大**。现场已验证 `785` 抬得太高（395→785，+390），当前 `PULL_UP_22 = 450`（395→450，+55，小幅抬）。试值走 `--pull-up N`，不用改代码。
 - **机器人上的 `fixed_route.json` 比本地新**（pick 位置整个挪了），别整目录同步，只 scp 单文件。
 - 用户反复强调的算法原则（针对自主寻路/夹取，**不是**比赛脚本的固定路线）：

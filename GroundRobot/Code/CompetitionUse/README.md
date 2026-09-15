@@ -20,10 +20,9 @@
 
 | 脚本 | 作用 |
 |------|------|
-| `_common.py` | 2.1~2.5 公共初始化（board / IK / 相机 / 检测闭包） |
-| `fixed_route.json` | 2.5 固定路线动作序列（前进/转弯/夹取/放下脉宽） |
-| `depth_3d_grasp.py` | 方案 A：深度 3D 抓取（颜色找目标 → 深度测 3D → IK 夹取） |
-| `calib_cam2arm.py` | 手眼标定（一次性），产出 `config/cam2arm.yaml` |
+| `fixed_route.json` | 2.5 固定路线动作序列（前进/转弯/夹取/放下脉宽）。**机器人上那份比本地新，别整目录同步** |
+| `NO6-NO7-流程说明.md` | NO6/NO7 的设计与踩坑记录（改这两个脚本前先读） |
+| `1.py` | 临时测试：NO6 寻路 + YOLO 夹取（不读 JSON 的 pick，place 仍读 JSON） |
 
 ## 运行
 
@@ -48,6 +47,8 @@ python3 Auto-capture-1.py --model models/fake_bug.onnx --color blue   # 2.5 进�
   `communication/task_server`。
 - 2.5 正常版结束上报 `state='END'`（停留 5 秒）+ `last_result='done'`；进阶版
   在夹取点用 YOLO 模型检测 + 雅可比矩阵把像素误差换算成 21-24 号舵机增量做精对准。
-- `depth_3d_grasp.py` / `calib_cam2arm.py` 是「方案 A（深度 3D）」的独立验证，
-  先用 `calib_cam2arm.py` 标定一次，再跑 `depth_3d_grasp.py`；标定和抓取时
-  云台 21/24 位姿要保持一致。
+- `1.py` **不复制代码**：用 importlib 把 `Auto-capture-1.py` 当模块加载，只把 `do_pick` /
+  `run_calibrate` 猴补丁成 YOLO 版（文件名带连字符是非法模块名，普通 import 做不到）。
+  所以 NO6 的寻路一行都没重写，以后修 NO7 时 1.py 自动跟着走。
+  **注意：YOLO 靠近是「看着画面」走的，夹取点之后的路线里程基准会偏**，详见
+  `进度清单.md` §7.4。
