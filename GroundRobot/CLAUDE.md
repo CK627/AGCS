@@ -37,6 +37,9 @@ python3 Auto-capture-1.py --color blue --pull-up 400       # 2.5 进阶版 (NO7,
 
 # 看最新日志（debug 只进文件，终端只打 info）
 ls -t /home/pi/spiderpi/logs/*/*.log | head -1 | xargs tail -50
+
+# NO6/NO7 整段运行日志（脚本自己抄的 stdout+stderr，含每块 yaw/误差/颜色微调序列）
+ls -t /home/pi/spiderpi/logs/*/autocapture/*.log | head -1 | xargs tail -80
 ```
 
 无测试框架、无 lint、无构建——"验证"就是在机器人上跑。`Code/tasks/CS/` 是 30+ 个单测 / 标定 / 建图脚本（CS-zq 纯 IK 夹取、CS-sx 搜索、scan_2d 建图、calib_pitch 标俯仰等），按需手动运行。
@@ -94,7 +97,7 @@ ls -t /home/pi/spiderpi/logs/*/*.log | head -1 | xargs tail -50
 
 辅助：`_common.py`（2.1~2.5 公共初始化 `build_runtime`）、`fixed_route.json`（2.5 路线动作序列）、`depth_3d_grasp.py`（方案 A 深度 3D 抓取验证）、`calib_cam2arm.py`（手眼标定，一次性）。
 
-**NO6/NO7 关键设计**（改这两个脚本前读 `NO6-NO7-流程说明.md`）：forward/back 不立即执行，累加到 `pending_forward` 遇非直行动作才一次性走掉；距离切 100mm chunk 小步闭环；航向由 `agcs_lib/imu.py` 后台线程连续积分，IMU 只修一次转向误差就 `reset_imu()` 归零（`--imu-straight off` 可整体关掉直线段修正）；夹取/放下前按电压补偿步长；第一次放下后关颜色微调、累计 6 次转弯再开。
+**NO6/NO7 关键设计**（改这两个脚本前读 `NO6-NO7-流程说明.md`）：forward/back 不立即执行，累加到 `pending_forward` 遇非直行动作才一次性走掉；距离切 100mm chunk 小步闭环；航向由 `agcs_lib/imu.py` 后台线程连续积分，IMU 只修一次转向误差就 `reset_imu()` 归零（`--imu-straight off` 可整体关掉直线段修正）；直线段航向死区**必须左右对称**（`TURN_TOL_DEG=3.0`，`--turn-tol` 可调）——写不对称会把机身稳态推向一侧，装在身上的相机跟着歪，颜色微调就一路往那边平移；颜色微调是平移、**不能**重置 `target_yaw`（重置等于把已攒下的航向误差一笔勾销，误差永不收敛）；夹取/放下前按电压补偿步长；第一次放下后关颜色微调、累计 6 次转弯再开。
 
 ## 关键契约与数据流
 
