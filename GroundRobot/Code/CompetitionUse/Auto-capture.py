@@ -57,6 +57,14 @@ GYRO_SCALE_RIGHT = 1.199  # IMU 右转时陀螺仪积分修正比例
 # （现场日志实测：yaw 一次从 -26.8 跳到 +16.5，机器人实际在直走没转）。
 GYRO_FILTER_SAMPLES = 5
 GYRO_FILTER_INTERVAL = 0.003  # 连采间隔，秒
+# 单次积分的 dt 上限。dt 跨的是「上次采样到现在」，中间可能有整个夹取序列
+# （量电压/摆臂/人工确认/夹爪/拔起/复位，现场实测 dt 到过 32.4s）。
+# 机器人那 32 秒是站着不动的，零漂却按 2.5°/s 一路积分，最后记成 +94° 假航向。
+# 超过这个值就说明中间夹了大段非行走时间，直接不认这段积分。
+IMU_DT_MAX = 3.0
+# 标定零漂前的沉降等待。reset_imu 是刚转完弯（或夹取动作刚做完）就采样，
+# 机器人可能还在晃，采到的不是真实零漂，整段直行就照这个偏差积分。
+IMU_SETTLE_S = 0.3
 HEADING_TOL_DEG = 1.0    # 航向误差容忍范围，单位：度；越小越严格
 LEFT_TURN_TOL_DEG = 1.0  # 直线阶段允许左偏多少才左转
 RIGHT_TURN_TOL_DEG = 8.0 # 直线阶段允许右偏多少才右转
@@ -352,7 +360,12 @@ def init_imu(board):
 
 
 def reset_imu(board, imu_state):
-    """转弯后重新标定 gz 零漂并清零航向积分（消除累积漂移导致的误纠）。"""
+    """重新标定 gz 零漂并清零航向积分（消除累积漂移导致的误纠）。
+
+    调用时机不只在转弯后：每段直行开始前也要调——夹取/放下序列能占几十秒，
+    其间机器人站着不动，零漂却一直在积分（现场实测 32.4s 攒出 +94° 假航向）。
+    """
+    time.sleep(IMU_SETTLE_S)  # 等机器人停稳，别把转弯/摆臂的余晃采进零漂
     vals = []
     while len(vals) < 100:
         gz = read_gz(board)
@@ -363,6 +376,8 @@ def reset_imu(board, imu_state):
         imu_state['bias'] = sum(vals) / len(vals)
     imu_state['yaw'] = 0.0
     imu_state['last_t'] = time.monotonic()
+    imu_state['last_dt'] = 0.0
+    imu_state['last_rate'] = 0.0
 
 
 def update_imu(state, board):
@@ -376,6 +391,9 @@ def update_imu(state, board):
     dt = now - state['last_t']
     state['last_t'] = now
     gz = read_gz(board, samples=GYRO_FILTER_SAMPLES)
+    if dt > IMU_DT_MAX:
+        # 中间夹了整段夹取/放下（机器人没在走），这段积分没有意义，丢掉。
+        return
     if gz is None:
         return
     rate = gz - state['bias']
@@ -620,6 +638,10 @@ def main():
             if pending_forward < 0 and is_low_voltage(board):
                 pending_forward -= 10
                 print('低电压后退补偿：额外多退 10mm', flush=True)
+            # 每段直行开始前重标零漂 + yaw 归零。上一段之前可能夹了几十秒的
+            # 夹取/放下，机器人站着不动零漂也一直在积分（实测 32.4s 攒出 +94° 假航向），
+            # 不归零就会被当成这一段的起始基准带下去。
+            reset_imu(board, imu_state)
             target_yaw = imu_state['yaw']
             segment_color = color_enabled and not (23 <= i <= 53)
             if color_enabled and not segment_color:
@@ -694,6 +716,7 @@ def main():
         if pending_forward < 0 and is_low_voltage(board):
             pending_forward -= 10
             print('低电压后退补偿：额外多退 10mm', flush=True)
+        reset_imu(board, imu_state)
         target_yaw = imu_state['yaw']
         segment_color = color_enabled and not (23 <= len(actions) <= 53)
         if segment_color:
