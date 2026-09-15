@@ -66,6 +66,7 @@ def icp_2d(src, dst, init_theta=0.0, init_t=None, max_iter=40, dist_thresh=300.0
     t = np.asarray(init_t, dtype=np.float64) if init_t is not None else np.zeros(2)
     tree = cKDTree(dst)
     prev_err = np.inf
+    err = np.inf  # 初值给 far-off 位姿时 mask 一直不过、err 没赋值会 UnboundLocalError
     for _ in range(max_iter):
         s = (_rot2(theta) @ src.T).T + t
         dist, idx = tree.query(s, k=1)
@@ -90,6 +91,8 @@ def icp_2d(src, dst, init_theta=0.0, init_t=None, max_iter=40, dist_thresh=300.0
         if abs(prev_err - err) < 1e-4:
             break
         prev_err = err
+    if not np.isfinite(err):
+        return None  # 一次有效对应都没配上：初值差太远，别硬给个假位姿
     return theta, t, err
 
 
