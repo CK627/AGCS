@@ -51,5 +51,6 @@ sync_dir config 0
 sync_dir functions 0
 sync_dir advanced 0
 sync_dir kinematic_routines 0
+sync_dir CompetitionUse 0
 
 echo "Git 同步完成: origin/$BRANCH -> $ROBOT:$REMOTE"

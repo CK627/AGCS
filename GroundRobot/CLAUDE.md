@@ -10,21 +10,19 @@ SpiderPi Pro 六足机器人（树莓派 Pi5）比赛演示 + 自主行走 + 视
 
 ## 开发工作流
 
-**代码在机器人上才能运行**（依赖官方 SDK、串口、深度相机），本地只做语法检查（`python3 -m py_compile`）。流程：本地改 `Code/` → scp 单文件到机器人 `/home/pi/spiderpi` → SSH 上跑调试。
+**代码在机器人上才能运行**（依赖官方 SDK、串口、深度相机），本地只做语法检查（`python3 -m py_compile`）。流程：本地改 `Code/` → `git commit` → `./sync_to_robot.sh` 整目录部署到机器人 → SSH 跑调试。
 
 ```bash
-# 同步（默认连 AP 地址；机器人是 STA 局域网模式，IP 会变，传当前 IP）
+# 同步（机器人 STA 局域网，IP 会变；用 .local 主机名或传当前 IP）
 cd Code
-./sync_to_robot.sh pi@10.194.228.89        # 整目录同步（见下方 ⚠️ 警告，慎用）
-./pull_from_robot.sh pi@10.194.228.89      # 拉回机器人上现场标定的配置
+./sync_to_robot.sh pi@raspberrypi.local     # 整目录同步（git push + git archive + ssh tar，跑前先 commit）
+./pull_from_robot.sh pi@raspberrypi.local      # 拉回机器人上现场标定的配置
 
-# ⚠️ 当前（2026-09-15）机器人上的 fixed_route.json 比本地新，整目录同步会覆盖它。
-#    只 scp 单个 .py 文件：
-export SSHPASS=<机器人密码>
-sshpass -e scp CompetitionUse/Auto-capture.py pi@10.194.228.89:/home/pi/spiderpi/CompetitionUse/
+# models/（best.onnx 等大文件）不进 git，这是唯一用 scp 的地方：
+scp ../YOLO/Model/best.onnx pi@raspberrypi.local:/home/pi/spiderpi/models/best.onnx
 
 # 连机器人 & 调试前必停自启服务（抢串口 /dev/ttyAMA0）
-ssh pi@10.194.228.89
+ssh pi@raspberrypi.local
 sudo systemctl stop spiderpi               # joystick 若在跑也停
 
 # 跑比赛脚本（当前主线）
