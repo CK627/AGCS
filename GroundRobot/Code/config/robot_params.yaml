@@ -5,6 +5,7 @@ vision:
   target_color: red        # 颜色检测目标（red/green/blue）
   min_area: 500            # 判定有效目标的最小轮廓面积（640x480 画面下）
   camera_rotate: 0         # 摄像头画面旋转角度（0/90/180/270；物理已重装，默认 0）
+  video_fps: 10            # 视频回传帧率（默认 10，可调到 30）
 
 walk:
   stride: 60               # 直行步幅 mm
@@ -60,6 +61,7 @@ search:
   min_area: 100              # 目标最小面积
   body_turn_angle: 120       # 六足每次转身角度 deg
   body_turn_speed: 80        # 六足转身速度
+  stop_depth_cm: 25          # 逼近停止距离：深度相机测距 <= 此值(cm) 停止逼近交给夹取
 
 align:
   enabled: false          # 夹取前是否先做朝向对齐（现场标定好再打开）
@@ -78,11 +80,9 @@ gimbal_fetch:
   pan_max: 1000           # 舵机21 云台扫描上限脉宽（约240°）
   pan_step: 40            # 云台扫描步长脉宽
   pan_scan_step: 20         # 21号平滑扫描每一步的脉宽增量
-  pan_move_ms: 100          # 21号每小步的移动时间 ms（调大：舵机平缓到位，画面稳定）
-  pan_settle_ms: 60         # 21号每小步到位等待 ms（防运动模糊导致漏检/锁定失败）
+  pan_move_ms: 1            # 21号每小步的移动时间 ms
   pan_detect_interval_ms: 30  # 21号平滑扫描时的取帧间隔 ms
-  scan_move_ms: 100         # 24号每小步的移动时间 ms（调大：舵机平缓到位，画面稳定）
-  scan_settle_ms: 60        # 24号每小步到位等待 ms（防运动模糊导致漏检/锁定失败）
+  scan_move_ms: 10          # 24号每小步的移动时间 ms
   detect_interval_ms: 20    # 平滑扫描时的取帧间隔 ms
   cam_start: 330          # 舵机24 相机起始脉宽（≈检测位）
   cam_max: 1000           # 舵机24 相机上限脉宽
@@ -102,13 +102,7 @@ gimbal_fetch:
   walk_mm: 40             # 每次前进距离 mm
   turn_deg: 10            # 每次转向角度 deg
   turn_sign: 1            # 左右方向符号（+1/-1，若左右转反了改成 -1）
-  tilt_sign: 1            # 俯仰方向符号：脉宽越大=摄像头越往上抬（800=天花板），目标在画面偏下应减脉宽低头
-  pan_sign: 1             # 水平方向符号（+1/-1，待探针实测后定标）
-  track_p_gain: 0.2       # 锁定速度：云台 PID 比例增益（越大跟得越快，过大易过冲）
-  track_settle_ms: 80     # 跟踪中云台移动后的到位等待 ms（防运动模糊丢帧）
-  lost_limit_frames: 15   # 逼近阶段连续丢帧超过该值才放弃（原 3 帧太脆，走路一晃就误判）
-  center_wait_ms: 800     # 每步走后等云台把目标拉回画面中部的时间窗 ms
-  walk_mm_small: 20       # 未完全锁准时的小步步长 mm（边走边校，与锁定速度同步）
+  tilt_sign: 1            # 俯仰方向符号（+1/-1，若上下反了改成 -1）
   max_approach: 12        # 接近阶段最大步数
   cx_tol: 30              # 微调居中像素容差（左右）
   cy_tol: 30              # 微调居中像素容差（上下）
@@ -145,6 +139,7 @@ grab:
   y_forward: 0.0           # 夹取点前伸补偿 cm（正=更靠前；官方+2已过度，改0待标定）
   grab_y_min: 6.0          # 夹取前实际 y 下限 cm
   grab_y_max: 22.0         # 夹取前实际 y 上限 cm
+  fine_step_mm: 10         # 夹取前六足前后微调步长 mm
   move_tol_px: 40          # 判定块被夹走的像素位移
   pos_ratio: 1.5           # 位移阈值 = max(move_tol_px, pos_ratio*radius)
   attempts: 3              # 夹取重试次数
@@ -210,6 +205,7 @@ grab:
   cy_ref: 240             # 高度补偿基准 cy
   height_gain: 0.0        # cy 每偏离基准 1px，z 调整 cm（未标定，先 0 禁用；标定后填符号+大小）
   ultra_weight: 0.0       # 超声波与视觉 y 融合权重（先用0，避免把y拉偏）
+  ultra_max_cm: 30        # 超声波参与融合的最大距离 cm
   base_pulse: 220         # 高度补偿基准 24 号脉宽
   height_gain_pulse: 0.0  # 24号脉宽高度补偿（先用0，避免用到过期脉宽）
   area_ref: 3000          # 面积-高度映射基准面积
@@ -239,7 +235,6 @@ grab:
   tof_samples: 5            # 红外中位数采样次数（丢 0/超量程后取中）
   reach_y_start: 28.0       # 前伸扫描起始 y cm（alpha=0 有解下限，servo23 不超限）
   reach_y_max: 45.0         # 前伸扫描最大 y cm（要能越过目标，目标约在前方 40cm）
-  max_reach_steps: 30       # 前伸最大步数（防死循环兜底；与 reach_y_max 同时作为硬上限）
   reach_gain: 20.0          # 前伸增益 cm/占比：步长 = (grab_area_ratio - 当前占比) * gain
   reach_step_min: 0.5       # 最小前伸步长 cm（占比接近阈值时的小步）
   reach_step_max: 2.0       # 最大前伸步长 cm（看不到/目标远时的大步，慢调）
@@ -258,3 +253,5 @@ grab:
   slow_step_cm: 0.2         # 慢速点动步长 cm（2mm）
   descend_move_ms: 120      # 每次下降舵机转动时间 ms
   descend_settle_ms: 80     # 每次下降后稳定等待 ms
+  min_z: 0.0                # 下降 z 下限 cm（安全兜底，防过冲）
+  descend_max_steps: 100    # 下降总步数上限（防死循环兜底）
