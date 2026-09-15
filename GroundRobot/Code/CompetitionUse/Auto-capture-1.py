@@ -120,7 +120,7 @@ VOLTAGE_EXTRA_LOW_V = 10.3  # 补偿达到最大距离时对应的电压
 # ---------- 模型 + 雅可比（阶段二） ----------
 DEFAULT_MODEL = 'models/best.onnx'  # 默认模型路径（相对 spiderpi 根目录）
 DEFAULT_MAP = 'models/map.npz'      # 预建 3D 地图（深度定位用）
-MODEL_CONF = 0.35          # 模型置信度阈值
+MODEL_CONF = 0.8           # 模型置信度阈值
 JAC_DELTA = 20             # 标定时每个舵机的扰动脉宽
 CALIB_SAMPLES = 5          # 标定时 bbox 中心平均帧数
 CENTER_TOL_PX = 3.0        # 精对准中心误差阈值，像素
@@ -332,10 +332,11 @@ def open_vision(color, min_area):
     return cam, read_frame, color_detector, publish
 
 
-def video_loop(detector, stop_event):
-    """后台持续取帧推流，保证视频始终有画面。"""
+def video_loop(detectors, stop_event):
+    """后台持续取帧推流：颜色识别 + YOLO 模型检测都叠加推流显示。"""
     while not stop_event.is_set():
-        detector()
+        for d in detectors:
+            d()
         time.sleep(0.1)
 
 
@@ -974,7 +975,7 @@ def main():
 
     video_stop = threading.Event()
     video_thread = threading.Thread(
-        target=video_loop, args=(color_detector, video_stop), daemon=True)
+        target=video_loop, args=([color_detector, model_det.detect], video_stop), daemon=True)
     video_thread.start()
 
     if task_server is not None:
