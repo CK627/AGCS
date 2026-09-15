@@ -13,7 +13,7 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 
-def depth_to_2d(points, pitch_deg, min_height_mm=150.0, max_height_mm=1500.0):
+def depth_to_2d(points, pitch_deg, min_height_mm=-800.0, max_height_mm=2000.0):
     """相机 3D 点云 -> 世界 2D 点（墙/障碍高度带）。
 
     points: (N,3) 相机坐标系（X右 Y上 Z前，mm）。

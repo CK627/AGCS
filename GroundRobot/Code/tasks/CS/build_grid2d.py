@@ -43,6 +43,12 @@ def capture_2d(cam, pitch, min_h, max_h):
     pcl = cam.depth_to_pointcloud(d)
     valid = ~np.isnan(pcl[:, :, 0])
     pts3d = pcl[valid].reshape(-1, 3).astype(np.float32)
+    # 高度范围（调试 pitch/高度带用）：墙应在 min_h..max_h 之间
+    p = np.radians(pitch)
+    R = np.array([[1, 0, 0], [0, np.cos(p), -np.sin(p)],
+                  [0, np.sin(p), np.cos(p)]], dtype=np.float32)
+    h = (pts3d @ R.T)[:, 1]
+    print('    高度 h %.0f..%.0f mm' % (h.min(), h.max()), flush=True)
     return depth_to_2d(pts3d, pitch, min_h, max_h)
 
 
@@ -51,8 +57,8 @@ def main():
     parser.add_argument('--route', default='fixed_route.json')
     parser.add_argument('--out', default='/tmp/map2d.npz')
     parser.add_argument('--pitch', type=float, default=45.0, help='相机下俯角(度)')
-    parser.add_argument('--min-h', type=float, default=150.0, help='墙高度带下限(mm)')
-    parser.add_argument('--max-h', type=float, default=1500.0, help='墙高度带上限(mm)')
+    parser.add_argument('--min-h', type=float, default=-800.0, help='墙高度带下限(mm，负=相机下方)')
+    parser.add_argument('--max-h', type=float, default=2000.0, help='墙高度带上限(mm)')
     parser.add_argument('--voxel', type=float, default=50.0, help='2D 下采样体素(mm)')
     args = parser.parse_args()
 
