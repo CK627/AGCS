@@ -43,12 +43,11 @@ OFFICIAL_ARM = {21: 500, 22: 705, 23: 90, 24: 330}  # 机械臂官方初始脉�
 
 GRIPPER_CLOSE = 700  # 夹取时 25 号夹爪闭合的脉宽，越大夹得越紧
 GRIPPER_OPEN = 400   # 放下时 25 号夹爪打开的脉宽，越小张得越开
-# 第一次夹取后拔起：动 22 号「肩」舵机（不是 23 号肘，23 是肘）。22 的复位脉宽是 705，
-# 现场实测 785（705+80）「抬得太高」——说明比 705 大确实是往上抬的方向。
-# ⚠️ 下面这个 400 还没在现场执行过（上次跑到人工微调就 Ctrl-C 退出了）。按上面的规律
-# 400 < 705 方向是往下压，而且接近夹取位 22:395，可能根本不动。再跑先试 705~785 之间
-# （如 --pull-up 745），别直接用 400。命令行传 --pull-up N 试值，不用改代码。
-PULL_UP_22 = 400
+# 第一次夹取后拔起：动 22 号「肩」舵机（不是 23 号肘，23 是肘）。
+# 关键是基准：拔起时 22 号停在路线 JSON 的「夹取位」（当前路线 22:395），不是复位位 705。
+# 所以「往上抬」= 把 22 调到比夹取位大。现场实测 785 抬得太高（395→785，+390），
+# 450 是小幅抬（395→450，+55）。命令行传 --pull-up N 试值，不用改代码。
+PULL_UP_22 = 450
 MOVE_SPEED = 50      # 六足直线前进/后退的速度，越大走得越快
 TURN_SPEED = 30      # 六足左转/右转的速度，越大转得越快
 GYRO_SCALE_LEFT = 1.177   # IMU 左转时陀螺仪积分修正比例
@@ -176,7 +175,10 @@ def arm_fine_tune(board, state, kind, pull_up=False, pull_up_pulse=None):
     if pull_up:
         # 22 号肩舵机上抬，把目标从地里/网里拔出来，再恢复初始位置
         pulse = PULL_UP_22 if pull_up_pulse is None else clamp_pulse(pull_up_pulse)
-        print('拔起：22 号肩舵机 %d → %d' % (OFFICIAL_ARM[22], pulse), flush=True)
+        # 起点是当前实际值 state[22]（夹取位），不是复位位 705——印错起点会让人
+        # 误判抬升方向（曾据此把 400 当成「往下压」）。
+        print('拔起：22 号肩舵机 %d → %d（抬升 %+d）'
+              % (state[22], pulse, pulse - state[22]), flush=True)
         board.bus_servo_set_position(1.0, [[22, pulse]])
         time.sleep(1.0)
     restore_travel(board, gripper)
