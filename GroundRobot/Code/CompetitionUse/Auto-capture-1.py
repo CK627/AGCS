@@ -641,7 +641,12 @@ def move_straight_imu_color(ik, board, detector, imu_state, target_yaw,
                 corrected = True
             if corrected:
                 time.sleep(0.05)
-                target_yaw = imu_state['yaw']
+                # 这里**同样不能**重设 target_yaw。修正是「把 yaw 拉回本段目标」，
+                # 修完就把目标挪到当前 yaw，等于宣告「刚才的偏差不算数」——控制器
+                # 从此只修「距上次修正之后的新偏差」，永远清不掉已有的偏置，目标会
+                # 跟着漂移一路爬。现场日志就是这么跑的：target 3.0→6.6→9.6→12.3，
+                # 每块涨 3° 左右，和幻影漂移同步，于是每块都发一次右转 → 「右转严重」。
+                # 本段目标就是进入本段时的航向，整段不动。
         move = min(100, remaining)
         move_one_chunk(ik, move, forward)
         remaining -= move

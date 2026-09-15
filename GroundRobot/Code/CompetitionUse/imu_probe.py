@@ -73,7 +73,7 @@ class ImuSampler(threading.Thread):
                 if self._last_t is not None:
                     rate = gz - self.bias
                     self.yaw += rate * (now - self._last_t) * self.scale
-                    if abs(rate) > self.peak_rate:
+                    if abs(rate) > abs(self.peak_rate):
                         self.peak_rate = rate
                 self._last_t = now
                 if self._calibrating:
@@ -207,14 +207,85 @@ def sign_test(angle=20, speed=30):
     print('=' * 60)
 
 
+def walk_test(chunks=3, mm=100, speed=50):
+    """会动：量「走路时」的航向漂移——站着标零漂量不到的就是这一段。
+
+    静止时零漂标得很准（现场实测 −1.913°/s，0.5~30s 纹丝不动），可一走起来 gz
+    就整体偏了约 +1.8°/s。这有两种可能，站着区分不出来，只能让它走一段、人盯着看：
+      (a) 六足步态真的把机身转过去了 —— IMU 修正是对的，该修；
+      (b) 腿部振动把陀螺零偏带跑了 —— 积分出来的是幻影，越修越偏。
+    判据只有一个：**走路积分出来的角度，跟你眼睛看到的是否一致。**
+
+    前进/后退交替，净位移接近 0，不会把机器人带跑。
+    """
+    from agcs_lib import make_board, make_ik
+
+    board = make_board()
+    board.enable_reception()
+    ik = make_ik(board)
+
+    # 先把机械臂收回来（同 Auto-capture.py 的 restore_travel），免得走路时拖地
+    board.bus_servo_set_position(1.5, [[22, 705], [23, 90], [21, 500], [24, 330]])
+    time.sleep(1.5)
+
+    s = ImuSampler(board)
+    s.start()
+    time.sleep(0.5)
+    bias, n = s.calibrate(1.5)
+    print('=' * 60)
+    print('零漂标定：%+.4f °/s（%d 个样本）' % (bias, n))
+    print('接下来前/后各走 %d 段、每段 %dmm。**请盯着机器人，看它走路时歪不歪。**'
+          % (chunks, mm))
+    print('-' * 60)
+
+    s.reset()
+    time.sleep(1.2)
+    print('静止对照 1.2s：Δyaw %+.3f°（这段应该≈0）' % s.snapshot())
+
+    tot_f = tot_b = 0.0
+    for i in range(chunks):
+        for label, fn in (('前进', ik.go_forward), ('后退', ik.back)):
+            s.reset()
+            y0 = s.snapshot()
+            fn(ik.initial_pos, 2, mm, speed, 1)
+            time.sleep(0.3)
+            d = s.snapshot() - y0
+            print('%s %dmm：Δyaw %+.2f°（峰值角速度 %+.2f°/s）'
+                  % (label, mm, d, s.peak_rate))
+            if label == '前进':
+                tot_f += d
+            else:
+                tot_b += d
+            time.sleep(0.2)
+
+    s.stop()
+    print('-' * 60)
+    print('前进共 %dmm：Δyaw %+.2f°　　后退共 %dmm：Δyaw %+.2f°'
+          % (chunks * mm, tot_f, chunks * mm, tot_b))
+    print('=' * 60)
+    print('怎么读：')
+    print('  · 积分到明显角度，但你看着它**是直着走的**')
+    print('    → 幻影(b)。振动把陀螺零偏带跑了。此时 IMU 直线修正是有害的，')
+    print('      越修越歪，应该 --imu-straight off 关掉，另想办法。')
+    print('  · 积分到的角度跟你**看到它歪的方向、幅度对得上**')
+    print('    → 真的(a)。步态本身有系统性偏转。IMU 修正方向是对的，')
+    print('      要保证控制器守的是「本段固定目标」，不能跟着漂移跑。')
+
+
 def main():
     ap = argparse.ArgumentParser(description='IMU 体检')
     ap.add_argument('--sign', action='store_true',
                     help='做转向符号测试（机器人会左转、右转各 20°）')
     ap.add_argument('--angle', type=int, default=20, help='符号测试的转角，默认 20')
+    ap.add_argument('--walk', action='store_true',
+                    help='量「走路时」的航向漂移（机器人会前/后各走几段，净位移≈0）')
+    ap.add_argument('--chunks', type=int, default=3, help='--walk 的前/后段数，默认 3')
+    ap.add_argument('--mm', type=int, default=100, help='--walk 每段距离(mm)，默认 100')
     args = ap.parse_args()
     if args.sign:
         sign_test(args.angle)
+    elif args.walk:
+        walk_test(args.chunks, args.mm)
     else:
         sample_report()
 
