@@ -57,8 +57,13 @@ GYRO_SCALE_RIGHT = 1.199  # IMU 右转时陀螺仪积分修正比例
 # 整个机身还在晃，这时候采到的不是真实零漂——标错多少，后面整段直行就照着错多少积分。
 IMU_SETTLE_S = 0.25
 HEADING_TOL_DEG = 1.0    # 航向误差容忍范围，单位：度；越小越严格
-LEFT_TURN_TOL_DEG = 1.0  # 直线阶段允许左偏多少才左转
-RIGHT_TURN_TOL_DEG = 8.0 # 直线阶段允许右偏多少才右转
+# 直线段航向死区：|误差| 超过它才发一次修正转向。**左右必须对称。**
+# 原先写的是左 1.0 / 右 8.0，方向是反的：angle_error 是 (target - current)，
+# 所以 err > 0 表示机身朝右歪（该左转）、err < 0 表示机身朝左歪（该右转）。
+# 「右 8.0」实际效果是「机身朝左歪 8° 都不管」，机身长期歪着 → 装在身上的相机跟着歪
+# → 画面里色块恒偏一侧 → 颜色微调一直往那一侧平移 → 直线段先直、然后一路偏出去。
+# 取值要略大于六足单次转弯的最小步进，太小会左右来回抖；现场用 --turn-tol 调。
+TURN_TOL_DEG = 3.0
 IMU_STRAIGHT_STEP = 1    # 转弯后一次性修正的角度（imu_turn 用）
 IMU_STRAIGHT_GAIN = 0.6  # 直线阶段航向修正比例：单次转「误差 × 该比例」的角度（P 控制，需现场调）
 IMU_STRAIGHT_MAX = 8.0   # 直线阶段单次修正最大角度（度），防止误差大时一步转过头
@@ -419,11 +424,11 @@ def move_straight_imu_color(ik, board, detector, imu_state, target_yaw, distance
     remaining = abs(int(distance_mm))
     forward = distance_mm >= 0
     while remaining > 0:
-        color_adjusted = False
         if color_enabled:
-            color_adjusted = color_keep_center(ik, board, detector, tilt, color_state)
-            if color_adjusted:
-                target_yaw = imu_state['yaw']
+            # 颜色微调是「平移」，不改变航向基准 —— 这里**不能**把 target_yaw 重设成
+            # 当前 yaw。那样等于每做一次微调就把这一小段已攒下的航向误差一笔勾销，
+            # 误差永远不收敛，机身会一路朝同一边偏下去（原实现就是这样）。
+            color_keep_center(ik, board, detector, tilt, color_state)
         update_imu(imu_state, board)
         err = angle_error(imu_state['yaw'], target_yaw)
         if ENABLE_IMU_STRAIGHT:
@@ -433,7 +438,7 @@ def move_straight_imu_color(ik, board, detector, imu_state, target_yaw, distance
             dbg = '(dt=%.1fs rate=%+.2f°/s)' % (
                 imu_state.get('last_dt', 0.0), imu_state.get('last_rate', 0.0))
             corrected = False
-            if err > LEFT_TURN_TOL_DEG:
+            if err > TURN_TOL_DEG:
                 step = max(1, int(round(min(err, IMU_STRAIGHT_MAX) * IMU_STRAIGHT_GAIN)))
                 if IMU_DIRECTION_SIGN > 0:
                     ik.turn_left(ik.initial_pos, 2, step, TURN_SPEED, 1)
@@ -444,7 +449,7 @@ def move_straight_imu_color(ik, board, detector, imu_state, target_yaw, distance
                     print('IMU yaw=%.1f target=%.1f error=%+.1f %s -> 右转%d°'
                           % (imu_state['yaw'], target_yaw, err, dbg, step), flush=True)
                 corrected = True
-            elif err < -RIGHT_TURN_TOL_DEG:
+            elif err < -TURN_TOL_DEG:
                 step = max(1, int(round(min(-err, IMU_STRAIGHT_MAX) * IMU_STRAIGHT_GAIN)))
                 if IMU_DIRECTION_SIGN > 0:
                     ik.turn_right(ik.initial_pos, 2, step, TURN_SPEED, 1)
@@ -518,8 +523,55 @@ def do_place(board, place_count, pulses=None):
     arm_fine_tune(board, state, 'place')
 
 
+class _Tee(object):
+    """把 stdout/stderr 同时抄一份到日志文件。"""
+
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, text):
+        for st in self.streams:
+            try:
+                st.write(text)
+            except Exception:
+                pass
+        return len(text)
+
+    def flush(self):
+        for st in self.streams:
+            try:
+                st.flush()
+            except Exception:
+                pass
+
+
+def start_run_log():
+    """把本次运行的完整输出抄到 logs/<日期>/autocapture/<时-分>.log。
+
+    跑一次路线好几分钟，出问题全靠翻终端；而 print() 只进终端、不落盘（官方日志
+    只收 action_msg），几次现场排查都因为「没留下完整日志」只能靠猜。落一份盘，
+    事后可以直接完整回看整段 yaw/误差/颜色微调序列。
+    本地跑（没有 /home/pi）时静默跳过，不影响脚本。
+    """
+    try:
+        now = time.localtime()
+        day = '%d-%d-%d' % (now.tm_year, now.tm_mon, now.tm_mday)
+        folder = os.path.join('/home/pi/spiderpi/logs', day, 'autocapture')
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, '%02d-%02d.log' % (now.tm_hour, now.tm_min))
+        handle = open(path, 'w', encoding='utf-8')
+    except Exception as exc:
+        print('运行日志未启用（%s）' % exc, flush=True)
+        return None
+    sys.stdout = _Tee(sys.__stdout__, handle)
+    sys.stderr = _Tee(sys.__stderr__, handle)
+    print('本次运行日志：%s' % path, flush=True)
+    return handle
+
+
 def main():
     """主流程：按 JSON 调用移动、转弯、夹取和放下。"""
+    global ENABLE_IMU_STRAIGHT, TURN_TOL_DEG
     parser = argparse.ArgumentParser(description='NO6 IMU+颜色路线运行')
     parser.add_argument('--color', default='red',
                         choices=['red', 'green', 'blue', 'yellow', 'cz1'])
@@ -530,12 +582,18 @@ def main():
     parser.add_argument('--imu-straight', default='on', choices=['on', 'off'],
                         help='直线阶段是否用 IMU 修正航向（默认 on）。'
                              '想单独看「不做 IMU 修正会不会更直」就传 off 做对照')
+    parser.add_argument('--turn-tol', type=float, default=TURN_TOL_DEG,
+                        help='直线段航向死区（度，默认 %.1f）。左右对称。'
+                             '机器人若左右来回抖就调大，偏出去不修就调小' % TURN_TOL_DEG)
     args = parser.parse_args()
 
-    global ENABLE_IMU_STRAIGHT
+    log_file = start_run_log()
+
     ENABLE_IMU_STRAIGHT = (args.imu_straight == 'on')
+    TURN_TOL_DEG = args.turn_tol
     if not ENABLE_IMU_STRAIGHT:
         print('直线阶段 IMU 航向修正已关闭（--imu-straight off）', flush=True)
+    print('直线段航向死区 ±%.1f°' % TURN_TOL_DEG, flush=True)
 
     with open(ROUTE_PATH, 'r', encoding='utf-8') as f:
         actions = json.load(f)
@@ -689,6 +747,9 @@ def main():
            picked_count=picked_count,
            message='自动捕获完成')
     time.sleep(5)  # END 状态停留 5 秒，供中枢轮询确认
+
+    if log_file is not None:
+        log_file.close()
 
 
 if __name__ == '__main__':
