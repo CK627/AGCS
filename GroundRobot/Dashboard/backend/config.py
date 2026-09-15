@@ -1,8 +1,8 @@
 # coding=utf8
 """地面机器人独立仪表盘配置。
 
-临时可变的配置（机器人 IP / 视频开关 / 端口）集中在仓库根目录的
-AGCS/config.yaml，改那个文件即可（保存即热重载，端口除外）；
+临时可变的配置（机器人 IP / 视频开关 / 端口）集中在本仪表盘目录的
+GroundRobot/Dashboard/data/config.yaml，改那个文件即可（保存即热重载，端口除外）；
 本文件只放默认值。无人机 MAVLink / RTSP / YOLO 模型等地面站专属配置
 在 GroundStation/Dashboard/backend/config.py。
 """
@@ -17,19 +17,19 @@ ROBOT_URL = 'http://10.194.228.89:5000'
 # 视频开关：机器人端画面没开/不想看视频时设为 False，避免页面一直转圈
 VIDEO_ENABLED = True
 
-# 仪表盘自身监听地址与端口（默认 20002，与无人机端 20000、地面站中枢 20001 区分）
+# 仪表盘自身监听地址与端口（默认 20001，与无人机端 20002、地面站中枢 20000、YOLO 20003 区分）
 DASHBOARD_HOST = '0.0.0.0'
-DASHBOARD_PORT = 20002
+DASHBOARD_PORT = 20001
 
-# ---------------- AGCS/config.yaml 热重载 ----------------
-# Dashboard/backend 向上三级 = AGCS 仓库根目录
+# ---------------- 本仪表盘 data/config.yaml 热重载 ----------------
+# backend 上一级进 data = GroundRobot/Dashboard/data
 _CONFIG_YAML = os.path.normpath(os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'config.yaml'))
+    os.path.dirname(os.path.abspath(__file__)), '..', 'data', 'config.yaml'))
 _last_mtime = None
 
 
 def reload_if_changed():
-    """AGCS/config.yaml 有改动时重新加载覆盖项。
+    """本仪表盘 data/config.yaml 有改动时重新加载覆盖项。
 
     仪表盘请求时调用（app.py 各代理路由入口），所以改 yaml 保存即生效，
     无需重启进程；端口在启动时绑定，改端口仍需重启。

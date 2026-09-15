@@ -1,0 +1,5 @@
+dashboard:
+  robot_port: 20001
+robot:
+  url: http://192.168.124.9:5000
+  video: true

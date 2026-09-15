@@ -21,7 +21,7 @@ python -m pip install -r requirements.txt
 cd backend && python app.py
 ```
 
-浏览器打开 http://127.0.0.1:20002。
+浏览器打开 http://127.0.0.1:20001。
 
 服务优先用 waitress 启动（支持并发处理视频流与状态轮询）；未安装 waitress 时
 自动退回 Flask 开发服务器（同样开了 `threaded=True`）。

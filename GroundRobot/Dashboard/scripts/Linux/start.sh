@@ -7,9 +7,9 @@ PROJECT_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 source "$PROJECT_DIR/scripts/common.sh"
 
 case "${1:-start}" in
-    start)      do_start "${2:-20002}" ;;
+    start)      do_start "${2:-20001}" ;;
     stop)       do_stop ;;
-    restart)    do_restart "${2:-20002}" ;;
+    restart)    do_restart "${2:-20001}" ;;
     status)     do_status ;;
     setup)      do_setup ;;
     install)    do_install ;;

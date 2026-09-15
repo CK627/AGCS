@@ -2,7 +2,7 @@
 # Dashboard 公共脚本模块（被各平台 start.sh source 调用）
 # 地面机器人独立仪表盘：视频画面 + 状态监控 + 下发任务
 
-DEFAULT_PORT=20002
+DEFAULT_PORT=20001
 
 # Dashboard 目录（入口脚本会先设置，这里兜底）
 PROJECT_DIR="${PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -259,7 +259,7 @@ Robot Dashboard 管理脚本
 用法:  start.sh [命令] [参数]
 
 命令:
-  start [端口]   启动服务（默认端口 20002）
+  start [端口]   启动服务（默认端口 20001）
   stop           停止服务
   restart [端口] 重启服务
   status         查看运行状态
@@ -270,7 +270,7 @@ Robot Dashboard 管理脚本
   help           帮助
 
 示例:
-  start.sh                   启动（默认端口 20002）
+  start.sh                   启动（默认端口 20001）
   start.sh start 8080        启动并指定端口 8080
   start.sh restart           重启服务（沿用旧端口）
   start.sh restart 8080      重启并换到 8080 端口

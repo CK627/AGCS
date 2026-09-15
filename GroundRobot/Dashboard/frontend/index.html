@@ -3,61 +3,71 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>地面机器人端</title>
+<title>芯联智控-地面机器人</title>
+<link rel="icon" type="image/png" href="/images/favicon.png">
+<link rel="stylesheet" href="/common.css">
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: "Microsoft YaHei", "PingFang SC", sans-serif; background: #0f172a; color: #e2e8f0; padding: 16px; }
-  h1 { font-size: 20px; margin-bottom: 8px; }
-  #status { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 13px; }
-  .ok { background: #14532d; color: #86efac; }
-  .bad { background: #7f1d1d; color: #fecaca; }
-  .hint { color: #64748b; font-size: 12px; margin: 4px 0 12px; }
-  .wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-  @media (max-width: 900px) { .wrap { grid-template-columns: 1fr; } }
-  .box { background: #1e293b; border-radius: 10px; padding: 12px; }
-  .box h2 { font-size: 14px; color: #94a3b8; font-weight: 400; margin-bottom: 8px; }
-  #videoBox { background: #0b1220; min-height: 300px; display: flex; align-items: center; justify-content: center; }
-  #videoBox img { width: 100%; max-height: 520px; object-fit: contain; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
-  .card { background: #1e293b; border-radius: 10px; padding: 10px 12px; }
-  .card h2 { font-size: 12px; color: #94a3b8; font-weight: 400; }
-  .card .v { font-size: 18px; font-weight: 600; margin-top: 2px; }
-  .card .s { font-size: 11px; color: #94a3b8; }
-  .state { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 13px; background: #334155; }
-  .state.NAV { background: #1e3a8a; color: #bfdbfe; }
-  .state.SEARCH { background: #854d0e; color: #fde68a; }
-  .state.APPROACH { background: #065f46; color: #a7f3d0; }
-  .state.PICK { background: #7f1d1d; color: #fecaca; }
-  label { display: block; font-size: 12px; color: #94a3b8; margin: 8px 0 3px; }
-  input, button { width: 100%; font-family: inherit; }
-  input { background: #0b1220; color: #e2e8f0; border: 1px solid #334155; border-radius: 6px; padding: 8px; }
-  .form2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .form2 .wide { grid-column: 1 / -1; }
-  button { background: #2563eb; color: #fff; border: 0; border-radius: 6px; padding: 9px; margin-top: 10px; cursor: pointer; }
-  button.ghost { background: #334155; }
-  #taskResult { margin-top: 10px; font-size: 12px; white-space: pre-wrap; }
-  #err { color: #fca5a5; font-size: 13px; margin-top: 6px; }
+  .header { position: relative; text-align: center; margin-bottom: 8px; }
+  .header .brand { position: absolute; left: 0; top: 50%; transform: translateY(-50%); display: flex; align-items: center; gap: 10px; white-space: nowrap; }
+  .header .brand .logo { height: 40px; }
+  .header .brand .comp { font-size: 15px; color: #e2e8f0; }
+  .header h1 { margin: 0; }
+
+  .cfgbtn { position: absolute; right: 0; top: 50%; transform: translateY(-50%); background: #334155; color: #e2e8f0; border: 0; border-radius: 6px; padding: 5px 12px; font-size: 14px; cursor: pointer; }
+  .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; z-index: 999; display: none; }
+  .modal.show { display: flex; }
+  .modal-box { background: #1e293b; border-radius: 10px; padding: 16px; width: 820px; max-width: 94vw; }
+  .modal-head { display: flex; align-items: center; margin-bottom: 10px; }
+  .modal-head h2 { flex: 1; margin: 0; font-size: 15px; color: #94a3b8; font-weight: 400; }
+  .modal-x { background: #334155; color: #e2e8f0; border: 0; border-radius: 6px; width: 28px; height: 28px; cursor: pointer; }
+  .modal-box #configForm { max-height: 640px; overflow-y: auto; }
+  .field { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .field label { width: 170px; font-size: 13px; color: #94a3b8; flex-shrink: 0; }
+  .field input { flex: 1; background: #0b1220; color: #e2e8f0; border: 1px solid #334155; border-radius: 6px; padding: 6px 8px; font-size: 14px; }
+  .field input[type="checkbox"] { flex: 0; width: 16px; height: 16px; }
+  .modal-foot { display: flex; align-items: center; margin-top: 10px; gap: 10px; }
+  .modal-foot #configMsg { flex: 1; font-size: 13px; color: #94a3b8; }
+  .modal-foot #configSave { background: #2563eb; color: #fff; border: 0; border-radius: 6px; padding: 6px 16px; cursor: pointer; }
 </style>
 </head>
 <body>
-  <h1>地面机器人端（SpiderPi Pro） <span id="status" class="bad">未连接</span></h1>
-  <div class="hint">机器人独立仪表盘：摄像头回传画面 + 实时状态 + 下发任务（与地面站中枢仪表盘分开）。</div>
-  <div id="err"></div>
+  <div class="header">
+    <div class="brand">
+      <img src="/images/logo.png" class="logo" alt="logo">
+      <span class="comp">2026年世界职业院校技能大赛</span>
+    </div>
+    <h1>芯联智控-地面机器人 <span id="status" class="bad">未连接</span></h1>
+    <button id="configBtn" class="cfgbtn">⚙ 配置</button>
+  </div>
+  <div class="hint">机器人独立仪表盘：摄像头回传画面 + 实时状态（与地面站中枢仪表盘分开）。</div>
 
   <div class="wrap">
     <div class="box">
-      <h2>机器人摄像头画面（回传）</h2>
-      <div id="videoBox">
+      <div class="box-head">
+        <h2>机器人摄像头画面（回传）</h2>
+        <button class="fsbtn" data-fs="videoBox">⛶ 全屏</button>
+      </div>
+      <div class="videoBox" id="videoBox">
         {% if video_enabled %}<!-- JS videoHeal() 自动挂图，断流 5 秒自愈 -->
         {% else %}
-        <div style="color:#64748b;font-size:13px">画面已关闭（AGCS/config.yaml 的 robot.video=false）</div>
+        <div class="offline">画面已关闭（data/config.yaml 的 robot.video=false）</div>
         {% endif %}
       </div>
     </div>
 
     <div class="box">
-      <h2>实时状态（HTTP /status）</h2>
-      <div class="grid">
+      <div class="titlebar">
+        <h2>实时状态（HTTP /status）</h2>
+        <span class="chip" id="rOnline">连接 -</span>
+        <span class="chip">状态 <b id="rState">-</b></span>
+        <span class="chip">位置 <b id="rPos">-</b></span>
+        <span class="chip">朝向 <b id="rHeading">-</b></span>
+        <span class="chip">已抓取 <b id="rPicked">-</b></span>
+        <span class="chip">任务 <b id="rTask">-</b></span>
+        <span class="chip">结果 <b id="rResult">-</b></span>
+        <span class="chip msg">消息 <b id="rMsg">-</b></span>
+      </div>
+      <div class="grid" style="margin-top:10px">
         <div class="card"><h2>连接状态</h2><div class="v" id="online">-</div><div class="s" id="onlineMsg"></div></div>
         <div class="card"><h2>当前状态</h2><div class="v"><span class="state" id="state">-</span></div><div class="s">状态机阶段</div></div>
         <div class="card"><h2>位置估算</h2><div class="v" id="pos">-</div><div class="s">单位：米 (x, y)</div></div>
@@ -70,31 +80,49 @@
     </div>
   </div>
 
-  <div class="box" style="margin-top:14px">
-    <h2>下发任务（目标坐标）</h2>
-    <div class="form2">
-      <div><label>目标 x（米）</label><input id="tX" type="number" step="0.1" value="2.0"></div>
-      <div><label>目标 y（米）</label><input id="tY" type="number" step="0.1" value="0.0"></div>
-      <div><label>到达半径（米）</label><input id="tRadius" type="number" step="0.1" value="0.8"></div>
-      <div><label>置信度阈值</label><input id="tConf" type="number" step="0.01" value="0.87"></div>
-      <div class="wide"><label>任务编号（留空自动生成）</label><input id="tId" type="text" placeholder="如 T20260824-001"></div>
-      <button class="wide" id="sendBtn">下发任务</button>
+
+  <div id="configModal" class="modal">
+    <div class="modal-box">
+      <div class="modal-head">
+        <h2>配置（data/config.yaml）</h2>
+        <button id="configClose" class="modal-x">✕</button>
+      </div>
+      <div id="configForm"></div>
+      <div class="modal-foot">
+        <span id="configMsg"></span>
+        <button id="configSave">保存</button>
+      </div>
     </div>
-    <div id="taskResult"></div>
   </div>
 
 <script>
 const statusEl = document.getElementById('status');
-const errEl = document.getElementById('err');
 
-// MJPEG 画面自愈：挂 <img>，断流/被热关闭后 5 秒自动重试，恢复后画面自动回来
+// 全屏显示画面
+document.querySelectorAll('.fsbtn').forEach(btn => {
+  btn.onclick = () => {
+    const box = document.getElementById(btn.dataset.fs);
+    if (!document.fullscreenElement) {
+      (box.requestFullscreen || box.webkitRequestFullscreen).call(box);
+    } else {
+      document.exitFullscreen();
+    }
+  };
+});
+document.addEventListener('fullscreenchange', () => {
+  document.querySelectorAll('.fsbtn').forEach(b => {
+    b.textContent = document.fullscreenElement ? '✕ 退出全屏' : '⛶ 全屏';
+  });
+});
+
+// MJPEG 画面自愈：挂 <img>，断流/被热关闭后 5 秒自动重试；报错直接显示在视频框内
 function videoHeal(boxId, src) {
   const box = document.getElementById(boxId);
   const img = document.createElement('img');
   img.src = src + '?t=' + Date.now();
   img.alt = '画面未连接';
   img.onerror = () => {
-    box.innerHTML = '<div style="color:#64748b;font-size:13px">画面暂不可用（检查机器人端推流程序是否在线、AGCS/config.yaml 开关），5 秒后自动重试…</div>';
+    box.innerHTML = '<div class="offline">画面暂不可用（检查机器人端推流程序是否在线、data/config.yaml 开关），5 秒后自动重试…</div>';
     setTimeout(() => videoHeal(boxId, src), 5000);
   };
   box.innerHTML = '';
@@ -107,63 +135,175 @@ function setStatus(ok) {
   statusEl.className = ok ? 'ok' : 'bad';
 }
 
+function fillStatus(d) {
+  setStatus(d.online);
+  // titlebar 徽章
+  const on = document.getElementById('rOnline');
+  on.textContent = d.online ? '● 在线' : '● 离线';
+  on.className = 'chip ' + (d.online ? 'ok' : 'bad');
+  const rState = document.getElementById('rState');
+  rState.textContent = d.state || '-';
+  rState.className = 'state' + (d.state ? ' ' + d.state : '');
+  document.getElementById('rPos').textContent =
+    d.position_m ? d.position_m.x + ', ' + d.position_m.y : '-';
+  document.getElementById('rHeading').textContent =
+    d.heading_deg != null ? d.heading_deg + '°' : '-';
+  document.getElementById('rPicked').textContent =
+    d.picked_count != null ? d.picked_count : '-';
+  document.getElementById('rTask').textContent =
+    d.last_task ? (d.last_task.task_id || '?') : '-';
+  const rResult = document.getElementById('rResult');
+  rResult.textContent = d.last_result || '-';
+  rResult.style.color = d.last_result === 'done' ? '#4ade80' :
+    (d.last_result === 'failed' ? '#f87171' : '');
+  document.getElementById('rMsg').textContent = d.message || '-';
+  // 详细卡片（含单位说明）
+  document.getElementById('online').textContent = d.online ? '在线' : '离线';
+  document.getElementById('onlineMsg').textContent = d.error || d.message || '';
+  const state = document.getElementById('state');
+  state.textContent = d.state || '-';
+  state.className = 'state' + (d.state ? ' ' + d.state : '');
+  document.getElementById('pos').textContent =
+    d.position_m ? d.position_m.x + ', ' + d.position_m.y : '-';
+  document.getElementById('heading').textContent =
+    d.heading_deg != null ? d.heading_deg + '°' : '-';
+  document.getElementById('picked').textContent =
+    d.picked_count != null ? d.picked_count : '-';
+  document.getElementById('task').textContent =
+    d.last_task ? (d.last_task.task_id || '?') : '-';
+  const result = document.getElementById('result');
+  result.textContent = d.last_result || '-';
+  result.style.color = d.last_result === 'done' ? '#4ade80' :
+    (d.last_result === 'failed' ? '#f87171' : '');
+  document.getElementById('message').textContent = d.message || '-';
+}
+
 async function refreshStatus() {
   try {
     const d = await (await fetch('/api/status')).json();
-    setStatus(d.online);
-    errEl.textContent = d.error || '';
-    document.getElementById('online').textContent = d.online ? '在线' : '离线';
-    document.getElementById('onlineMsg').textContent = d.error || d.message || '';
-    const st = document.getElementById('state');
-    st.textContent = d.state || '-';
-    st.className = 'state' + (d.state ? ' ' + d.state : '');
-    document.getElementById('pos').textContent =
-      d.position_m ? d.position_m.x + ', ' + d.position_m.y : '-';
-    document.getElementById('heading').textContent =
-      d.heading_deg != null ? d.heading_deg + '°' : '-';
-    document.getElementById('picked').textContent =
-      d.picked_count != null ? d.picked_count : '-';
-    document.getElementById('task').textContent =
-      d.last_task ? (d.last_task.task_id || '?') : '-';
-    const r = document.getElementById('result');
-    r.textContent = d.last_result || '-';
-    r.style.color = d.last_result === 'done' ? '#4ade80' :
-      (d.last_result === 'failed' ? '#f87171' : '');
-    document.getElementById('message').textContent = d.message || '-';
+    fillStatus(d);
   } catch (e) {
     setStatus(false);
-    errEl.textContent = '请求失败：' + e;
+    const on = document.getElementById('rOnline');
+    on.textContent = '● 离线';
+    on.className = 'chip bad';
   }
 }
 
-document.getElementById('sendBtn').onclick = async () => {
-  const id = document.getElementById('tId').value || ('T' + Date.now());
-  const task = {
-    task_id: id,
-    target: {
-      x: parseFloat(document.getElementById('tX').value),
-      y: parseFloat(document.getElementById('tY').value),
-      confidence: parseFloat(document.getElementById('tConf').value),
-      source: 'robot_dashboard'
-    },
-    arrive_radius: parseFloat(document.getElementById('tRadius').value)
-  };
-  if (!confirm('确认下发任务 ' + id + ' 给机器人？')) return;
-  try {
-    const resp = await fetch('/api/task', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(task)
-    });
-    document.getElementById('taskResult').textContent =
-      'HTTP ' + resp.status + '\n' + JSON.stringify(await resp.json(), null, 2);
-  } catch (e) {
-    document.getElementById('taskResult').textContent = '发送失败：' + e;
-  }
-};
-
 refreshStatus();
 setInterval(refreshStatus, 1000);
+
+// 配置按钮 + 表单弹窗（读写 data/config.yaml）
+const configModal = document.getElementById('configModal');
+const configForm = document.getElementById('configForm');
+const configMsg = document.getElementById('configMsg');
+let configFlat = {};
+
+const CONFIG_LABELS = {
+  'robot.url': '机器人地址',
+  'robot.video': '机器人画面开关',
+  'dashboard.robot_port': '仪表盘端口',
+};
+
+function flatten(obj, prefix, out) {
+  for (const k in obj) {
+    const key = prefix ? prefix + '.' + k : k;
+    if (obj[k] && typeof obj[k] === 'object' && !Array.isArray(obj[k])) {
+      flatten(obj[k], key, out);
+    } else {
+      out[key] = obj[k];
+    }
+  }
+  return out;
+}
+function renderForm(flat) {
+  configForm.innerHTML = '';
+  for (const key in flat) {
+    const val = flat[key];
+    const row = document.createElement('div');
+    row.className = 'field';
+    const label = document.createElement('label');
+    label.textContent = CONFIG_LABELS[key] || key;
+    const input = document.createElement('input');
+    input.id = 'f_' + key;
+    if (typeof val === 'boolean') {
+      input.type = 'checkbox';
+      input.checked = val;
+    } else if (typeof val === 'number') {
+      input.type = 'number';
+      input.step = Number.isInteger(val) ? '1' : 'any';
+      input.value = val;
+    } else {
+      input.type = 'text';
+      input.value = val == null ? '' : val;
+    }
+    row.appendChild(label);
+    row.appendChild(input);
+    configForm.appendChild(row);
+  }
+}
+function collectForm() {
+  const flat = {};
+  for (const key in configFlat) {
+    const el = document.getElementById('f_' + key);
+    if (!el) continue;
+    const orig = configFlat[key];
+    if (typeof orig === 'boolean') flat[key] = el.checked;
+    else if (typeof orig === 'number') flat[key] = Number.isInteger(orig) ? parseInt(el.value, 10) : parseFloat(el.value);
+    else flat[key] = el.value;
+  }
+  return flat;
+}
+function unflatten(flat) {
+  const out = {};
+  for (const key in flat) {
+    const parts = key.split('.');
+    let cur = out;
+    for (let i = 0; i < parts.length - 1; i++) cur = cur[parts[i]] || (cur[parts[i]] = {});
+    cur[parts[parts.length - 1]] = flat[key];
+  }
+  return out;
+}
+document.getElementById('configBtn').onclick = async () => {
+  try {
+    const data = await (await fetch('/api/config')).json();
+    if (data.error) throw new Error(data.error);
+    configFlat = flatten(data, '', {});
+    renderForm(configFlat);
+    configMsg.textContent = '';
+    configMsg.style.color = '';
+  } catch (e) {
+    configFlat = {};
+    renderForm({});
+    configMsg.textContent = '读取配置失败：' + e;
+    configMsg.style.color = '#f87171';
+  }
+  configModal.classList.add('show');
+};
+document.getElementById('configClose').onclick = () => { configModal.classList.remove('show'); };
+configModal.addEventListener('click', (e) => { if (e.target === configModal) configModal.classList.remove('show'); });
+document.getElementById('configSave').onclick = async () => {
+  try {
+    const nested = unflatten(collectForm());
+    const resp = await fetch('/api/config', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(nested)
+    });
+    const data = await resp.json();
+    if (data.status === 'ok') {
+      configMsg.textContent = '已保存，已热重载';
+      configMsg.style.color = '#4ade80';
+      configModal.classList.remove('show');
+    } else {
+      configMsg.textContent = '保存失败：' + (data.reason || '');
+      configMsg.style.color = '#f87171';
+    }
+  } catch (e) {
+    configMsg.textContent = '保存失败：' + e;
+    configMsg.style.color = '#f87171';
+  }
+};
 </script>
 </body>
 </html>

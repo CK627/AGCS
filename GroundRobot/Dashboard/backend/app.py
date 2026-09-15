@@ -14,19 +14,68 @@
 
 启动（地面站电脑，无需 ROS）：
     python app.py
-浏览器打开 http://127.0.0.1:20002
+浏览器打开 http://127.0.0.1:20001
 """
 import argparse
 import os
 
 import requests
-from flask import Flask, jsonify, render_template, request, Response
+from flask import Flask, jsonify, render_template, request, Response, send_file
+
+# Windows 静默运行：pythonw 无控制台时 stdout/stderr 为 None，重定向到日志避免 print 崩溃
+import sys as _sys
+if _sys.stdout is None or _sys.stderr is None:
+    import os as _os
+    _log = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '..', 'logs', 'server.log')
+    _os.makedirs(_os.path.dirname(_log), exist_ok=True)
+    _f = open(_log, 'a', encoding='utf-8', buffering=1)
+    if _sys.stdout is None:
+        _sys.stdout = _f
+    if _sys.stderr is None:
+        _sys.stderr = _f
 
 import config
 
 # frontend 目录：backend/ 的上一级的 frontend/
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'frontend')
+IMAGES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'images')
 app = Flask(__name__, template_folder=FRONTEND_DIR)
+
+
+@app.route('/common.css')
+def common_css():
+    """统一的通用样式文件（无人机/地面站/机器人共用）。"""
+    return send_file(os.path.join(FRONTEND_DIR, 'common.css'), mimetype='text/css')
+
+
+@app.route('/images/<path:filename>')
+def images(filename):
+    """仪表盘图片资源（logo 等，来自 images/ 目录）。"""
+    return send_file(os.path.join(IMAGES_DIR, filename))
+
+@app.route('/api/config', methods=['GET', 'POST'])
+def api_config():
+    """读取/保存 data/config.yaml（页面右上角「配置」按钮用，表单形式）。"""
+    import yaml
+    if request.method == 'GET':
+        try:
+            with open(config._CONFIG_YAML, 'r', encoding='utf-8') as f:
+                data = yaml.safe_load(f) or {}
+            return jsonify(data)
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+    data = request.get_json(force=True)
+    if not data:
+        return jsonify({'status': 'error', 'reason': '配置为空，未保存'}), 400
+    try:
+        with open(config._CONFIG_YAML, 'w', encoding='utf-8') as f:
+            yaml.safe_dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        config._last_mtime = None   # 强制热重载
+        config.reload_if_changed()
+        return jsonify({'status': 'ok'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'reason': str(e)}), 500
+
 
 
 @app.route('/')

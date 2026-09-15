@@ -5,7 +5,7 @@
 ## macOS / Linux
 
 ```bash
-bash GroundRobot/Dashboard/scripts/macOS/start.sh          # 启动（默认端口 20002）
+bash GroundRobot/Dashboard/scripts/macOS/start.sh          # 启动（默认端口 20001）
 bash GroundRobot/Dashboard/scripts/macOS/start.sh status   # 查看状态
 bash GroundRobot/Dashboard/scripts/macOS/start.sh stop     # 停止
 bash GroundRobot/Dashboard/scripts/macOS/start.sh restart  # 重启
@@ -21,7 +21,7 @@ GroundRobot\Dashboard\scripts\Windows\start.bat
 
 | 命令 | 说明 |
 |------|------|
-| `start [端口]` | 启动服务（默认 20002） |
+| `start [端口]` | 启动服务（默认 20001） |
 | `stop` | 停止服务 |
 | `restart [端口]` | 重启服务 |
 | `status` | 查看运行状态 |
@@ -31,4 +31,4 @@ GroundRobot\Dashboard\scripts\Windows\start.bat
 | `uninstall` | 卸载（清理 data/logs） |
 | `help` | 帮助 |
 
-启动后浏览器打开 http://127.0.0.1:20002。
+启动后浏览器打开 http://127.0.0.1:20001。
