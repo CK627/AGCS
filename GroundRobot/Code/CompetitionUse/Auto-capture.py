@@ -56,7 +56,10 @@ LEFT_TURN_TOL_DEG = 1.0  # 直线阶段允许左偏多少才左转
 RIGHT_TURN_TOL_DEG = 8.0 # 直线阶段允许右偏多少才右转
 IMU_STRAIGHT_STEP = 1    # 转弯后一次性修正的角度（imu_turn 用）
 IMU_STRAIGHT_GAIN = 0.6  # 直线阶段航向修正比例：单次转「误差 × 该比例」的角度（P 控制，需现场调）
-IMU_STRAIGHT_MAX = 8.0   # 直线阶段单次修正最大角度（度），防止误差大时一步转过头
+IMU_STRAIGHT_STEP_MAX = 2  # 直线阶段单次修正角度上限（度）。原来这里是「误差钳位 8.0 × 0.6」，
+                           # 单次最大能转到 5°，而触发门槛只有 1°，1° 的偏差用 5° 去补必然转过头、
+                           # 下一轮再往回荡，走出来是蛇形。改成直接限制单次转角后，误差大也最多 2°，
+                           # 靠转得勤而不是转得狠来贴住直线。
 COLOR_CENTER_TOL = 3.0   # 色块中心允许偏差，单位：像素；偏差小于该值不调整
 COLOR_CORRECT_MM = 7     # 向右微调每次移动的距离，单位：毫米
 LEFT_CORRECT_MM = 10     # 向左微调每次移动的距离，单位：毫米（向左力度加大）
@@ -428,7 +431,8 @@ def move_straight_imu_color(ik, board, detector, imu_state, target_yaw, distance
         if ENABLE_IMU_STRAIGHT:
             corrected = False
             if err > LEFT_TURN_TOL_DEG:
-                step = max(1, int(round(min(err, IMU_STRAIGHT_MAX) * IMU_STRAIGHT_GAIN)))
+                step = max(1, min(IMU_STRAIGHT_STEP_MAX,
+                                   int(round(err * IMU_STRAIGHT_GAIN))))
                 if IMU_DIRECTION_SIGN > 0:
                     ik.turn_left(ik.initial_pos, 2, step, TURN_SPEED, 1)
                     print('IMU yaw=%.1f target=%.1f error=%+.1f -> 左转%d°'
@@ -439,7 +443,8 @@ def move_straight_imu_color(ik, board, detector, imu_state, target_yaw, distance
                           % (imu_state['yaw'], target_yaw, err, step), flush=True)
                 corrected = True
             elif err < -RIGHT_TURN_TOL_DEG:
-                step = max(1, int(round(min(-err, IMU_STRAIGHT_MAX) * IMU_STRAIGHT_GAIN)))
+                step = max(1, min(IMU_STRAIGHT_STEP_MAX,
+                                   int(round(-err * IMU_STRAIGHT_GAIN))))
                 if IMU_DIRECTION_SIGN > 0:
                     ik.turn_right(ik.initial_pos, 2, step, TURN_SPEED, 1)
                     print('IMU yaw=%.1f target=%.1f error=%+.1f -> 右转%d°'
