@@ -32,9 +32,13 @@ MacYoLo/
 # 本地 AI 工具配置（含机器相关权限/密码，不入库）
 .claude/
 
-# 模型权重
+# 模型权重（单个 10MB+，用网盘/单独渠道分发；已有跟踪的 models/*.onnx 不受影响）
 *.pt
 *.pth
+*.onnx
+
+# 建图产物（scan_2d/merge_scans/map_build 等跑出来的，现场重扫即可再生）
+*.npz
 
 # 仪表盘运行时产物（启动脚本每次运行都会重新生成，不是源码）
 server.pid
