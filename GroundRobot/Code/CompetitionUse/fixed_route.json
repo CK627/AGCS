@@ -55,7 +55,7 @@
   }, 
  {
     "action": "forward",
-    "step": 60,
+    "step": 100,
     "speed": 50,
     "index": 9
   },
@@ -64,9 +64,9 @@
     "action": "pick",
     "index": 14,
     "pulses": {
-      "21": 855,
-      "22": 410,
-      "23": 310,
+      "21": 875,
+      "22": 395,
+      "23": 350,
       "24": 250
     }
   },
@@ -124,6 +124,7 @@
     "speed": 50,
     "index": 23
   },
+
   {
     "action": "place",
     "index": 25,
@@ -200,6 +201,12 @@
     "speed": 50,
     "index": 38
   },
+  {
+    "action": "turn_left",
+    "angle": 5,
+    "speed": 50,
+    "index": 30
+  },
 
   {
     "action": "forward",
@@ -221,20 +228,9 @@
   },
   {
     "action": "forward",
-    "step": 50,
+    "step": 100,
     "speed": 50,
     "index": 42
-  },
-
-      {
-    "action": "pick",
-    "index": 74,
-    "pulses": {
-      "21": 765,
-      "22": 340,
-      "23": 600,
-      "24": 250
-    }
   },
   {
     "action": "forward",
@@ -242,6 +238,7 @@
     "speed": 50,
     "index": 42
   },
+
 
   {
     "action": "forward",
@@ -312,7 +309,7 @@
   },
   {
     "action": "forward",
-    "step": 75,
+    "step": 100,
     "speed": 50,
     "index": 61
   },
@@ -341,6 +338,18 @@
     "speed": 50,
     "index": 65
   },
+
+      {
+    "action": "pick",
+    "index": 74,
+    "pulses": {
+      "21": 705,
+      "22": 445,
+      "23": 470,
+      "24": 270
+    }
+  },
+
   {
     "action": "forward",
     "step": 100,
@@ -391,13 +400,13 @@
   },
   {
     "action": "forward",
-    "step": 50,
+    "step": 75,
     "speed": 50,
     "index": 75
   },
   {
     "action": "forward",
-    "step": 25,
+    "step": 50,
     "speed": 50,
     "index": 76
   },  
