@@ -67,7 +67,10 @@ OFFICIAL_ARM = {21: 500, 22: 705, 23: 90, 24: 330}  # 机械臂官方初始脉�
 GRIPPER_CLOSE = 700  # 25 号夹爪闭合脉宽
 GRIPPER_OPEN = 400   # 25 号夹爪张开脉宽
 ARM_SERVOS = [21, 22, 23, 24]   # 机械臂 4 个舵机
-PULL_UP_23 = 200   # 第一次夹取后 23 后仰先拔起来的目标脉宽
+# 第一次夹取后拔起：动 22 号「肩」舵机（不是 23 号肘，23 是肘）。22 的复位脉宽是 705。
+# 现场实测 785（705+80）抬得太高，改成 400。方向/幅度不合适就在命令行传 --pull-up 试值，
+# 不用改代码。
+PULL_UP_22 = 400
 
 
 # ---------- 六足运动 ----------
@@ -175,7 +178,7 @@ def parse_adjust(cmd):
     return int(m.group(1)), (1 if m.group(2) == 'w' else -1), (int(m.group(3)) if m.group(3) else 5)
 
 
-def arm_fine_tune(board, state, kind, pull_up=False):
+def arm_fine_tune(board, state, kind, pull_up=False, pull_up_pulse=None):
     """机械臂手动微调，回车执行夹取/放下。"""
     print('机械臂微调：回车=%s，c=退出' % ('夹取' if kind == 'pick' else '放下'), flush=True)
     while True:
@@ -201,8 +204,10 @@ def arm_fine_tune(board, state, kind, pull_up=False):
     time.sleep(2.0)
     time.sleep(0.5)
     if pull_up:
-        # 22 后仰先把目标拔起来，再恢复初始位置
-        board.bus_servo_set_position(1.0, [[23, PULL_UP_23]])
+        # 22 号肩舵机上抬，把目标从地里/网里拔出来，再恢复初始位置
+        pulse = PULL_UP_22 if pull_up_pulse is None else clamp_pulse(pull_up_pulse)
+        print('拔起：22 号肩舵机 %d → %d' % (OFFICIAL_ARM[22], pulse), flush=True)
+        board.bus_servo_set_position(1.0, [[22, pulse]])
         time.sleep(1.0)
     restore_travel(board, gripper)
 
@@ -800,7 +805,7 @@ def run_calibrate(board, model_det, pick_num, actions):
     print(json.dumps(data, indent=2, ensure_ascii=False), flush=True)
 
 
-def do_pick(board, pick_count, pulses, model_det, calib):
+def do_pick(board, pick_count, pulses, model_det, calib, pull_up_pulse=None):
     """执行第 1/2 次夹取：先摆臂，再模型精对准，最后手动确认。"""
     if pick_count == 1:
         state = pick1_prepare(board, pulses)
@@ -813,7 +818,8 @@ def do_pick(board, pick_count, pulses, model_det, calib):
             print('精对准未完全居中，进入手动微调', flush=True)
     else:
         print('无标定数据，跳过模型精对准，进入手动微调', flush=True)
-    arm_fine_tune(board, state, 'pick', pull_up=(pick_count == 1))
+    arm_fine_tune(board, state, 'pick', pull_up=(pick_count == 1),
+                  pull_up_pulse=pull_up_pulse)
 
 
 def do_place(board, place_count, pulses=None):
@@ -842,6 +848,9 @@ def main():
     parser.add_argument('--approach', action='store_true',
                         help='直接启用模型检测并慢慢靠近(不走固定路线)')
     parser.add_argument('--map', default=DEFAULT_MAP, help='预建 3D 地图路径(深度定位)')
+    parser.add_argument('--pull-up', type=int, default=None,
+                        help='第一次夹取后拔起的脉宽（22 号肩，默认 %d）；'
+                             '幅度不合适现场试值' % PULL_UP_22)
     args = parser.parse_args()
 
     with open(ROUTE_PATH, 'r', encoding='utf-8') as f:
@@ -885,7 +894,7 @@ def main():
             picks = find_pick_actions(actions)
             pulses = picks[0]['pulses'] if picks else None
             calib = load_calib(1)
-            do_pick(board, 1, pulses, model_det, calib)
+            do_pick(board, 1, pulses, model_det, calib, pull_up_pulse=args.pull_up)
         restore_travel(board, GRIPPER_OPEN)
         video_stop.set()
         cam.camera_close()
@@ -986,7 +995,7 @@ def main():
             pulses = {int(k): int(v) for k, v in act.get('pulses', {}).items()} \
                 if act.get('pulses') else None
             calib = load_calib(pick_count)
-            do_pick(board, pick_count, pulses, model_det, calib)
+            do_pick(board, pick_count, pulses, model_det, calib, pull_up_pulse=args.pull_up)
         elif name == 'place':
             place_count += 1
             print('%d/%d place%d' % (i, len(actions), place_count), flush=True)
