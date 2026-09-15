@@ -36,6 +36,11 @@ MacYoLo/
 *.pt
 *.pth
 
+# 仪表盘运行时产物（启动脚本每次运行都会重新生成，不是源码）
+server.pid
+server.port
+GroundRobot/Dashboard/logs/
+
 # 构建/缓存目录
 build/
 dist/
