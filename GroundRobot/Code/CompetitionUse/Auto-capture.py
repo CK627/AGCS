@@ -21,6 +21,7 @@ if _PKG_ROOT not in sys.path:
 from agcs_lib import (
     make_board,
     make_ik,
+    ImuTracker,
     load_params,
     load_lab_data,
     load_undistort_maps,
@@ -52,11 +53,9 @@ MOVE_SPEED = 50      # 六足直线前进/后退的速度，越大走得越快
 TURN_SPEED = 30      # 六足左转/右转的速度，越大转得越快
 GYRO_SCALE_LEFT = 1.177   # IMU 左转时陀螺仪积分修正比例
 GYRO_SCALE_RIGHT = 1.199  # IMU 右转时陀螺仪积分修正比例
-# 直线阶段每次积分前连采几个 gz 取中位数。dt 跨着一整段 100mm 行走（好几秒），
-# 单读一个样本的话，一个坏样本乘上几秒 dt 就是几十度的假跳变
-# （现场日志实测：yaw 一次从 -26.8 跳到 +16.5，机器人实际在直走没转）。
-GYRO_FILTER_SAMPLES = 5
-GYRO_FILTER_INTERVAL = 0.003  # 连采间隔，秒
+# 重标零漂前先等机身晃动静下来再采样。这个方法基本都在刚转完弯之后调用，六足转身时
+# 整个机身还在晃，这时候采到的不是真实零漂——标错多少，后面整段直行就照着错多少积分。
+IMU_SETTLE_S = 0.25
 HEADING_TOL_DEG = 1.0    # 航向误差容忍范围，单位：度；越小越严格
 LEFT_TURN_TOL_DEG = 1.0  # 直线阶段允许左偏多少才左转
 RIGHT_TURN_TOL_DEG = 8.0 # 直线阶段允许右偏多少才右转
@@ -260,32 +259,6 @@ def lab_view(frame, lab, color):
     return cv2.bitwise_and(frame, frame, mask=mask)
 
 
-def read_gz(board, samples=1):
-    """读取 IMU 的 gz 角速度。samples>1 时连采几次取中位数，滤掉单次坏样本。"""
-    if samples <= 1:
-        try:
-            data = board.get_imu()
-            if data is None:
-                return None
-            return float(data[5])
-        except Exception:
-            return None
-    vals = []
-    for i in range(samples):
-        try:
-            data = board.get_imu()
-            if data is not None:
-                vals.append(float(data[5]))
-        except Exception:
-            pass
-        if i < samples - 1:
-            time.sleep(GYRO_FILTER_INTERVAL)
-    if not vals:
-        return None
-    vals.sort()
-    return vals[len(vals) // 2]
-
-
 def read_battery_running(board, samples=30, interval=0.05):
     """实时连续采样电池电压，返回 (中位数毫伏, 平均值毫伏)。"""
     vals = []
@@ -339,52 +312,47 @@ def is_low_voltage(board):
 
 
 def init_imu(board):
-    """初始化 IMU：开启接收，标定 gz 零漂。"""
+    """初始化 IMU：开启接收，起后台积分线程，标定 gz 零漂。
+
+    航向积分交给 `ImuTracker` 线程连续做（约 105Hz）。**不能**再靠「要用的时候读
+    一个样本」——官方 SDK 的 imu_queue 是 maxsize=1，两次读取之间的样本全被丢掉，
+    而这里两次读取之间夹着一整段 100mm 行走（1.5~1.9 秒），那一个瞬时样本落在步态
+    周期的哪个相位纯属偶然，乘上 1.9 秒就是一个随机方向的假转角。
+    详见 `agcs_lib/imu.py` 与 `CompetitionUse/imu_probe.py` 的实测数据。
+    """
     board.enable_reception()
-    vals = []
-    while len(vals) < 200:
-        gz = read_gz(board)
-        if gz is not None:
-            vals.append(gz)
-        time.sleep(0.005)
-    bias = sum(vals) / len(vals)
-    return {'bias': bias, 'yaw': 0.0, 'last_t': time.monotonic()}
+    state = {'bias': 0.0, 'yaw': 0.0, 'last_rate': 0.0, 'last_dt': 0.0}
+    tracker = ImuTracker(board, state,
+                         scale_left=GYRO_SCALE_LEFT, scale_right=GYRO_SCALE_RIGHT)
+    tracker.start()
+    time.sleep(0.5)                       # 等队列里开始有数据
+    bias, n = tracker.calibrate(1.0, settle=0.0)   # 开机时是静止的，不用沉降
+    tracker.reset()
+    state['tracker'] = tracker
+    print('IMU 零漂 %+.3f°/s（%d 个样本），后台采样已启动' % (bias, n), flush=True)
+    return state
 
 
 def reset_imu(board, imu_state):
     """转弯后重新标定 gz 零漂并清零航向积分（消除累积漂移导致的误纠）。"""
-    vals = []
-    while len(vals) < 100:
-        gz = read_gz(board)
-        if gz is not None:
-            vals.append(gz)
-        time.sleep(0.005)
-    if vals:
-        imu_state['bias'] = sum(vals) / len(vals)
-    imu_state['yaw'] = 0.0
-    imu_state['last_t'] = time.monotonic()
+    tracker = imu_state.get('tracker')
+    if tracker is None:
+        return
+    tracker.calibrate(0.5, settle=IMU_SETTLE_S)
+    tracker.reset()
 
 
 def update_imu(state, board):
-    """更新 IMU 偏航角。
+    """刷新日志用的「上一段平均角速度 / 时长」。
 
-    dt 跨的是「上一次采样到现在」，中间夹着一整段 100mm 行走和可能的修正转弯，
-    是好几秒。所以 gz 必须取中位数（GYRO_FILTER_SAMPLES）而不是单读一个样本，
-    否则一个坏样本乘上几秒 dt 就造出几十度的假跳变。
+    航向积分已经由后台线程连续完成，这里不再积分——保留这个函数只是为了不动主循环
+    结构，并给现场留一个对照值：`rate` 是这一段直行的**平均**角速度，机器人走得直
+    它就应该接近 0；若常在 ±0.5°/s 以上，说明零漂标定不准。
     """
-    now = time.monotonic()
-    dt = now - state['last_t']
-    state['last_t'] = now
-    gz = read_gz(board, samples=GYRO_FILTER_SAMPLES)
-    if gz is None:
+    tracker = state.get('tracker')
+    if tracker is None:
         return
-    rate = gz - state['bias']
-    scale = GYRO_SCALE_LEFT if rate >= 0 else GYRO_SCALE_RIGHT
-    state['yaw'] += rate * dt * scale
-    # 留给直线阶段打印：dt 是一整段行走的时长，rate 是这段的平均角速度。
-    # 现场对照「实际走得直不直」就能算出 yaw 里有多少是零漂造成的假漂移。
-    state['last_dt'] = dt
-    state['last_rate'] = rate
+    state['last_rate'], state['last_dt'] = tracker.since_last()
 
 
 def angle_error(current, target):
@@ -511,10 +479,8 @@ def imu_turn(ik, board, imu_state, delta_deg):
         remaining -= step
         time.sleep(0.08)
 
-    time.sleep(0.2)
-    for _ in range(5):
-        update_imu(imu_state, board)
-        time.sleep(0.02)
+    time.sleep(0.2)   # 等机身晃动静下来；积分由后台线程连续做，不用再手动补采
+    update_imu(imu_state, board)
 
     err = angle_error(imu_state['yaw'], target)
     print('转弯完成 yaw=%.1f target=%.1f error=%+.1f'
@@ -527,8 +493,7 @@ def imu_turn(ik, board, imu_state, delta_deg):
         else:
             ik.turn_right(ik.initial_pos, 2, abs(step), TURN_SPEED, 1)
         time.sleep(0.08)
-        update_imu(imu_state, board)
-        print('转弯后修正一次 yaw=%.1f' % imu_state['yaw'], flush=True)
+        print('转弯后修正一次 %d°' % abs(step), flush=True)
 
 
 def do_pick(board, pick_count, pulses=None, pull_up_pulse=None):
@@ -562,7 +527,15 @@ def main():
     parser.add_argument('--pull-up', type=int, default=None,
                         help='第一次夹取后拔起的脉宽（22 号肩，默认 %d）；'
                              '幅度不合适现场试值' % PULL_UP_22)
+    parser.add_argument('--imu-straight', default='on', choices=['on', 'off'],
+                        help='直线阶段是否用 IMU 修正航向（默认 on）。'
+                             '想单独看「不做 IMU 修正会不会更直」就传 off 做对照')
     args = parser.parse_args()
+
+    global ENABLE_IMU_STRAIGHT
+    ENABLE_IMU_STRAIGHT = (args.imu_straight == 'on')
+    if not ENABLE_IMU_STRAIGHT:
+        print('直线阶段 IMU 航向修正已关闭（--imu-straight off）', flush=True)
 
     with open(ROUTE_PATH, 'r', encoding='utf-8') as f:
         actions = json.load(f)
@@ -705,6 +678,9 @@ def main():
 
     video_stop.set()
     cam.camera_close()
+    tracker = imu_state.get('tracker')
+    if tracker is not None:
+        tracker.stop()
     ik.stand(ik.initial_pos, t=500)
     print('自动捕获运行结束', flush=True)
     report(state='END', last_result='done',
