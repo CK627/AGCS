@@ -82,6 +82,11 @@ TURN_SPEED = 30  # 左转/右转速度
 # ---------- IMU ----------
 GYRO_SCALE_LEFT = 1.177    # 左转陀螺仪积分修正比例
 GYRO_SCALE_RIGHT = 1.199   # 右转陀螺仪积分修正比例
+# 直线阶段每次积分前连采几个 gz 取中位数。dt 跨着一整段 100mm 行走（好几秒），
+# 单读一个样本的话，一个坏样本乘上几秒 dt 就是几十度的假跳变
+# （现场日志实测：yaw 一次从 -26.8 跳到 +16.5，机器人实际在直走没转）。
+GYRO_FILTER_SAMPLES = 5
+GYRO_FILTER_INTERVAL = 0.003  # 连采间隔，秒
 HEADING_TOL_DEG = 1.0      # 转弯后航向误差容忍，越小越严格
 LEFT_TURN_TOL_DEG = 1.0    # 直线阶段允许左偏多少才左转
 RIGHT_TURN_TOL_DEG = 8.0   # 直线阶段允许右偏多少才右转
@@ -401,15 +406,30 @@ def bbox_center(det):
     return det['x'] + det['w'] / 2.0, det['y'] + det['h'] / 2.0
 
 
-def read_gz(board):
-    """读取 IMU 的 gz 角速度。"""
-    try:
-        data = board.get_imu()
-        if data is None:
+def read_gz(board, samples=1):
+    """读取 IMU 的 gz 角速度。samples>1 时连采几次取中位数，滤掉单次坏样本。"""
+    if samples <= 1:
+        try:
+            data = board.get_imu()
+            if data is None:
+                return None
+            return float(data[5])
+        except Exception:
             return None
-        return float(data[5])
-    except Exception:
+    vals = []
+    for i in range(samples):
+        try:
+            data = board.get_imu()
+            if data is not None:
+                vals.append(float(data[5]))
+        except Exception:
+            pass
+        if i < samples - 1:
+            time.sleep(GYRO_FILTER_INTERVAL)
+    if not vals:
         return None
+    vals.sort()
+    return vals[len(vals) // 2]
 
 
 def read_battery_running(board, samples=30, interval=0.05):
@@ -492,16 +512,25 @@ def reset_imu(board, imu_state):
 
 
 def update_imu(state, board):
-    """更新 IMU 偏航角。"""
+    """更新 IMU 偏航角。
+
+    dt 跨的是「上一次采样到现在」，中间夹着一整段 100mm 行走和可能的修正转弯，
+    是好几秒。所以 gz 必须取中位数（GYRO_FILTER_SAMPLES）而不是单读一个样本，
+    否则一个坏样本乘上几秒 dt 就造出几十度的假跳变。
+    """
     now = time.monotonic()
     dt = now - state['last_t']
     state['last_t'] = now
-    gz = read_gz(board)
+    gz = read_gz(board, samples=GYRO_FILTER_SAMPLES)
     if gz is None:
         return
     rate = gz - state['bias']
     scale = GYRO_SCALE_LEFT if rate >= 0 else GYRO_SCALE_RIGHT
     state['yaw'] += rate * dt * scale
+    # 留给直线阶段打印：dt 是一整段行走的时长，rate 是这段的平均角速度。
+    # 现场对照「实际走得直不直」就能算出 yaw 里有多少是零漂造成的假漂移。
+    state['last_dt'] = dt
+    state['last_rate'] = rate
 
 
 def angle_error(current, target):
@@ -605,28 +634,33 @@ def move_straight_imu_color(ik, board, detector, imu_state, target_yaw,
         update_imu(imu_state, board)
         err = angle_error(imu_state['yaw'], target_yaw)
         if ENABLE_IMU_STRAIGHT:
+            # dt/rate 是这次积分用的时长与平均角速度。看 rate：机器人站在地上不动时
+            # 它应该接近 0，若常在 ±0.5°/s 以上，说明那次转弯后的零漂没标定准，
+            # yaw 里就混进了「假漂移」，修正循环会照着假误差转。
+            dbg = '(dt=%.1fs rate=%+.2f°/s)' % (
+                imu_state.get('last_dt', 0.0), imu_state.get('last_rate', 0.0))
             corrected = False
             if err > LEFT_TURN_TOL_DEG:
                 step = max(1, int(round(min(err, IMU_STRAIGHT_MAX) * IMU_STRAIGHT_GAIN)))
                 if IMU_DIRECTION_SIGN > 0:
                     ik.turn_left(ik.initial_pos, 2, step, TURN_SPEED, 1)
-                    print('IMU yaw=%.1f target=%.1f error=%+.1f -> 左转%d°'
-                          % (imu_state['yaw'], target_yaw, err, step), flush=True)
+                    print('IMU yaw=%.1f target=%.1f error=%+.1f %s -> 左转%d°'
+                          % (imu_state['yaw'], target_yaw, err, dbg, step), flush=True)
                 else:
                     ik.turn_right(ik.initial_pos, 2, step, TURN_SPEED, 1)
-                    print('IMU yaw=%.1f target=%.1f error=%+.1f -> 右转%d°'
-                          % (imu_state['yaw'], target_yaw, err, step), flush=True)
+                    print('IMU yaw=%.1f target=%.1f error=%+.1f %s -> 右转%d°'
+                          % (imu_state['yaw'], target_yaw, err, dbg, step), flush=True)
                 corrected = True
             elif err < -RIGHT_TURN_TOL_DEG:
                 step = max(1, int(round(min(-err, IMU_STRAIGHT_MAX) * IMU_STRAIGHT_GAIN)))
                 if IMU_DIRECTION_SIGN > 0:
                     ik.turn_right(ik.initial_pos, 2, step, TURN_SPEED, 1)
-                    print('IMU yaw=%.1f target=%.1f error=%+.1f -> 右转%d°'
-                          % (imu_state['yaw'], target_yaw, err, step), flush=True)
+                    print('IMU yaw=%.1f target=%.1f error=%+.1f %s -> 右转%d°'
+                          % (imu_state['yaw'], target_yaw, err, dbg, step), flush=True)
                 else:
                     ik.turn_left(ik.initial_pos, 2, step, TURN_SPEED, 1)
-                    print('IMU yaw=%.1f target=%.1f error=%+.1f -> 左转%d°'
-                          % (imu_state['yaw'], target_yaw, err, step), flush=True)
+                    print('IMU yaw=%.1f target=%.1f error=%+.1f %s -> 左转%d°'
+                          % (imu_state['yaw'], target_yaw, err, dbg, step), flush=True)
                 corrected = True
             if corrected:
                 time.sleep(0.05)
