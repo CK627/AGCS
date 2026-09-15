@@ -16,6 +16,7 @@
 
 import argparse
 import json
+import math
 import os
 import re
 import socket
@@ -84,7 +85,9 @@ GYRO_SCALE_RIGHT = 1.199   # 右转陀螺仪积分修正比例
 HEADING_TOL_DEG = 1.0      # 转弯后航向误差容忍，越小越严格
 LEFT_TURN_TOL_DEG = 1.0    # 直线阶段允许左偏多少才左转
 RIGHT_TURN_TOL_DEG = 8.0   # 直线阶段允许右偏多少才右转
-IMU_STRAIGHT_STEP = 1      # 直线阶段 IMU 每次修正角度
+IMU_STRAIGHT_STEP = 1      # 转弯后一次性修正的角度（imu_turn 用）
+IMU_STRAIGHT_GAIN = 0.6    # 直线阶段航向修正比例：单次转「误差 × 该比例」的角度（P 控制，需现场调）
+IMU_STRAIGHT_MAX = 8.0     # 直线阶段单次修正最大角度（度），防止误差大时一步转过头
 ENABLE_IMU_STRAIGHT = True  # 直线阶段是否启用 IMU 航向修正
 
 
@@ -136,6 +139,30 @@ def lan_ip():
         return ip
     except Exception:
         return '127.0.0.1'
+
+
+def report(**kw):
+    """上报仪表盘状态（task_server 未启用时静默跳过）。"""
+    if task_server is not None:
+        task_server.set_status(**kw)
+
+
+def norm_heading(deg):
+    """把累计 yaw 归一化到 [0, 360) 度。"""
+    return round(deg % 360.0, 1)
+
+
+def advance_pose(pose, yaw_deg, dist_mm):
+    """按当前朝向累计里程，更新 pose（单位：米）。"""
+    yaw_rad = math.radians(yaw_deg)
+    pose['x'] += (dist_mm / 1000.0) * math.sin(yaw_rad)
+    pose['y'] += (dist_mm / 1000.0) * math.cos(yaw_rad)
+    return pose
+
+
+def pose_dict(pose):
+    """返回仪表盘需要的 position_m 结构。"""
+    return {'x': round(pose['x'], 3), 'y': round(pose['y'], 3)}
 
 
 def restore_travel(board, gripper):
@@ -578,24 +605,30 @@ def move_straight_imu_color(ik, board, detector, imu_state, target_yaw,
         update_imu(imu_state, board)
         err = angle_error(imu_state['yaw'], target_yaw)
         if ENABLE_IMU_STRAIGHT:
+            corrected = False
             if err > LEFT_TURN_TOL_DEG:
+                step = max(1, int(round(min(err, IMU_STRAIGHT_MAX) * IMU_STRAIGHT_GAIN)))
                 if IMU_DIRECTION_SIGN > 0:
-                    ik.turn_left(ik.initial_pos, 2, IMU_STRAIGHT_STEP, TURN_SPEED, 1)
+                    ik.turn_left(ik.initial_pos, 2, step, TURN_SPEED, 1)
                     print('IMU yaw=%.1f target=%.1f error=%+.1f -> 左转%d°'
-                          % (imu_state['yaw'], target_yaw, err, IMU_STRAIGHT_STEP), flush=True)
+                          % (imu_state['yaw'], target_yaw, err, step), flush=True)
                 else:
-                    ik.turn_right(ik.initial_pos, 2, IMU_STRAIGHT_STEP, TURN_SPEED, 1)
+                    ik.turn_right(ik.initial_pos, 2, step, TURN_SPEED, 1)
                     print('IMU yaw=%.1f target=%.1f error=%+.1f -> 右转%d°'
-                          % (imu_state['yaw'], target_yaw, err, IMU_STRAIGHT_STEP), flush=True)
+                          % (imu_state['yaw'], target_yaw, err, step), flush=True)
+                corrected = True
             elif err < -RIGHT_TURN_TOL_DEG:
+                step = max(1, int(round(min(-err, IMU_STRAIGHT_MAX) * IMU_STRAIGHT_GAIN)))
                 if IMU_DIRECTION_SIGN > 0:
-                    ik.turn_right(ik.initial_pos, 2, IMU_STRAIGHT_STEP, TURN_SPEED, 1)
+                    ik.turn_right(ik.initial_pos, 2, step, TURN_SPEED, 1)
                     print('IMU yaw=%.1f target=%.1f error=%+.1f -> 右转%d°'
-                          % (imu_state['yaw'], target_yaw, err, IMU_STRAIGHT_STEP), flush=True)
+                          % (imu_state['yaw'], target_yaw, err, step), flush=True)
                 else:
-                    ik.turn_left(ik.initial_pos, 2, IMU_STRAIGHT_STEP, TURN_SPEED, 1)
+                    ik.turn_left(ik.initial_pos, 2, step, TURN_SPEED, 1)
                     print('IMU yaw=%.1f target=%.1f error=%+.1f -> 左转%d°'
-                          % (imu_state['yaw'], target_yaw, err, IMU_STRAIGHT_STEP), flush=True)
+                          % (imu_state['yaw'], target_yaw, err, step), flush=True)
+                corrected = True
+            if corrected:
                 time.sleep(0.05)
                 target_yaw = imu_state['yaw']
         move = min(100, remaining)
@@ -872,6 +905,13 @@ def main():
 
     if task_server is not None:
         task_server.start_server()
+    report(state='CAPTURE',
+           position_m={'x': 0.0, 'y': 0.0},
+           heading_deg=0.0,
+           picked_count=0,
+           last_task={'task_id': 'capture', 'color': args.color},
+           last_result=None,
+           message='自动捕获，颜色=%s' % args.color)
 
     restore_travel(board, GRIPPER_OPEN)
     print('NO7 启动，颜色目标=%s，模型=%s' % (args.color, args.model), flush=True)
@@ -925,6 +965,8 @@ def main():
     pending_forward = 0
     pick_count = 0
     place_count = 0
+    picked_count = 0
+    pose = {'x': 0.0, 'y': 0.0}
     tilt = {'pulse': 260}
     color_enabled = True
     first_place_done = False
@@ -952,11 +994,16 @@ def main():
                 print('当前步数 %d 在 23-53，暂停颜色微调' % i, flush=True)
             if segment_color:
                 color_state['ref_cx'] = None  # 每个直行段开头重新取「一开始检测到的色块」作固定参考点
+            dist_mm = pending_forward
             move_straight_imu_color(
                 ik, board, color_detector, imu_state, target_yaw,
                 pending_forward, tilt, segment_color, color_state)
             pending_forward = 0
             left_turn_compensated = False
+            advance_pose(pose, imu_state['yaw'], dist_mm)
+            report(position_m=pose_dict(pose),
+                   heading_deg=norm_heading(imu_state['yaw']),
+                   message='直行 %dmm' % dist_mm)
 
         if name == 'turn_left':
             if first_place_done:
@@ -975,6 +1022,8 @@ def main():
             target_yaw = imu_state['yaw']
             if localize_heading(depth_cam, localizer, imu_state) is not None:
                 target_yaw = imu_state['yaw']
+            report(heading_deg=norm_heading(imu_state['yaw']),
+                   message='左转 %d°' % angle)
         elif name == 'turn_right':
             if first_place_done:
                 turns_after_first_place += 1
@@ -988,6 +1037,8 @@ def main():
             target_yaw = imu_state['yaw']
             if localize_heading(depth_cam, localizer, imu_state) is not None:
                 target_yaw = imu_state['yaw']
+            report(heading_deg=norm_heading(imu_state['yaw']),
+                   message='右转 %d°' % angle)
         elif name == 'pick':
             pick_count += 1
             print('%d/%d pick%d' % (i, len(actions), pick_count), flush=True)
@@ -996,6 +1047,9 @@ def main():
                 if act.get('pulses') else None
             calib = load_calib(pick_count)
             do_pick(board, pick_count, pulses, model_det, calib, pull_up_pulse=args.pull_up)
+            picked_count += 1
+            report(picked_count=picked_count,
+                   message='第 %d 次夹取完成' % picked_count)
         elif name == 'place':
             place_count += 1
             print('%d/%d place%d' % (i, len(actions), place_count), flush=True)
@@ -1003,6 +1057,7 @@ def main():
             pulses = {int(k): int(v) for k, v in act.get('pulses', {}).items()} \
                 if act.get('pulses') else None
             do_place(board, place_count, pulses)
+            report(message='第 %d 次放下完成' % place_count)
             if place_count == 1:
                 color_enabled = False
                 first_place_done = True
@@ -1019,16 +1074,24 @@ def main():
         segment_color = color_enabled and not (23 <= len(actions) <= 53)
         if segment_color:
             color_state['ref_cx'] = None
+        dist_mm = pending_forward
         move_straight_imu_color(
             ik, board, color_detector, imu_state, target_yaw,
             pending_forward, tilt, segment_color, color_state)
+        advance_pose(pose, imu_state['yaw'], dist_mm)
 
     video_stop.set()
     if depth_cam is not None:
         depth_cam.close()
     cam.camera_close()
     ik.stand(ik.initial_pos, t=500)
+    report(state='END', last_result='done',
+           position_m=pose_dict(pose),
+           heading_deg=norm_heading(imu_state['yaw']),
+           picked_count=picked_count,
+           message='自动捕获完成')
     print('NO7 运行结束', flush=True)
+    time.sleep(5)  # END 状态停留 5 秒，供中枢轮询确认
 
 
 if __name__ == '__main__':

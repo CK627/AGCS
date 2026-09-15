@@ -54,7 +54,9 @@ GYRO_SCALE_RIGHT = 1.199  # IMU 右转时陀螺仪积分修正比例
 HEADING_TOL_DEG = 1.0    # 航向误差容忍范围，单位：度；越小越严格
 LEFT_TURN_TOL_DEG = 1.0  # 直线阶段允许左偏多少才左转
 RIGHT_TURN_TOL_DEG = 8.0 # 直线阶段允许右偏多少才右转
-IMU_STRAIGHT_STEP = 1    # 直线阶段 IMU 每次修正的角度
+IMU_STRAIGHT_STEP = 1    # 转弯后一次性修正的角度（imu_turn 用）
+IMU_STRAIGHT_GAIN = 0.6  # 直线阶段航向修正比例：单次转「误差 × 该比例」的角度（P 控制，需现场调）
+IMU_STRAIGHT_MAX = 8.0   # 直线阶段单次修正最大角度（度），防止误差大时一步转过头
 COLOR_CENTER_TOL = 3.0   # 色块中心允许偏差，单位：像素；偏差小于该值不调整
 COLOR_CORRECT_MM = 7     # 向右微调每次移动的距离，单位：毫米
 LEFT_CORRECT_MM = 10     # 向左微调每次移动的距离，单位：毫米（向左力度加大）
@@ -424,24 +426,30 @@ def move_straight_imu_color(ik, board, detector, imu_state, target_yaw, distance
         update_imu(imu_state, board)
         err = angle_error(imu_state['yaw'], target_yaw)
         if ENABLE_IMU_STRAIGHT:
+            corrected = False
             if err > LEFT_TURN_TOL_DEG:
+                step = max(1, int(round(min(err, IMU_STRAIGHT_MAX) * IMU_STRAIGHT_GAIN)))
                 if IMU_DIRECTION_SIGN > 0:
-                    ik.turn_left(ik.initial_pos, 2, IMU_STRAIGHT_STEP, TURN_SPEED, 1)
+                    ik.turn_left(ik.initial_pos, 2, step, TURN_SPEED, 1)
                     print('IMU yaw=%.1f target=%.1f error=%+.1f -> 左转%d°'
-                          % (imu_state['yaw'], target_yaw, err, IMU_STRAIGHT_STEP), flush=True)
+                          % (imu_state['yaw'], target_yaw, err, step), flush=True)
                 else:
-                    ik.turn_right(ik.initial_pos, 2, IMU_STRAIGHT_STEP, TURN_SPEED, 1)
+                    ik.turn_right(ik.initial_pos, 2, step, TURN_SPEED, 1)
                     print('IMU yaw=%.1f target=%.1f error=%+.1f -> 右转%d°'
-                          % (imu_state['yaw'], target_yaw, err, IMU_STRAIGHT_STEP), flush=True)
+                          % (imu_state['yaw'], target_yaw, err, step), flush=True)
+                corrected = True
             elif err < -RIGHT_TURN_TOL_DEG:
+                step = max(1, int(round(min(-err, IMU_STRAIGHT_MAX) * IMU_STRAIGHT_GAIN)))
                 if IMU_DIRECTION_SIGN > 0:
-                    ik.turn_right(ik.initial_pos, 2, IMU_STRAIGHT_STEP, TURN_SPEED, 1)
+                    ik.turn_right(ik.initial_pos, 2, step, TURN_SPEED, 1)
                     print('IMU yaw=%.1f target=%.1f error=%+.1f -> 右转%d°'
-                          % (imu_state['yaw'], target_yaw, err, IMU_STRAIGHT_STEP), flush=True)
+                          % (imu_state['yaw'], target_yaw, err, step), flush=True)
                 else:
-                    ik.turn_left(ik.initial_pos, 2, IMU_STRAIGHT_STEP, TURN_SPEED, 1)
+                    ik.turn_left(ik.initial_pos, 2, step, TURN_SPEED, 1)
                     print('IMU yaw=%.1f target=%.1f error=%+.1f -> 左转%d°'
-                          % (imu_state['yaw'], target_yaw, err, IMU_STRAIGHT_STEP), flush=True)
+                          % (imu_state['yaw'], target_yaw, err, step), flush=True)
+                corrected = True
+            if corrected:
                 time.sleep(0.05)
                 target_yaw = imu_state['yaw']
         move = min(100, remaining)
