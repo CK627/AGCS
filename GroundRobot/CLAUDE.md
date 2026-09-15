@@ -94,7 +94,7 @@ ls -t /home/pi/spiderpi/logs/*/*.log | head -1 | xargs tail -50
 
 辅助：`_common.py`（2.1~2.5 公共初始化 `build_runtime`）、`fixed_route.json`（2.5 路线动作序列）、`depth_3d_grasp.py`（方案 A 深度 3D 抓取验证）、`calib_cam2arm.py`（手眼标定，一次性）。
 
-**NO6/NO7 关键设计**（改这两个脚本前读 `NO6-NO7-流程说明.md`）：forward/back 不立即执行，累加到 `pending_forward` 遇非直行动作才一次性走掉；距离切 100mm chunk 小步闭环；IMU 只修一次转向误差就 `reset_imu()` 归零；夹取/放下前按电压补偿步长；第一次放下后关颜色微调、累计 6 次转弯再开。
+**NO6/NO7 关键设计**（改这两个脚本前读 `NO6-NO7-流程说明.md`）：forward/back 不立即执行，累加到 `pending_forward` 遇非直行动作才一次性走掉；距离切 100mm chunk 小步闭环；航向由 `agcs_lib/imu.py` 后台线程连续积分，IMU 只修一次转向误差就 `reset_imu()` 归零（`--imu-straight off` 可整体关掉直线段修正）；夹取/放下前按电压补偿步长；第一次放下后关颜色微调、累计 6 次转弯再开。
 
 ## 关键契约与数据流
 
@@ -115,6 +115,7 @@ ls -t /home/pi/spiderpi/logs/*/*.log | head -1 | xargs tail -50
 - **关节**：21=底座横转、22=肩、23=肘、24=腕俯仰（相机装这里）、25=夹爪。搜索动 21/24 + 六足，夹取动 21-25。相机看的方向完全由 21/24 脉宽决定（0~1000，500=朝前，24 起始 260）。
 - **机械臂复位位**：`arm.reset_pulses = {21:500, 22:705, 23:90, 24:330, 25:700}`。**本机 IK 与实物有偏差**：复位用标定好的固定脉宽，夹取才用 IK，两者别混。
 - **IMU 只有陀螺仪没有磁力计**：yaw 是 gz 按 dt 积分出的相对值，会缓慢漂移。长路线必须「每转一次弯就 `reset_imu()` 重标零漂 + yaw 归零」，误差不跨段传播；NO7 另用深度 ICP 对预建地图校正航向。
+- **IMU 必须密集采样**（`agcs_lib/imu.py` 的 `ImuTracker` 后台线程，约 105Hz）。官方 SDK 的 `imu_queue` 是 `maxsize=1` 且满了就丢，`get_imu()` 只能拿到「上次取走之后到达的第一个样本」——**两次调用之间的样本全丢**。所以**绝不能**「要用的时候读一个样本」再乘上一段多秒的 `dt`，那会灌进随机方向的假转角，直线段控制会发散（2026-09-15 现场就是这么转飞的）。`get_imu()` 只读队列不写串口，后台线程不会跟舵机指令抢 `/dev/ttyAMA0`。现场排查用 `CompetitionUse/imu_probe.py`。
 - `board.bus_servo_read_position()` 本机**只能写、不能读**物理脉宽（返回 None）。
 - **串口 `/dev/ttyAMA0` 同一时刻只能一个进程**占，调试前必 `systemctl stop spiderpi`（joystick 也停）。
 - 超声波近距离读数乱跳（-1、突跳几十 cm），不可作主距离。
