@@ -25,9 +25,10 @@ _PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PKG_ROOT not in sys.path:
     sys.path.insert(0, _PKG_ROOT)
 
-# setStepMode 的参数顺序（按 kinematics.so 内 docstring）：
+# setStepMode 真实签名（inspect.signature 实测 12 参数，docstring 只写了 9 个）：
 #   pos, mode, step_velocity, step_amplitude, step_height,
-#   movement_direction, rotation, speed, times
+#   movement_direction, rotation_angle, rotation, p, o, speed, times
+#   （rotation_angle=绝对转角 / p=方向角 / o=旋转角，走直线/纯自转时都传 0）
 DEF = dict(mode=2, step_velocity=40.0, amplitude=30.0, height=25.0,
            direction=0.0, rotation=0.0, servo_speed=60, times=1)
 
@@ -97,7 +98,7 @@ def _drive(ik, pos, seconds, hz=25.0, **kw):
     n = 0
     while time.time() < t_end:
         _safe(fn, pos, p['mode'], p['step_velocity'], p['amplitude'],
-              p['height'], p['direction'], p['rotation'],
+              p['height'], p['direction'], 0.0, p['rotation'], 0.0, 0.0,
               p['servo_speed'], p['times'])
         n += 1
         time.sleep(1.0 / hz)
@@ -121,8 +122,8 @@ def probe_spin(ik, board, seconds=3.0, rots=(0.25, 0.5, 1.0)):
         for r in rots:
             tr.reset()
             time.sleep(0.2)
-            n = _drive(ik, pos, seconds, rotation=r, amplitude=0.0,
-                       step_velocity=0.0)
+            n = _drive(ik, pos, seconds, rotation=r, amplitude=30.0,
+                       step_velocity=40.0)
             dyaw = state['yaw']
             _stop(ik, pos)
             time.sleep(0.8)

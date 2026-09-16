@@ -71,6 +71,10 @@ class ImuTracker(threading.Thread):
 
     # ---------- 线程主体 ----------
     def run(self):
+        try:
+            self.board.enable_reception()   # make_board() 默认没开接收，这里自包含地开启
+        except Exception:
+            pass
         while not self._stop_evt.is_set():
             data = self.board.get_imu()
             if data is None:
