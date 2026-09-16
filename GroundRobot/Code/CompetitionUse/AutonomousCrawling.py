@@ -23,7 +23,7 @@ from common.ros_robot_controller_sdk import Board
 
 
 # 目标舵机脉宽（21/22/23/24）
-GRAB = {21: 500, 22: 330, 23: 485, 24: 270}   # 21 向左 +15 脉宽（485->500）
+GRAB = {21: 500, 22: 400, 23: 500, 24: 250}   # 21 向左 +15 脉宽（485->500）
 # 官方初始位置（复位，取自 robot_params.yaml arm.reset_pulses）
 RESET = {21: 500, 22: 705, 23: 90, 24: 330}
 GRIPPER_OPEN = 120    # 25 号张开

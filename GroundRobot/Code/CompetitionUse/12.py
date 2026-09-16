@@ -21,7 +21,6 @@ if _PKG_ROOT not in sys.path:
 from agcs_lib import (
     make_board,
     make_ik,
-    ImuTracker,
     load_params,
     load_lab_data,
     load_undistort_maps,
@@ -29,11 +28,6 @@ from agcs_lib import (
     correct_camera,
     open_camera,
     capture,
-)
-from agcs_lib.heading_fusion import (
-    LaneFusion,
-    LaneController,
-    range_from_radius_px,
 )
 
 try:
@@ -45,33 +39,24 @@ except ImportError:
 ROUTE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), 'fixed_route.json')
 
-OFFICIAL_ARM = {21: 500, 22: 705, 23: 90, 24: 330}  # 机械臂官方初始脉宽
+OFFICIAL_ARM = {21: 500, 22: 705, 23: 90, 24: 200}  # 机械臂官方初始脉宽
+RESTORE_24_AFTER_FIRST_PICK = 160  # 第一次夹取后恢复时 24 号（相机俯仰）脉宽，让相机能看到地面颜色
 
 GRIPPER_CLOSE = 700  # 夹取时 25 号夹爪闭合的脉宽，越大夹得越紧
 GRIPPER_OPEN = 400   # 放下时 25 号夹爪打开的脉宽，越小张得越开
 # 第一次夹取后拔起：动 22 号「肩」舵机（不是 23 号肘，23 是肘）。
-# 关键是基准：拔起时 22 号停在路线 JSON 的「夹取位」（当前路线 22:395），不是复位位 705。
-# 所以「往上抬」= 把 22 调到比夹取位大。现场实测 785 抬得太高（395→785，+390），
-# 450 是小幅抬（395→450，+55）。命令行传 --pull-up N 试值，不用改代码。
+# 关键是基准：拔起时 22 号停在路线 JSON 的「夹取位」，不是复位位 705。
+# 所以「往上抬」= 把 22 调到比夹取位大。现场实测 785 抬得太高，
+# 450 是小幅抬。命令行传 --pull-up N 试值，不用改代码。
 PULL_UP_22 = 450
 MOVE_SPEED = 50      # 六足直线前进/后退的速度，越大走得越快
 TURN_SPEED = 30      # 六足左转/右转的速度，越大转得越快
 GYRO_SCALE_LEFT = 1.177   # IMU 左转时陀螺仪积分修正比例
 GYRO_SCALE_RIGHT = 1.199  # IMU 右转时陀螺仪积分修正比例
-# 重标零漂前先等机身晃动静下来再采样。这个方法基本都在刚转完弯之后调用，六足转身时
-# 整个机身还在晃，这时候采到的不是真实零漂——标错多少，后面整段直行就照着错多少积分。
-IMU_SETTLE_S = 0.25
 HEADING_TOL_DEG = 1.0    # 航向误差容忍范围，单位：度；越小越严格
-# 直线段航向死区：|误差| 超过它才发一次修正转向。**左右必须对称。**
-# 原先写的是左 1.0 / 右 8.0，方向是反的：angle_error 是 (target - current)，
-# 所以 err > 0 表示机身朝右歪（该左转）、err < 0 表示机身朝左歪（该右转）。
-# 「右 8.0」实际效果是「机身朝左歪 8° 都不管」，机身长期歪着 → 装在身上的相机跟着歪
-# → 画面里色块恒偏一侧 → 颜色微调一直往那一侧平移 → 直线段先直、然后一路偏出去。
-# 取值要略大于六足单次转弯的最小步进，太小会左右来回抖；现场用 --turn-tol 调。
-TURN_TOL_DEG = 3.0
-IMU_STRAIGHT_STEP = 1    # 转弯后一次性修正的角度（imu_turn 用）
-IMU_STRAIGHT_GAIN = 0.6  # 直线阶段航向修正比例：单次转「误差 × 该比例」的角度（P 控制，需现场调）
-IMU_STRAIGHT_MAX = 8.0   # 直线阶段单次修正最大角度（度），防止误差大时一步转过头
+LEFT_TURN_TOL_DEG = 1.0  # 直线阶段允许左偏多少才左转
+RIGHT_TURN_TOL_DEG = 8.0 # 直线阶段允许右偏多少才右转
+IMU_STRAIGHT_STEP = 1    # 直线阶段 IMU 每次修正的角度
 COLOR_CENTER_TOL = 3.0   # 色块中心允许偏差，单位：像素；偏差小于该值不调整
 COLOR_CORRECT_MM = 7     # 向右微调每次移动的距离，单位：毫米
 LEFT_CORRECT_MM = 10     # 向左微调每次移动的距离，单位：毫米（向左力度加大）
@@ -83,15 +68,6 @@ VOLTAGE_EXTRA_MIN = 40     # 电压补偿最小距离，单位毫米
 VOLTAGE_EXTRA_MAX = 80     # 电压补偿最大距离，单位毫米
 VOLTAGE_EXTRA_LOW_V = 10.3  # 补偿达到最大距离时对应的电压
 ENABLE_IMU_STRAIGHT = True  # 直线阶段是否启用 IMU 航向修正
-# --- 融合模式（--fusion on）默认关闭，用旧逻辑；现场可 A/B ---
-# 内参单位是 detect_color 缩放后的像素（内部 resize 到 320×240，
-# 而 result['contour'] 也来自这张 320 图，所以 bbox_center_x 同属 320 坐标系）。
-# f_px / cx0 / f_px_full 都要实测标定，下面只是「320 宽、约 60° 水平视场」的占位值。
-FUSION_F_PX = 277.0
-FUSION_CX0 = 160.0
-FUSION_F_PX_FULL = 554.0   # 原始分辨率下的焦距，用于从色块视半径反推距离
-FUSION_HEAD_GAIN = 0.9     # 航向 P 增益：转「误差 × 该比例」度
-FUSION_CROSS_GAIN = 0.35   # 横向 P 增益：横移「偏差 × 该比例」mm
 camera_lock = threading.Lock()
 
 
@@ -131,10 +107,16 @@ def pose_dict(pose):
     return {'x': round(pose['x'], 3), 'y': round(pose['y'], 3)}
 
 
-def restore_travel(board, gripper):
-    """恢复 21-24 到官方初始位置，并设置 25 夹爪状态。"""
+def restore_travel(board, gripper, arm24=None):
+    """恢复 21-24 到官方初始位置，并设置 25 夹爪状态。
+
+    arm24：可选，覆盖 24 号（相机俯仰）脉宽；不传则用 OFFICIAL_ARM[24]。
+    """
+    pulses = dict(OFFICIAL_ARM)
+    if arm24 is not None:
+        pulses[24] = arm24
     board.bus_servo_set_position(
-        1.5, [[sid, OFFICIAL_ARM[sid]] for sid in [22, 23, 21, 24]])
+        1.5, [[sid, pulses[sid]] for sid in [22, 23, 21, 24]])
     time.sleep(1.5)
     board.bus_servo_set_position(0.5, [[25, gripper]])
     time.sleep(0.5)
@@ -199,7 +181,8 @@ def arm_fine_tune(board, state, kind, pull_up=False, pull_up_pulse=None):
               % (state[22], pulse, pulse - state[22]), flush=True)
         board.bus_servo_set_position(1.0, [[22, pulse]])
         time.sleep(1.0)
-    restore_travel(board, gripper)
+    restore_travel(board, gripper,
+                   arm24=(RESTORE_24_AFTER_FIRST_PICK if pull_up else None))
 
 
 def pick1_prepare(board, pulses=None):
@@ -278,6 +261,17 @@ def lab_view(frame, lab, color):
     return cv2.bitwise_and(frame, frame, mask=mask)
 
 
+def read_gz(board):
+    """读取 IMU 的 gz 角速度。"""
+    try:
+        data = board.get_imu()
+        if data is None:
+            return None
+        return float(data[5])
+    except Exception:
+        return None
+
+
 def read_battery_running(board, samples=30, interval=0.05):
     """实时连续采样电池电压，返回 (中位数毫伏, 平均值毫伏)。"""
     vals = []
@@ -307,7 +301,7 @@ def extra_distance_mm(voltage):
     return int(VOLTAGE_EXTRA_MIN + (VOLTAGE_EXTRA_MAX - VOLTAGE_EXTRA_MIN) * ratio)
 
 
-def apply_voltage_compensation(board, ik, fusion=None):
+def apply_voltage_compensation(board, ik):
     """夹取/放下前读取实时电压，需要时额外前进补偿距离。"""
     median_mv, avg_mv = read_battery_running(board)
     if median_mv is None:
@@ -320,9 +314,6 @@ def apply_voltage_compensation(board, ik, fusion=None):
     if extra_mm > 0:
         print('电压补偿：额外前进 %dmm' % extra_mm, flush=True)
         ik.go_forward(ik.initial_pos, 2, extra_mm, MOVE_SPEED, 1)
-        # 这段位移也要喂给估计器，否则 cross 会凭空少算这段
-        if fusion is not None:
-            fusion.predict(0.0, ds_mm=float(extra_mm))
     else:
         print('电压正常，不额外前进', flush=True)
 
@@ -334,53 +325,43 @@ def is_low_voltage(board):
 
 
 def init_imu(board):
-    """初始化 IMU：开启接收，起后台积分线程，标定 gz 零漂。
-
-    航向积分交给 `ImuTracker` 线程连续做（约 105Hz）。**不能**再靠「要用的时候读
-    一个样本」——官方 SDK 的 imu_queue 是 maxsize=1，两次读取之间的样本全被丢掉，
-    而这里两次读取之间夹着一整段 100mm 行走（1.5~1.9 秒），那一个瞬时样本落在步态
-    周期的哪个相位纯属偶然，乘上 1.9 秒就是一个随机方向的假转角。
-    详见 `agcs_lib/imu.py` 与 `CompetitionUse/imu_probe.py` 的实测数据。
-    """
+    """初始化 IMU：开启接收，标定 gz 零漂。"""
     board.enable_reception()
-    state = {'bias': 0.0, 'yaw': 0.0, 'last_rate': 0.0, 'last_dt': 0.0}
-    tracker = ImuTracker(board, state,
-                         scale_left=GYRO_SCALE_LEFT, scale_right=GYRO_SCALE_RIGHT)
-    tracker.start()
-    time.sleep(0.5)                       # 等队列里开始有数据
-    bias, n = tracker.calibrate(1.0, settle=0.0)   # 开机时是静止的，不用沉降
-    tracker.reset()
-    state['tracker'] = tracker
-    print('IMU 零漂 %+.3f°/s（%d 个样本），后台采样已启动' % (bias, n), flush=True)
-    return state
+    vals = []
+    while len(vals) < 200:
+        gz = read_gz(board)
+        if gz is not None:
+            vals.append(gz)
+        time.sleep(0.005)
+    bias = sum(vals) / len(vals)
+    return {'bias': bias, 'yaw': 0.0, 'last_t': time.monotonic()}
 
 
-def reset_imu(board, imu_state, reset_yaw=True):
-    """转弯后重新标定 gz 零漂，并（可选）清零航向积分。
-
-    **融合模式下 `reset_yaw` 必须传 False**：零漂是传感器属性，重标没问题；
-    航向是**状态**，清零等于把已经攒下来的可观测性丢掉 —— 相机那边若同时重取
-    参考点，系统就再没有任何东西知道「我到底歪了多少」。
-    """
-    tracker = imu_state.get('tracker')
-    if tracker is None:
-        return
-    tracker.calibrate(0.5, settle=IMU_SETTLE_S)
-    if reset_yaw:
-        tracker.reset()
+def reset_imu(board, imu_state):
+    """转弯后重新标定 gz 零漂并清零航向积分（消除累积漂移导致的误纠）。"""
+    vals = []
+    while len(vals) < 100:
+        gz = read_gz(board)
+        if gz is not None:
+            vals.append(gz)
+        time.sleep(0.005)
+    if vals:
+        imu_state['bias'] = sum(vals) / len(vals)
+    imu_state['yaw'] = 0.0
+    imu_state['last_t'] = time.monotonic()
 
 
 def update_imu(state, board):
-    """刷新日志用的「上一段平均角速度 / 时长」。
-
-    航向积分已经由后台线程连续完成，这里不再积分——保留这个函数只是为了不动主循环
-    结构，并给现场留一个对照值：`rate` 是这一段直行的**平均**角速度，机器人走得直
-    它就应该接近 0；若常在 ±0.5°/s 以上，说明零漂标定不准。
-    """
-    tracker = state.get('tracker')
-    if tracker is None:
+    """更新 IMU 偏航角。"""
+    now = time.monotonic()
+    dt = now - state['last_t']
+    state['last_t'] = now
+    gz = read_gz(board)
+    if gz is None:
         return
-    state['last_rate'], state['last_dt'] = tracker.since_last()
+    rate = gz - state['bias']
+    scale = GYRO_SCALE_LEFT if rate >= 0 else GYRO_SCALE_RIGHT
+    state['yaw'] += rate * dt * scale
 
 
 def angle_error(current, target):
@@ -447,128 +428,38 @@ def move_straight_imu_color(ik, board, detector, imu_state, target_yaw, distance
     remaining = abs(int(distance_mm))
     forward = distance_mm >= 0
     while remaining > 0:
+        color_adjusted = False
         if color_enabled:
-            # 颜色微调是「平移」，不改变航向基准 —— 这里**不能**把 target_yaw 重设成
-            # 当前 yaw。那样等于每做一次微调就把这一小段已攒下的航向误差一笔勾销，
-            # 误差永远不收敛，机身会一路朝同一边偏下去（原实现就是这样）。
-            color_keep_center(ik, board, detector, tilt, color_state)
+            color_adjusted = color_keep_center(ik, board, detector, tilt, color_state)
+            if color_adjusted:
+                target_yaw = imu_state['yaw']
         update_imu(imu_state, board)
         err = angle_error(imu_state['yaw'], target_yaw)
         if ENABLE_IMU_STRAIGHT:
-            # dt/rate 是这次积分用的时长与平均角速度。看 rate：机器人站在地上不动时
-            # 它应该接近 0，若常在 ±0.5°/s 以上，说明那次转弯后的零漂没标定准，
-            # yaw 里就混进了「假漂移」，修正循环会照着假误差转。
-            dbg = '(dt=%.1fs rate=%+.2f°/s)' % (
-                imu_state.get('last_dt', 0.0), imu_state.get('last_rate', 0.0))
-            corrected = False
-            if err > TURN_TOL_DEG:
-                step = max(1, int(round(min(err, IMU_STRAIGHT_MAX) * IMU_STRAIGHT_GAIN)))
+            if err > LEFT_TURN_TOL_DEG:
                 if IMU_DIRECTION_SIGN > 0:
-                    ik.turn_left(ik.initial_pos, 2, step, TURN_SPEED, 1)
-                    print('IMU yaw=%.1f target=%.1f error=%+.1f %s -> 左转%d°'
-                          % (imu_state['yaw'], target_yaw, err, dbg, step), flush=True)
+                    ik.turn_left(ik.initial_pos, 2, IMU_STRAIGHT_STEP, TURN_SPEED, 1)
+                    print('IMU yaw=%.1f target=%.1f error=%+.1f -> 左转%d°'
+                          % (imu_state['yaw'], target_yaw, err, IMU_STRAIGHT_STEP), flush=True)
                 else:
-                    ik.turn_right(ik.initial_pos, 2, step, TURN_SPEED, 1)
-                    print('IMU yaw=%.1f target=%.1f error=%+.1f %s -> 右转%d°'
-                          % (imu_state['yaw'], target_yaw, err, dbg, step), flush=True)
-                corrected = True
-            elif err < -TURN_TOL_DEG:
-                step = max(1, int(round(min(-err, IMU_STRAIGHT_MAX) * IMU_STRAIGHT_GAIN)))
+                    ik.turn_right(ik.initial_pos, 2, IMU_STRAIGHT_STEP, TURN_SPEED, 1)
+                    print('IMU yaw=%.1f target=%.1f error=%+.1f -> 右转%d°'
+                          % (imu_state['yaw'], target_yaw, err, IMU_STRAIGHT_STEP), flush=True)
+            elif err < -RIGHT_TURN_TOL_DEG:
                 if IMU_DIRECTION_SIGN > 0:
-                    ik.turn_right(ik.initial_pos, 2, step, TURN_SPEED, 1)
-                    print('IMU yaw=%.1f target=%.1f error=%+.1f %s -> 右转%d°'
-                          % (imu_state['yaw'], target_yaw, err, dbg, step), flush=True)
+                    ik.turn_right(ik.initial_pos, 2, IMU_STRAIGHT_STEP, TURN_SPEED, 1)
+                    print('IMU yaw=%.1f target=%.1f error=%+.1f -> 右转%d°'
+                          % (imu_state['yaw'], target_yaw, err, IMU_STRAIGHT_STEP), flush=True)
                 else:
-                    ik.turn_left(ik.initial_pos, 2, step, TURN_SPEED, 1)
-                    print('IMU yaw=%.1f target=%.1f error=%+.1f %s -> 左转%d°'
-                          % (imu_state['yaw'], target_yaw, err, dbg, step), flush=True)
-                corrected = True
-            if corrected:
+                    ik.turn_left(ik.initial_pos, 2, IMU_STRAIGHT_STEP, TURN_SPEED, 1)
+                    print('IMU yaw=%.1f target=%.1f error=%+.1f -> 左转%d°'
+                          % (imu_state['yaw'], target_yaw, err, IMU_STRAIGHT_STEP), flush=True)
                 time.sleep(0.05)
-                # 这里**同样不能**重设 target_yaw。修正是「把 yaw 拉回本段目标」，
-                # 修完就把目标挪到当前 yaw，等于宣告「刚才的偏差不算数」——控制器
-                # 从此只修「距上次修正之后的新偏差」，永远清不掉已有的偏置，目标会
-                # 跟着漂移一路爬。现场日志就是这么跑的：target 3.0→6.6→9.6→12.3，
-                # 每块涨 3° 左右，和幻影漂移同步，于是每块都发一次右转 → 「右转严重」。
-                # 本段目标就是进入本段时的航向，整段不动。
+                target_yaw = imu_state['yaw']
         move = min(100, remaining)
         move_one_chunk(ik, move, forward)
         remaining -= move
         time.sleep(0.05)
-
-
-def move_straight_fusion(ik, board, detector, imu_state, tracker, distance_mm,
-                         fusion, ctrl, marker_range_mm, marker_size_mm):
-    """融合模式的直线段：相机写状态、IMU 管执行，单一控制器先航向后横向。
-
-    与 `move_straight_imu_color` 的本质区别：
-    - 相机不再「平移去消掉像素偏移」，而是更新 (航向误差, 横向偏差) 这个估计；
-    - 控制器同一小块里**只发一种指令**：航向没进死区就只转，进了才横移；
-    - `fusion` 的状态全程不归零（归零 = 把误差从数字搬到机器人身上）。
-    """
-    remaining = abs(int(distance_mm))
-    forward = distance_mm >= 0
-    last_ds = 0.0
-    while remaining > 0:
-        det = detector()
-        cx = None
-        if det is not None:
-            cx = det.get('bbox_center_x', det['center'][0])
-            if marker_size_mm > 0 and det.get('radius'):
-                # radius 是映射回原始分辨率的像素，所以用 f_px_full 反推距离
-                r = range_from_radius_px(det['radius'], marker_size_mm, FUSION_F_PX_FULL)
-                if r is not None:
-                    marker_range_mm = max(80.0, r)
-        if cx is not None:
-            fusion.update_bearing(cx, marker_range_mm)
-
-        turn, lateral = ctrl.decide(fusion.heading_error, fusion.cross_error)
-        if turn != 0.0:
-            if turn < 0:
-                ik.turn_left(ik.initial_pos, 2, abs(turn), TURN_SPEED, 1)
-            else:
-                ik.turn_right(ik.initial_pos, 2, abs(turn), TURN_SPEED, 1)
-            print('融合 e=%+.2f° cross=%+.0fmm -> 转%+.1f°'
-                  % (fusion.heading_error, fusion.cross_error, turn), flush=True)
-        elif lateral != 0.0:
-            if lateral < 0:
-                ik.left_move(ik.initial_pos, 2, abs(lateral), MOVE_SPEED, 1)
-            else:
-                ik.right_move(ik.initial_pos, 2, abs(lateral), MOVE_SPEED, 1)
-            print('融合 e=%+.2f° cross=%+.0fmm -> 横移%+.0fmm'
-                  % (fusion.heading_error, fusion.cross_error, lateral), flush=True)
-
-        # IMU 增量：since_last 给的是「自上次调用以来」的平均角速度与时长
-        rate, dt = tracker.since_last()
-        # 约定：imu_state['yaw'] 是「左正」，本模块用「右正」，故取负
-        d_theta_right = -rate * dt
-        fusion.predict(d_theta_right, ds_mm=last_ds, lateral_mm=lateral)
-
-        move = min(100, remaining)
-        move_one_chunk(ik, move, forward)
-        last_ds = move if forward else -move
-        remaining -= move
-        time.sleep(0.05)
-    return marker_range_mm
-
-
-def feed_turn_to_fusion(imu_state, tracker, fusion, yaw_before, cmd_right_deg):
-    """转弯后把「实际转了多少 − 命令转了多少」喂给估计器。
-
-    这样 `fusion` 里的 e 全程表示「相对理想路线的航向偏差」，转弯本身不会把它撑爆，
-    转弯**残差**才会 —— 而残差正是要被相机看到并修掉的东西。
-
-    yaw_before：转弯前的 imu_state['yaw']（左正）
-    cmd_right_deg：本次命令的转角，右正（JSON 的 turn_left 90 应传 -90）
-    """
-    d_yaw_left = imu_state['yaw'] - yaw_before
-    residual = -d_yaw_left - cmd_right_deg      # 右正：实际 − 命令
-    fusion.predict(residual, ds_mm=0.0)
-    # 把 since_last 的基准挪到「此刻」，否则直线段第一次取值会把转弯尾巴再积一遍
-    tracker.since_last()
-    print('转弯残差 %+.2f°（IMU 实测 %+.2f° / 命令 %+.1f°）-> e=%+.2f°'
-          % (residual, -d_yaw_left, cmd_right_deg, fusion.heading_error), flush=True)
-    return residual
 
 
 def imu_turn(ik, board, imu_state, delta_deg):
@@ -586,8 +477,10 @@ def imu_turn(ik, board, imu_state, delta_deg):
         remaining -= step
         time.sleep(0.08)
 
-    time.sleep(0.2)   # 等机身晃动静下来；积分由后台线程连续做，不用再手动补采
-    update_imu(imu_state, board)
+    time.sleep(0.2)
+    for _ in range(5):
+        update_imu(imu_state, board)
+        time.sleep(0.02)
 
     err = angle_error(imu_state['yaw'], target)
     print('转弯完成 yaw=%.1f target=%.1f error=%+.1f'
@@ -600,7 +493,8 @@ def imu_turn(ik, board, imu_state, delta_deg):
         else:
             ik.turn_right(ik.initial_pos, 2, abs(step), TURN_SPEED, 1)
         time.sleep(0.08)
-        print('转弯后修正一次 %d°' % abs(step), flush=True)
+        update_imu(imu_state, board)
+        print('转弯后修正一次 yaw=%.1f' % imu_state['yaw'], flush=True)
 
 
 def do_pick(board, pick_count, pulses=None, pull_up_pulse=None):
@@ -625,55 +519,8 @@ def do_place(board, place_count, pulses=None):
     arm_fine_tune(board, state, 'place')
 
 
-class _Tee(object):
-    """把 stdout/stderr 同时抄一份到日志文件。"""
-
-    def __init__(self, *streams):
-        self.streams = streams
-
-    def write(self, text):
-        for st in self.streams:
-            try:
-                st.write(text)
-            except Exception:
-                pass
-        return len(text)
-
-    def flush(self):
-        for st in self.streams:
-            try:
-                st.flush()
-            except Exception:
-                pass
-
-
-def start_run_log():
-    """把本次运行的完整输出抄到 logs/<日期>/autocapture/<时-分>.log。
-
-    跑一次路线好几分钟，出问题全靠翻终端；而 print() 只进终端、不落盘（官方日志
-    只收 action_msg），几次现场排查都因为「没留下完整日志」只能靠猜。落一份盘，
-    事后可以直接完整回看整段 yaw/误差/颜色微调序列。
-    本地跑（没有 /home/pi）时静默跳过，不影响脚本。
-    """
-    try:
-        now = time.localtime()
-        day = '%d-%d-%d' % (now.tm_year, now.tm_mon, now.tm_mday)
-        folder = os.path.join('/home/pi/spiderpi/logs', day, 'autocapture')
-        os.makedirs(folder, exist_ok=True)
-        path = os.path.join(folder, '%02d-%02d.log' % (now.tm_hour, now.tm_min))
-        handle = open(path, 'w', encoding='utf-8')
-    except Exception as exc:
-        print('运行日志未启用（%s）' % exc, flush=True)
-        return None
-    sys.stdout = _Tee(sys.__stdout__, handle)
-    sys.stderr = _Tee(sys.__stderr__, handle)
-    print('本次运行日志：%s' % path, flush=True)
-    return handle
-
-
 def main():
     """主流程：按 JSON 调用移动、转弯、夹取和放下。"""
-    global ENABLE_IMU_STRAIGHT, TURN_TOL_DEG
     parser = argparse.ArgumentParser(description='NO6 IMU+颜色路线运行')
     parser.add_argument('--color', default='red',
                         choices=['red', 'green', 'blue', 'yellow', 'cz1'])
@@ -681,43 +528,14 @@ def main():
     parser.add_argument('--pull-up', type=int, default=None,
                         help='第一次夹取后拔起的脉宽（22 号肩，默认 %d）；'
                              '幅度不合适现场试值' % PULL_UP_22)
-    parser.add_argument('--imu-straight', default='on', choices=['on', 'off'],
-                        help='直线阶段是否用 IMU 修正航向（默认 on）。'
-                             '想单独看「不做 IMU 修正会不会更直」就传 off 做对照')
-    parser.add_argument('--turn-tol', type=float, default=TURN_TOL_DEG,
-                        help='直线段航向死区（度，默认 %.1f）。左右对称。'
-                             '机器人若左右来回抖就调大，偏出去不修就调小' % TURN_TOL_DEG)
-    parser.add_argument('--fusion', default='off', choices=['on', 'off'],
-                        help='IMU/颜色解耦融合（默认 off，走原来的双回路逻辑）。'
-                             'on = 相机只更新状态、IMU 只管执行、状态不归零')
-    parser.add_argument('--f-px', type=float, default=FUSION_F_PX,
-                        help='320 坐标系下的等效焦距像素（需标定）')
-    parser.add_argument('--cx0', type=float, default=FUSION_CX0,
-                        help='画面主点横坐标，即「色块正对机身」时的像素（需标定）')
-    parser.add_argument('--f-px-full', type=float, default=FUSION_F_PX_FULL,
-                        help='原始分辨率下的焦距像素，用色块视半径反推距离')
-    parser.add_argument('--marker-size-mm', type=float, default=0.0,
-                        help='色块真实半径（mm）；>0 时按视半径自动估距离，'
-                             '否则用 --marker-range 的定值')
-    parser.add_argument('--marker-range', type=float, default=1000.0,
-                        help='到色块的前向距离（mm），--marker-size-mm=0 时生效')
-    parser.add_argument('--fusion-head-gain', type=float, default=FUSION_HEAD_GAIN)
-    parser.add_argument('--fusion-cross-gain', type=float, default=FUSION_CROSS_GAIN)
     args = parser.parse_args()
-
-    log_file = start_run_log()
-
-    ENABLE_IMU_STRAIGHT = (args.imu_straight == 'on')
-    TURN_TOL_DEG = args.turn_tol
-    if not ENABLE_IMU_STRAIGHT:
-        print('直线阶段 IMU 航向修正已关闭（--imu-straight off）', flush=True)
-    print('直线段航向死区 ±%.1f°' % TURN_TOL_DEG, flush=True)
 
     with open(ROUTE_PATH, 'r', encoding='utf-8') as f:
         actions = json.load(f)
 
     board = make_board()
     ik = make_ik(board)
+    extra_applied = False
     imu_state = init_imu(board)
     cam, detector = open_vision(args.color, args.min_area)
 
@@ -735,16 +553,6 @@ def main():
            last_task={'task_id': 'capture', 'color': args.color},
            last_result=None,
            message='自动捕获，颜色=%s' % args.color)
-
-    fusion = None
-    ctrl = None
-    marker_range = args.marker_range
-    if args.fusion == 'on':
-        fusion = LaneFusion(f_px=args.f_px, cx0=args.cx0)
-        ctrl = LaneController(head_gain=args.fusion_head_gain,
-                              cross_gain=args.fusion_cross_gain)
-        print('融合模式已开启：相机写状态 / IMU 管执行 / 状态不归零 '
-              '(f_px=%.0f cx0=%.0f)' % (args.f_px, args.cx0), flush=True)
 
     restore_travel(board, GRIPPER_OPEN)
     print('自动捕获启动，颜色目标=%s' % args.color, flush=True)
@@ -785,16 +593,8 @@ def main():
             if segment_color:
                 color_state['ref_cx'] = None  # 每个直行段开头重新取「一开始检测到的色块」作固定参考点
             dist_mm = pending_forward
-            if fusion is not None:
-                # 融合模式下不看 23-53 窗口：丢帧卡尔曼自己扛得住（离线仿真在
-                # 50% 丢检下仍收敛），强行关掉反而丢掉唯一的绝对参考。
-                marker_range = move_straight_fusion(
-                    ik, board, detector, imu_state, imu_state['tracker'],
-                    pending_forward, fusion, ctrl, marker_range, args.marker_size_mm)
-            else:
-                move_straight_imu_color(
-                    ik, board, detector, imu_state, target_yaw, pending_forward,
-                    tilt, segment_color, color_state)
+            move_straight_imu_color(
+                ik, board, detector, imu_state, target_yaw, pending_forward, tilt, segment_color, color_state)
             pending_forward = 0
             left_turn_compensated = False
             advance_pose(pose, imu_state['yaw'], dist_mm)
@@ -814,12 +614,8 @@ def main():
                 print('低电压左转补偿：额外多转 5°', flush=True)
                 left_turn_compensated = True
             print('%d/%d IMU左转 %d' % (i, len(actions), angle), flush=True)
-            yaw_before = imu_state['yaw']
             imu_turn(ik, board, imu_state, angle)
-            if fusion is not None:
-                feed_turn_to_fusion(imu_state, imu_state['tracker'],
-                                    fusion, yaw_before, -angle)
-            reset_imu(board, imu_state, reset_yaw=(fusion is None))
+            reset_imu(board, imu_state)
             target_yaw = imu_state['yaw']
             report(heading_deg=norm_heading(imu_state['yaw']),
                    message='左转 %d°' % angle)
@@ -831,19 +627,15 @@ def main():
                     color_state['ref_cx'] = None
             angle = int(act.get('angle', 90))
             print('%d/%d IMU右转 %d' % (i, len(actions), angle), flush=True)
-            yaw_before = imu_state['yaw']
             imu_turn(ik, board, imu_state, -angle)
-            if fusion is not None:
-                feed_turn_to_fusion(imu_state, imu_state['tracker'],
-                                    fusion, yaw_before, angle)
-            reset_imu(board, imu_state, reset_yaw=(fusion is None))
+            reset_imu(board, imu_state)
             target_yaw = imu_state['yaw']
             report(heading_deg=norm_heading(imu_state['yaw']),
                    message='右转 %d°' % angle)
         elif name == 'pick':
             pick_count += 1
             print('%d/%d pick%d' % (i, len(actions), pick_count), flush=True)
-            apply_voltage_compensation(board, ik, fusion)
+            apply_voltage_compensation(board, ik)
             pulses = {int(k): int(v) for k, v in act.get('pulses', {}).items()} if act.get('pulses') else None
             do_pick(board, pick_count, pulses, pull_up_pulse=args.pull_up)
             picked_count += 1
@@ -852,7 +644,7 @@ def main():
         elif name == 'place':
             place_count += 1
             print('%d/%d place%d' % (i, len(actions), place_count), flush=True)
-            apply_voltage_compensation(board, ik, fusion)
+            apply_voltage_compensation(board, ik)
             pulses = {int(k): int(v) for k, v in act.get('pulses', {}).items()} if act.get('pulses') else None
             do_place(board, place_count, pulses)
             report(message='第 %d 次放下完成' % place_count)
@@ -873,20 +665,12 @@ def main():
         if segment_color:
             color_state['ref_cx'] = None
         dist_mm = pending_forward
-        if fusion is not None:
-            move_straight_fusion(
-                ik, board, detector, imu_state, imu_state['tracker'],
-                pending_forward, fusion, ctrl, marker_range, args.marker_size_mm)
-        else:
-            move_straight_imu_color(
-                ik, board, detector, imu_state, target_yaw, pending_forward, tilt, segment_color, color_state)
+        move_straight_imu_color(
+            ik, board, detector, imu_state, target_yaw, pending_forward, tilt, segment_color, color_state)
         advance_pose(pose, imu_state['yaw'], dist_mm)
 
     video_stop.set()
     cam.camera_close()
-    tracker = imu_state.get('tracker')
-    if tracker is not None:
-        tracker.stop()
     ik.stand(ik.initial_pos, t=500)
     print('自动捕获运行结束', flush=True)
     report(state='END', last_result='done',
@@ -895,9 +679,6 @@ def main():
            picked_count=picked_count,
            message='自动捕获完成')
     time.sleep(5)  # END 状态停留 5 秒，供中枢轮询确认
-
-    if log_file is not None:
-        log_file.close()
 
 
 if __name__ == '__main__':

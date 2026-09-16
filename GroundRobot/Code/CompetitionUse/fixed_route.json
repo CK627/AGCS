@@ -64,10 +64,10 @@
     "action": "pick",
     "index": 14,
     "pulses": {
-      "21": 875,
-      "22": 395,
-      "23": 350,
-      "24": 250
+      "21": 880,
+      "22": 425,
+      "23": 295,
+      "24": 290
     }
   },
   {
@@ -120,7 +120,13 @@
   },
   {
     "action": "forward",
-    "step": 100,
+    "step": 60,
+    "speed": 50,
+    "index": 23
+  },
+  {
+    "action": "forward",
+    "step": 70,
     "speed": 50,
     "index": 23
   },
@@ -260,12 +266,6 @@
     "index": 45
   },
   {
-    "action": "forward",
-    "step": 100,
-    "speed": 50,
-    "index": 46
-  },
-  {
     "action": "turn_left",
     "angle": 15,
     "speed": 50,
@@ -297,7 +297,7 @@
   },
     {
     "action": "turn_left",
-    "angle": 10,
+    "angle": 15,
     "speed": 50,
     "index": 52
   },
@@ -338,15 +338,34 @@
     "speed": 50,
     "index": 65
   },
+  {
+    "action": "forward",
+    "step": 100,
+    "speed": 50,
+    "index": 65
+  },
+  {
+    "action": "forward",
+    "step": 100,
+    "speed": 50,
+    "index": 65
+  },
+  {
+    "action": "forward",
+    "step": 50,
+    "speed": 50,
+    "index": 65
+  },
+
 
       {
     "action": "pick",
     "index": 74,
     "pulses": {
-      "21": 705,
-      "22": 445,
-      "23": 470,
-      "24": 270
+      "21": 880,
+      "22": 425,
+      "23": 500,
+      "24": 320
     }
   },
 
