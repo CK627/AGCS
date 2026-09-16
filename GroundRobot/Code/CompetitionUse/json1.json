@@ -61,7 +61,7 @@
   },
   {
     "action": "forward",
-    "step": 50,
+    "step": 80,
     "speed": 50,
     "index": 10
   },
