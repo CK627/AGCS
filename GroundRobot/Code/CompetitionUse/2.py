@@ -9,10 +9,11 @@
     python3 2.py --conf 0.4      # 检测不到先降置信度门槛
 
 流程：
-    1. 不恢复原位，直接 YOLO 检测（检测不到就重试 --tries 次）
-    2. 检测到了 → 夹取（复刻 1.py 夹取开始到夹取结束这段：闭合夹爪 25 → 拔起 22）
-       → 保持夹取姿态（夹爪闭合不动）→ **敲回车** → 恢复原位 → 退出
-    3. 没检测到 → 恢复原位 → 退出
+    1. 不恢复原位
+    2. 先转 21 号到虫子所在的左侧位置（--s21，默认 875）
+    3. 再扫 24 号俯仰（150→450，小=低头、大=抬头），每个角度做一次 YOLO 检测
+    4. 检测到 → 夹取（闭合 25 → 拔起 22）→ 保持姿态 → 敲回车 → 恢复原位 → 退出
+    5. 扫完（--tries 轮）都没检测到 → 恢复原位 → 退出
 """
 
 import argparse
@@ -27,6 +28,11 @@ if _PKG_ROOT not in sys.path:
     sys.path.insert(0, _PKG_ROOT)
 
 from agcs_lib import make_board
+
+# 21 号底座横转：虫子固定在机器人左侧，先转 21 到这个角度，再扫 24 俯仰。
+SERVO21_POS = 875
+# 24 号腕俯仰扫描序列：小=低头看地、大=抬头，从低往高扫。
+SERVO24_SCAN = (150, 200, 250, 300, 350, 400, 450)
 
 
 def _load_no7():
@@ -61,17 +67,23 @@ def main():
                     help='模型置信度阈值（检测不到先降到 0.4 试）')
     ap.add_argument('--classes', default='', help='目标类别，逗号分隔；留空=接受所有类别')
     ap.add_argument('--color', default='red', help='推流 LAB 显示用色（只影响显示）')
+    ap.add_argument('--s21', type=int, default=SERVO21_POS,
+                    help='21 号转到的左侧虫子位置（默认 %(default)d）')
     ap.add_argument('--pull-up', type=int, default=no7.PULL_UP_22,
                     help='夹取后 22 号肩拔起脉宽（默认 %(default)d）')
-    ap.add_argument('--tries', type=int, default=20,
-                    help='检测不到时重试次数（默认 %(default)d）')
-    ap.add_argument('--interval', type=float, default=0.5,
-                    help='每次重试间隔秒（默认 %(default)s）')
+    ap.add_argument('--tries', type=int, default=3,
+                    help='24 号俯仰扫几轮（默认 %(default)d）')
+    ap.add_argument('--dwell', type=float, default=0.8,
+                    help='每个 24 角度停留秒（默认 %(default)s）')
     args = ap.parse_args()
 
     board = make_board()
 
-    # 不恢复原位，直接检测
+    # 不恢复原位；先转 21 到虫子左侧，再扫 24 俯仰
+    board.bus_servo_set_position(1.0, [[21, args.s21]])
+    time.sleep(1.0)
+    print('21 号已转到 %d（虫子左侧位置），开始扫 24 号俯仰' % args.s21, flush=True)
+
     model_path = args.model if os.path.isabs(args.model) else os.path.join(_PKG_ROOT, args.model)
     classes = [c.strip() for c in args.classes.split(',') if c.strip()]
     cam, read_frame, _color_detector, publish = no7.open_vision(args.color, 1)
@@ -81,27 +93,29 @@ def main():
         no7.task_server.start_server()
 
     print('=' * 64, flush=True)
-    print('2.py：不恢复原位，直接 YOLO 检测，检测到就夹取', flush=True)
-    print('模型=%s conf=%.2f 重试 %d 次 / %.1fs'
-          % (args.model, args.conf, args.tries, args.interval), flush=True)
+    print('2.py：转 21=%d → 扫 24 俯仰，检测到就夹取' % args.s21, flush=True)
+    print('模型=%s conf=%.2f 扫 %d 轮 / 每角度 %.1fs'
+          % (args.model, args.conf, args.tries, args.dwell), flush=True)
     print('=' * 64, flush=True)
 
-    for i in range(1, args.tries + 1):
-        det = model_det.detect()
-        if det is not None:
-            print('✅ 检测到虫子 conf=%.2f bbox=%dx%d@(%d,%d)，执行夹取'
-                  % (det['conf'], det['w'], det['h'], det['x'], det['y']), flush=True)
-            grab(board, args.pull_up)
-            input('夹取完成，保持夹取姿态。敲回车恢复原位…')
-            no7.restore_travel(board, no7.GRIPPER_OPEN)
-            print('已恢复原位，退出', flush=True)
-            cam.camera_close()
-            return
-        print('  未检测到（%d/%d），重试…' % (i, args.tries), flush=True)
-        time.sleep(args.interval)
+    for attempt in range(1, args.tries + 1):
+        for p24 in SERVO24_SCAN:
+            board.bus_servo_set_position(1.0, [[24, p24]])
+            time.sleep(args.dwell)
+            det = model_det.detect()
+            if det is not None:
+                print('✅ 21=%d 24=%d 检测到虫子 conf=%.2f，执行夹取'
+                      % (args.s21, p24, det['conf']), flush=True)
+                grab(board, args.pull_up)
+                input('夹取完成，保持夹取姿态。敲回车恢复原位…')
+                no7.restore_travel(board, no7.GRIPPER_OPEN)
+                print('已恢复原位，退出', flush=True)
+                cam.camera_close()
+                return
+            print('  24=%d 未检测到（第 %d/%d 轮）' % (p24, attempt, args.tries), flush=True)
+        print('第 %d 轮 24 号俯仰扫完未找到' % attempt, flush=True)
 
-    # 没检测到 → 恢复原位 → 退出
-    print('❌ 检测不到虫子，恢复原位后退出', flush=True)
+    print('❌ 扫完 24 号俯仰都没检测到虫子，恢复原位后退出', flush=True)
     no7.restore_travel(board, no7.GRIPPER_OPEN)
     cam.camera_close()
 

@@ -111,7 +111,8 @@ no7 = _load_no7()
 
 # ---------- 只动 24 号舵机（腕俯仰）的夹取 ----------
 
-GRASP_MODE = 'servo24'   # 'yolo'（原：走到 bbox 够大） | 'servo24'（扫 24 号俯仰找虫子）
+GRASP_MODE = 'servo24'   # 'yolo'（原：走到 bbox 够大） | 'servo24'（转 21 到左侧 + 扫 24 俯仰）
+SERVO21_POS = 875        # 21 号底座横转：先转到虫子所在的左侧位置（原路线 pick 21≈880）
 SERVO24_SCAN = (150, 200, 250, 300, 350, 400, 450)  # 24 俯仰：小=低头看地、大=抬头，从低往高扫
 
 
@@ -136,8 +137,10 @@ def _grasp(board, pick_count, pull_up_pulse=None):
 
 
 def servo24_pick(board, pick_count, model_det, pull_up_pulse=None):
-    """只动 24 号（腕俯仰）：上下扫俯仰角，边扫边 YOLO 找虫子，找到就夹（不碰 21/22/23）。"""
-    # 不读夹取 JSON、不摆 21/22/23，只硬编码扫 24 号；夹取仍走 _grasp（闭合→拔起→复位）。
+    """先转 21 到虫子左侧，再扫 24 俯仰角，边扫边 YOLO 找虫子，找到就夹。"""
+    # 不读夹取 JSON、不摆 22/23；先定 21 到左侧虫子位置，再只扫 24 俯仰。
+    board.bus_servo_set_position(1.0, [[21, SERVO21_POS]])
+    time.sleep(1.0)
     for p24 in SERVO24_SCAN:
         board.bus_servo_set_position(1.0, [[24, p24]])
         time.sleep(0.8)
