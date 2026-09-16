@@ -1,26 +1,18 @@
 #!/usr/bin/python3
 # coding=utf8
-"""2.py —— 单独测 YOLO 检测 + 夹取（不走路线的两步状态机）。
+"""2.py —— 单独测 YOLO 检测 + 夹取（不走路线）。
 
 跑法（在机器人上）：
     sudo systemctl stop spiderpi
     cd ~/spiderpi/CompetitionUse
     python3 2.py                 # 检测 + 夹取
-    python3 2.py --conf 0.4      # 检测不到先降置信度门槛试
+    python3 2.py --conf 0.4      # 检测不到先降置信度门槛
 
-两步状态机（靠 `.2_grabbed` 标志文件记住「上次有没有夹到」）：
-
-    第 1 次运行（还没夹到）：
-        不恢复原位 → 直接 YOLO 检测（检测不到就重试 --tries 次）
-        → 检测到就夹取（和 1.py 的夹取动作一样：闭合夹爪 25 → 拔起 22）
-        → 写「已夹到」标志 → 退出（机械臂停在夹取后的姿态，方便现场看夹没夹到）
-
-    第 2 次运行（上次夹到了）：
-        恢复初始位置（21-24 回 OFFICIAL_ARM、夹爪张开）→ 清标志 → 退出（不动）
-
-夹取刻意不恢复原位：恢复动作放到下一次运行，这样这次跑完能看清夹到没有。
-想强制重新走「检测 + 夹取」，删掉标志文件即可：
-    rm ~/spiderpi/CompetitionUse/.2_grabbed
+流程：
+    1. 不恢复原位，直接 YOLO 检测（检测不到就重试 --tries 次）
+    2. 检测到了 → 夹取（复刻 1.py 夹取开始到夹取结束这段：闭合夹爪 25 → 拔起 22）
+       → 保持夹取姿态（夹爪闭合不动）→ **敲回车** → 恢复原位 → 退出
+    3. 没检测到 → 恢复原位 → 退出
 """
 
 import argparse
@@ -35,9 +27,6 @@ if _PKG_ROOT not in sys.path:
     sys.path.insert(0, _PKG_ROOT)
 
 from agcs_lib import make_board
-
-# 标志文件：存在 = 上次已经夹到了
-STATE_FILE = os.path.join(_HERE, '.2_grabbed')
 
 
 def _load_no7():
@@ -56,7 +45,7 @@ no7 = _load_no7()
 
 
 def grab(board, pull_up_pulse):
-    """夹取（和 1.py 的夹取动作一样）：闭合夹爪 25 → 拔起 22。不恢复原位（恢复放到下次运行）。"""
+    """夹取（复刻 1.py 夹取开始到夹取结束：闭合夹爪 25 → 拔起 22）。不恢复原位，恢复交给调用方。"""
     board.bus_servo_set_position(2.0, [[25, no7.GRIPPER_CLOSE]])
     time.sleep(2.0)
     time.sleep(0.5)
@@ -82,13 +71,6 @@ def main():
 
     board = make_board()
 
-    # 上次夹到了 → 恢复初始位置，然后不动
-    if os.path.exists(STATE_FILE):
-        no7.restore_travel(board, no7.GRIPPER_OPEN)
-        os.remove(STATE_FILE)
-        print('上次已夹到：本次恢复初始位置（夹爪张开），清标志后退出', flush=True)
-        return
-
     # 不恢复原位，直接检测
     model_path = args.model if os.path.isabs(args.model) else os.path.join(_PKG_ROOT, args.model)
     classes = [c.strip() for c in args.classes.split(',') if c.strip()]
@@ -110,15 +92,17 @@ def main():
             print('✅ 检测到虫子 conf=%.2f bbox=%dx%d@(%d,%d)，执行夹取'
                   % (det['conf'], det['w'], det['h'], det['x'], det['y']), flush=True)
             grab(board, args.pull_up)
-            with open(STATE_FILE, 'w') as f:
-                f.write('grabbed\n')
-            print('夹取完成，退出（下次运行会恢复初始位置）', flush=True)
+            input('夹取完成，保持夹取姿态。敲回车恢复原位…')
+            no7.restore_travel(board, no7.GRIPPER_OPEN)
+            print('已恢复原位，退出', flush=True)
             cam.camera_close()
             return
         print('  未检测到（%d/%d），重试…' % (i, args.tries), flush=True)
         time.sleep(args.interval)
 
-    print('❌ 检测不到虫子，退出（未写标志，下次运行仍走检测）', flush=True)
+    # 没检测到 → 恢复原位 → 退出
+    print('❌ 检测不到虫子，恢复原位后退出', flush=True)
+    no7.restore_travel(board, no7.GRIPPER_OPEN)
     cam.camera_close()
 
 
