@@ -57,6 +57,7 @@ NO6/NO7 的整条路线是靠固定距离 + IMU 航向推出来的（`advance_po
 
 import argparse
 import importlib.util
+import math
 import os
 import sys
 import time
@@ -106,6 +107,50 @@ def _load_no7():
 
 
 no7 = _load_no7()
+
+
+# ---------- 只动 21 号舵机的夹取（虫子固定在机器人左侧） ----------
+
+SERVO21_LEFT = 875    # 21 号转到此值相机才看得到虫子（原路线 21 偏左值，需现场确认具体角度）
+GRASP_MODE = 'servo21'   # 'yolo'（原：走到 bbox 够大） | 'servo21'（只动 21 号）
+
+
+def _detect_pixel(model_det):
+    """YOLO 检测一次，返回目标像素中心 (cx, cy)；没检测到返回 None。"""
+    det = model_det.detect()
+    if det is None:
+        return None
+    return det['x'] + det['w'] / 2.0, det['y'] + det['h'] / 2.0
+
+
+def _grasp(board, pick_count, pull_up_pulse=None):
+    """夹爪闭合 + 第一次夹取 22 号肩拔起 + 恢复初始姿态（不走手动微调）。"""
+    board.bus_servo_set_position(2.0, [[25, no7.GRIPPER_CLOSE]])
+    time.sleep(2.0)
+    time.sleep(0.5)
+    if pick_count == 1:
+        pulse = no7.PULL_UP_22 if pull_up_pulse is None else max(0, min(1000, int(pull_up_pulse)))
+        board.bus_servo_set_position(1.0, [[22, pulse]])
+        time.sleep(1.0)
+    no7.restore_travel(board, no7.GRIPPER_CLOSE)
+
+
+def servo21_pick(board, pick_count, model_det, pull_up_pulse=None):
+    """只动 21 号：先转左看虫子（虫子固定左侧），22/23/24 保持固定姿态，YOLO 确认后夹。"""
+    nominal = pick_posture(pick_count)
+    pulses = dict(nominal)
+    pulses[21] = SERVO21_LEFT
+    print('21 号转左到 %d，22/23/24 保持 %s' % (SERVO21_LEFT, nominal), flush=True)
+    no7.set_servos(board, pulses, [21, 22, 23, 24])
+
+    # 转完 21 后相机才能看到虫子，YOLO 确认
+    if _detect_pixel(model_det) is None:
+        print('❌ 21 转左后仍未检测到虫子，本次夹取跳过', flush=True)
+        no7.restore_travel(board, no7.GRIPPER_OPEN)
+        return False
+    print('✅ 检测到虫子（21=%d），执行夹取' % SERVO21_LEFT, flush=True)
+    _grasp(board, pick_count, pull_up_pulse)
+    return True
 
 
 # ---------- YOLO 靠近（照抄 NO7 的 model_approach，多了步数统计和上限）----------
@@ -167,6 +212,11 @@ def yolo_do_pick(board, pick_count, pulses, model_det, calib, pull_up_pulse=None
     print('第 %d 次夹取：走 YOLO（忽略 JSON 的 pick 脉宽 %s）' % (pick_count, pulses),
           flush=True)
     print('YOLO 摆臂起点姿态：%s' % nominal, flush=True)
+
+    # 只动 21 号模式：先转左看虫子再夹，跳过「走到 bbox 够大 + 固定姿态 + 手动微调」
+    if GRASP_MODE == 'servo21':
+        servo21_pick(board, pick_count, model_det, pull_up_pulse)
+        return
 
     # do_pick 的签名里没有 ik，但 YOLO 靠近要 ik 才能走/转。IK 不持有状态，
     # 只按 initial_pos 算完脉宽发给 board，所以这里另建一个和 main 里那个并存没问题。
