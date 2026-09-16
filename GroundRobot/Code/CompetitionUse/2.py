@@ -108,9 +108,22 @@ def depth_to_arm(depth_cam, R, t, det, z_offset):
         print('❌ 读深度失败', flush=True)
         return None
 
-    z_mm, xi, yi = _depth_median(d, cx, cy)
+    hd, wd = d.shape
+    # 彩色是 640×480，深度可能是别的分辨率 → 按比例缩放彩色像素到深度像素
+    sx = wd / 640.0
+    sy = hd / 480.0
+    dx, dy = cx * sx, cy * sy
+
+    nz = int((d > 0).sum())
+    bxx, byy = min(wd - 1, int(round(dx))), min(hd - 1, int(round(dy)))
+    print('深度图 %s 有效 %d/%d(%.0f%%) 中心(%d,%d)=%d bbox(%d,%d)=%d' %
+          ((hd, wd), nz, hd * wd, 100.0 * nz / (hd * wd),
+           wd // 2, hd // 2, int(d[hd // 2, wd // 2]),
+           bxx, byy, int(d[byy, bxx])), flush=True)
+
+    z_mm, xi, yi = _depth_median(d, dx, dy)
     if z_mm is None or z_mm <= 0:
-        print('❌ 像素(%d,%d)附近深度无效' % (xi, yi), flush=True)
+        print('❌ 深度像素(%d,%d)附近深度无效' % (xi, yi), flush=True)
         return None
 
     w = depth_cam.depth_to_world(float(xi), float(yi), float(z_mm))
