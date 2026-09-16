@@ -87,22 +87,22 @@ def probe_api(ik):
             print('  %-24s (不存在)' % n)
 
 
-def _drive(ik, pos, seconds, hz=25.0, **kw):
-    """以 hz 频率持续下发 setStepMode_whitout_delay 达 seconds 秒。"""
+def _drive(ik, pos, seconds, **kw):
+    """用 move 持续走 seconds 秒（move 阻塞，一次 times=1 约 0.6s）。
+
+    原实现用 setStepMode_whitout_delay 25Hz 下发，实测「转两下就停」不稳定，
+    已改用 move（与 probe_spin 一致）。move 签名：(pos, mode, amplitude,
+    movement_direction, rotation, speed, times)。
+    """
     p = dict(DEF)
     p.update(kw)
-    fn = getattr(ik, 'setStepMode_whitout_delay', None)
+    fn = getattr(ik, 'move', None)
     if fn is None:
-        raise SystemExit('没有 setStepMode_whitout_delay，本探测无法进行')
+        raise SystemExit('没有 move，本探测无法进行')
     t_end = time.time() + seconds
-    n = 0
     while time.time() < t_end:
-        _safe(fn, pos, p['mode'], p['step_velocity'], p['amplitude'],
-              p['height'], p['direction'], 0.0, p['rotation'], 0.0, 0.0,
-              p['servo_speed'], p['times'])
-        n += 1
-        time.sleep(1.0 / hz)
-    return n
+        _safe(fn, pos, p['mode'], p['amplitude'], p['direction'],
+              p['rotation'], p['servo_speed'], 1)
 
 
 def probe_spin(ik, board, seconds=3.0, rots=(0.25, 0.5, 1.0)):
