@@ -1,24 +1,16 @@
 #!/usr/bin/python3
 # coding=utf8
-"""2.py —— 深度相机 + 手眼标定的夹取（不走路线）。
+"""2.py —— 固定姿态持续检测 + 夹取（不走路线、不扫描、不深度定位）。
 
 跑法（在机器人上）：
     sudo systemctl stop spiderpi
     cd ~/spiderpi/CompetitionUse
-    python3 2.py --dry-run       # 先只算坐标不移动，验证 (x,y,z) 对不对
-    python3 2.py                 # 算坐标 -> IK 移动夹爪 -> 夹取
-    python3 2.py --conf 0.4      # 检测不到先降置信度门槛
+    python3 2.py --conf 0.4
 
 流程：
-    1. 不恢复原位，先转 21 到虫子左侧（--s21），再扫 24 俯仰，YOLO 找虫子
-    2. 检测到 → 读深度 → 深度相机坐标 → cam2arm 换算到机械臂 (x,y,z)
-    3. IK 把夹爪移到 (x,y,z) → 闭合夹爪 → 拔起 22 → 敲回车恢复原位
-
-坐标系约定（与 calib_cam2arm.py / grab.py 一致）：
-    深度相机：X 右 / Y 上 / Z 前，mm（OpenNI2 工厂标定）
-    彩色相机：X 右 / Y 下 / Z 前，mm（OpenCV/ArUco 约定）—— 深度→彩色只翻转 Y
-    机械臂  ：x 右 / y 前 / z 上，cm，原点 = 云台中心地面投影
-    彩色→机械臂用 config/cam2arm.yaml 的 R/t；深度/彩色约 25mm 基线按「同像素」粗对齐忽略。
+    1. 固定 21=875、24=400（都不动），打开相机 + YOLO 模型
+    2. 一直检测：检测到就打印 conf/bbox 并夹取（推流里也能看框）
+    3. 夹取后敲回车恢复原位，再摆回固定姿态继续检测；Ctrl+C 退出
 """
 
 import argparse
@@ -34,12 +26,10 @@ _PKG_ROOT = os.path.dirname(_HERE)
 if _PKG_ROOT not in sys.path:
     sys.path.insert(0, _PKG_ROOT)
 
-from agcs_lib import make_board, make_arm_ik, DepthCamera
+from agcs_lib import make_board
 
-# 21 号底座横转：虫子固定在机器人左侧，先转 21 到这个角度，再扫 24 俯仰。
-SERVO21_POS = 875
-# 24 号腕俯仰扫描序列：小=低头看地、大=抬头，从低往高扫。
-SERVO24_SCAN = (150, 200, 250, 300, 350, 400, 450)
+SERVO21_POS = 875   # 21 号固定（维持）
+SERVO24_POS = 400   # 24 号固定
 
 
 def _load_no7():
@@ -57,94 +47,14 @@ def _load_no7():
 no7 = _load_no7()
 
 
-def load_cam2arm():
-    """读 config/cam2arm.yaml 的 R(3x3) / t(3x1)，单位 mm。"""
-    import yaml
-    path = os.path.join(_PKG_ROOT, 'config', 'cam2arm.yaml')
-    with open(path, 'r', encoding='utf-8') as f:
-        data = yaml.safe_load(f)
-    c = data['cam2arm']
-    R = np.array(c['R'], dtype=np.float64).reshape(3, 3)
-    t = np.array(c['t'], dtype=np.float64).reshape(3, 1)
-    return R, t
-
-
-def _depth_median(d, cx, cy, r=2):
-    """取 (cx,cy) 附近深度中位数（中心无效时往邻域扩），返回 (z_mm, xi, yi) 或 (None, xi, yi)。"""
-    xi, yi = int(round(cx)), int(round(cy))
-    h, w = d.shape
-    for radius in range(0, r + 1):
-        vals = []
-        for dy in range(-radius, radius + 1):
-            for dx in range(-radius, radius + 1):
-                yy, xx = yi + dy, xi + dx
-                if 0 <= xx < w and 0 <= yy < h:
-                    v = int(d[yy, xx])
-                    if v > 0:
-                        vals.append(v)
-        if vals:
-            vals.sort()
-            return vals[len(vals) // 2], xi, yi
-    return None, xi, yi
-
-
 def grab(board, pull_up_pulse):
-    """夹取（复刻 1.py 夹取开始到夹取结束：闭合夹爪 25 → 拔起 22）。不恢复原位，恢复交给调用方。"""
+    """闭合夹爪 25 → 拔起 22。不恢复原位（恢复交给调用方）。"""
     board.bus_servo_set_position(2.0, [[25, no7.GRIPPER_CLOSE]])
     time.sleep(2.0)
     time.sleep(0.5)
     pulse = max(0, min(1000, int(pull_up_pulse)))
     board.bus_servo_set_position(1.0, [[22, pulse]])
     time.sleep(1.0)
-
-
-def depth_to_arm(depth_cam, R, t, det, z_offset):
-    """检测框 → 深度 → 机械臂 (x,y,z) cm。失败返回 None。"""
-    cx = det['x'] + det['w'] / 2.0
-    cy = det['y'] + det['h'] / 2.0
-
-    d = depth_cam.read_depth(timeout_ms=2000)
-    if d is None:
-        print('❌ 读深度失败', flush=True)
-        return None
-
-    hd, wd = d.shape
-    # 彩色是 640×480，深度可能是别的分辨率 → 按比例缩放彩色像素到深度像素
-    sx = wd / 640.0
-    sy = hd / 480.0
-    dx, dy = cx * sx, cy * sy
-
-    nz = int((d > 0).sum())
-    bxx, byy = min(wd - 1, int(round(dx))), min(hd - 1, int(round(dy)))
-    print('深度图 %s 有效 %d/%d(%.0f%%) 中心(%d,%d)=%d bbox(%d,%d)=%d' %
-          ((hd, wd), nz, hd * wd, 100.0 * nz / (hd * wd),
-           wd // 2, hd // 2, int(d[hd // 2, wd // 2]),
-           bxx, byy, int(d[byy, bxx])), flush=True)
-
-    z_mm, xi, yi = _depth_median(d, dx, dy)
-    if z_mm is None or z_mm <= 0:
-        print('❌ 深度像素(%d,%d)附近深度无效' % (xi, yi), flush=True)
-        return None
-
-    w = depth_cam.depth_to_world(float(xi), float(yi), float(z_mm))
-    if w is None:
-        print('❌ depth_to_world 转换失败', flush=True)
-        return None
-    wx, wy, wz = w
-
-    # 深度相机(X右,Y上,Z前) → 彩色相机(X右,Y下,Z前)：只翻转 Y
-    cam = np.array([wx, -wy, wz], dtype=np.float64).reshape(3, 1)
-    # 彩色相机 → 机械臂(mm)，再转 cm
-    arm_mm = R @ cam + t
-    arm_cm = arm_mm.flatten() / 10.0
-
-    print('深度像素(%d,%d)=%dmm → 相机(%.0f,%.0f,%.0f)mm → 机械臂(%.1f,%.1f,%.1f)cm'
-          % (xi, yi, z_mm, wx, wy, wz, arm_cm[0], arm_cm[1], arm_cm[2]), flush=True)
-
-    x = float(arm_cm[0])
-    y = float(arm_cm[1])
-    z = float(arm_cm[2]) + float(z_offset)
-    return (x, y, z)
 
 
 def debug_probe(model_det):
@@ -190,33 +100,18 @@ def main():
                     help='模型置信度阈值（检测不到先降到 0.4 试）')
     ap.add_argument('--classes', default='', help='目标类别，逗号分隔；留空=接受所有类别')
     ap.add_argument('--color', default='red', help='推流 LAB 显示用色（只影响显示）')
-    ap.add_argument('--s21', type=int, default=SERVO21_POS,
-                    help='21 号转到的左侧虫子位置（默认 %(default)d）')
+    ap.add_argument('--s21', type=int, default=SERVO21_POS, help='21 号固定脉宽（默认 %(default)d）')
+    ap.add_argument('--s24', type=int, default=SERVO24_POS, help='24 号固定脉宽（默认 %(default)d）')
     ap.add_argument('--pull-up', type=int, default=no7.PULL_UP_22,
                     help='夹取后 22 号肩拔起脉宽（默认 %(default)d）')
-    ap.add_argument('--tries', type=int, default=3,
-                    help='24 号俯仰扫几轮（默认 %(default)d）')
-    ap.add_argument('--dwell', type=float, default=1.0,
-                    help='每个 24 角度停留秒（默认 %(default)s）')
-    ap.add_argument('--z-offset', type=float, default=0.0,
-                    help='夹取高度偏移 cm（加到算出的 z 上，默认 %(default)s）')
-    ap.add_argument('--dry-run', action='store_true',
-                    help='只算 (x,y,z) 打印，不移动机械臂')
     args = ap.parse_args()
 
     board = make_board()
-    ak = make_arm_ik(board)
-    R, t = load_cam2arm()
 
-    depth_cam = DepthCamera()
-    depth_cam.open()
-    depth_cam.start_depth()
-    print('深度相机已打开', flush=True)
-
-    # 不恢复原位；先转 21 到虫子左侧（0.5s 到位 + 0.5s 静置），再扫 24 俯仰
-    board.bus_servo_set_position(0.5, [[21, args.s21]])
+    # 固定 21、24，都不动
+    board.bus_servo_set_position(0.5, [[21, args.s21], [24, args.s24]])
     time.sleep(1.0)
-    print('21 号已转到 %d（虫子左侧位置），开始扫 24 号俯仰' % args.s21, flush=True)
+    print('固定 21=%d 24=%d，开始持续检测' % (args.s21, args.s24), flush=True)
 
     model_path = args.model if os.path.isabs(args.model) else os.path.join(_PKG_ROOT, args.model)
     classes = [c.strip() for c in args.classes.split(',') if c.strip()]
@@ -230,53 +125,28 @@ def main():
         no7.task_server.start_server()
 
     print('=' * 64, flush=True)
-    print('2.py：转 21=%d → 扫 24 俯仰 → 检测到 → 深度定位 → IK 夹取' % args.s21, flush=True)
-    print('conf=%.2f 扫 %d 轮 / 每角度 %.1fs%s'
-          % (args.conf, args.tries, args.dwell,
-             '  [--dry-run 只算坐标]' if args.dry_run else ''), flush=True)
+    print('2.py：固定姿态持续检测，检测到就夹取（Ctrl+C 退出）', flush=True)
     print('=' * 64, flush=True)
 
+    miss = 0
     try:
-        for attempt in range(1, args.tries + 1):
-            for p24 in SERVO24_SCAN:
-                board.bus_servo_set_position(0.5, [[24, p24]])
-                time.sleep(args.dwell)
-                det = model_det.detect()
-                if det is None:
-                    print('  24=%d 未检测到（第 %d/%d 轮）' % (p24, attempt, args.tries), flush=True)
-                    continue
-
-                print('✅ 21=%d 24=%d 检测到虫子 conf=%.2f，深度定位' % (args.s21, p24, det['conf']), flush=True)
-                target = depth_to_arm(depth_cam, R, t, det, args.z_offset)
-                if target is None:
-                    print('  ❌ 深度定位失败，继续扫', flush=True)
-                    continue
-
-                if args.dry_run:
-                    print('--dry-run：已算出目标，不移动机械臂，退出', flush=True)
-                    return
-
-                # IK 把夹爪末端移到 (x,y,z)，alpha=0 夹持器水平
-                res = ak.setPitchRangeMoving(target, 0, -90, 100, 1.0)
-                if res is False:
-                    print('❌ IK 无解，无法移到 (%s)' % (target,), flush=True)
-                    return
-                if abs(res[1]) > 0.5:
-                    print('⚠️ IK 俯仰降级 alpha=%.1f°，仍尝试夹取' % res[1], flush=True)
-                time.sleep(1.0)
-
+        while True:
+            det = model_det.detect()
+            if det is not None:
+                print('✅ 检测到 conf=%.2f bbox=%dx%d@(%d,%d)，夹取'
+                      % (det['conf'], det['w'], det['h'], det['x'], det['y']), flush=True)
                 grab(board, args.pull_up)
-                input('夹取完成，保持夹取姿态。敲回车恢复原位…')
+                input('夹取完成，敲回车恢复原位…')
                 no7.restore_travel(board, no7.GRIPPER_OPEN)
-                print('已恢复原位，退出', flush=True)
-                return
-
-            print('第 %d 轮 24 号俯仰扫完未找到' % attempt, flush=True)
-
-        print('❌ 扫完 24 号俯仰都没检测到虫子，恢复原位后退出', flush=True)
-        no7.restore_travel(board, no7.GRIPPER_OPEN)
+                # 恢复后重新摆回固定姿态，继续检测
+                board.bus_servo_set_position(0.5, [[21, args.s21], [24, args.s24]])
+                time.sleep(1.0)
+            else:
+                miss += 1
+                if miss % 10 == 0:
+                    print('  未检测到（已 %d 次）' % miss, flush=True)
+                time.sleep(0.3)
     finally:
-        depth_cam.close()
         cam.camera_close()
 
 
