@@ -29,7 +29,7 @@ if _PKG_ROOT not in sys.path:
 from agcs_lib import make_board
 
 SERVO21_POS = 875   # 21 号固定（维持）
-SERVO24_POS = 200   # 24 号固定
+SERVO24_POS = 300   # 24 号固定
 
 
 def _load_no7():
