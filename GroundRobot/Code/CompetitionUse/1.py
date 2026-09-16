@@ -68,10 +68,6 @@ GYRO_SCALE_RIGHT = 1.199  # IMU 右转时陀螺仪积分修正比例
 IMU_SETTLE_S = 0.25
 HEADING_TOL_DEG = 1.0    # 航向误差容忍范围，单位：度；越小越严格
 IMU_STRAIGHT_STEP = 1    # 转弯后一次性修正的角度（imu_turn 用）
-LOW_VOLTAGE = 11.3         # 电压低于该值时，第一次夹取前补距离
-VOLTAGE_EXTRA_MIN = 40     # 电压补偿最小距离，单位毫米
-VOLTAGE_EXTRA_MAX = 80     # 电压补偿最大距离，单位毫米
-VOLTAGE_EXTRA_LOW_V = 10.3  # 补偿达到最大距离时对应的电压
 # --- 融合导航（默认启用）---
 # 内参单位是 detect_color 缩放后的像素（内部 resize 到 320×240，
 # 而 result['contour'] 也来自这张 320 图，所以 bbox_center_x 同属 320 坐标系）。
@@ -265,61 +261,6 @@ def lab_view(frame, lab, color):
     maxv = tuple(int(v) for v in lab[color]['max'])
     mask = cv2.inRange(labf, minv, maxv)
     return cv2.bitwise_and(frame, frame, mask=mask)
-
-
-def read_battery_running(board, samples=30, interval=0.05):
-    """实时连续采样电池电压，返回 (中位数毫伏, 平均值毫伏)。"""
-    vals = []
-    for _ in range(samples):
-        try:
-            v = board.get_battery()
-            if v is not None:
-                vals.append(int(v))
-        except Exception:
-            pass
-        time.sleep(interval)
-    if not vals:
-        return None, None
-    vals.sort()
-    median = vals[len(vals) // 2]
-    avg = sum(vals) / len(vals)
-    return median, avg
-
-
-def extra_distance_mm(voltage):
-    """电压从 11.3V 到 10.3V，补偿距离从 40mm 线性增加到 80mm。"""
-    if voltage >= LOW_VOLTAGE:
-        return 0
-    if voltage <= VOLTAGE_EXTRA_LOW_V:
-        return VOLTAGE_EXTRA_MAX
-    ratio = (LOW_VOLTAGE - voltage) / (LOW_VOLTAGE - VOLTAGE_EXTRA_LOW_V) * 0.75
-    return int(VOLTAGE_EXTRA_MIN + (VOLTAGE_EXTRA_MAX - VOLTAGE_EXTRA_MIN) * ratio)
-
-
-def apply_voltage_compensation(board, ik, fusion=None):
-    """夹取/放下前读取实时电压，需要时额外前进补偿距离。"""
-    median_mv, avg_mv = read_battery_running(board)
-    if median_mv is None:
-        print('无法读取电压，跳过电压补偿', flush=True)
-        return
-    voltage = median_mv / 1000.0
-    extra_mm = extra_distance_mm(voltage)
-    print('实时电压: 中位数 %.2fV, 平均 %.2fV'
-          % (voltage, avg_mv / 1000.0), flush=True)
-    if extra_mm > 0:
-        print('电压补偿：额外前进 %dmm' % extra_mm, flush=True)
-        ik.go_forward(ik.initial_pos, 2, extra_mm, MOVE_SPEED, 1)
-        # 这段位移也要喂给估计器，否则 cross 会凭空少算这段
-        if fusion is not None:
-            fusion.predict(0.0, ds_mm=float(extra_mm))
-    else:
-        print('电压正常，不额外前进', flush=True)
-
-
-def is_low_voltage(board):
-    """快速判断当前电压是否低于阈值。"""
-    median_mv, _ = read_battery_running(board, samples=10, interval=0.02)
-    return median_mv is not None and median_mv / 1000.0 < LOW_VOLTAGE
 
 
 def init_imu(board):
@@ -631,7 +572,6 @@ def main():
     place_count = 0
     picked_count = 0
     pose = {'x': 0.0, 'y': 0.0}
-    left_turn_compensated = False
 
     for i, act in enumerate(actions, 1):
         name = act.get('action')
@@ -644,9 +584,6 @@ def main():
 
         if pending_forward:
             print('%d/%d 直行 %dmm' % (i, len(actions), pending_forward), flush=True)
-            if pending_forward < 0 and is_low_voltage(board):
-                pending_forward -= 10
-                print('低电压后退补偿：额外多退 10mm', flush=True)
             target_yaw = imu_state['yaw']
             dist_mm = pending_forward
             # 融合导航：相机写状态、IMU 管执行，状态不归零；丢帧卡尔曼自己扛得住
@@ -654,7 +591,6 @@ def main():
                 ik, board, detector, imu_state, imu_state['tracker'],
                 pending_forward, fusion, ctrl, marker_range, args.marker_size_mm)
             pending_forward = 0
-            left_turn_compensated = False
             advance_pose(pose, imu_state['yaw'], dist_mm)
             report(position_m=pose_dict(pose),
                    heading_deg=norm_heading(imu_state['yaw']),
@@ -662,10 +598,6 @@ def main():
 
         if name == 'turn_left':
             angle = int(act.get('angle', 90))
-            if is_low_voltage(board) and not left_turn_compensated:
-                angle += 5
-                print('低电压左转补偿：额外多转 5°', flush=True)
-                left_turn_compensated = True
             print('%d/%d IMU左转 %d' % (i, len(actions), angle), flush=True)
             yaw_before = imu_state['yaw']
             imu_turn(ik, board, imu_state, angle)
@@ -689,7 +621,6 @@ def main():
         elif name == 'pick':
             pick_count += 1
             print('%d/%d pick%d' % (i, len(actions), pick_count), flush=True)
-            apply_voltage_compensation(board, ik, fusion)
             pulses = {int(k): int(v) for k, v in act.get('pulses', {}).items()} if act.get('pulses') else None
             do_pick(board, pick_count, pulses, pull_up_pulse=args.pull_up)
             picked_count += 1
@@ -698,7 +629,6 @@ def main():
         elif name == 'place':
             place_count += 1
             print('%d/%d place%d' % (i, len(actions), place_count), flush=True)
-            apply_voltage_compensation(board, ik, fusion)
             pulses = {int(k): int(v) for k, v in act.get('pulses', {}).items()} if act.get('pulses') else None
             do_place(board, place_count, pulses)
             report(message='第 %d 次放下完成' % place_count)
@@ -706,9 +636,6 @@ def main():
             ik.stand(ik.initial_pos, t=500)
 
     if pending_forward:
-        if pending_forward < 0 and is_low_voltage(board):
-            pending_forward -= 10
-            print('低电压后退补偿：额外多退 10mm', flush=True)
         target_yaw = imu_state['yaw']
         dist_mm = pending_forward
         move_straight_fusion(
