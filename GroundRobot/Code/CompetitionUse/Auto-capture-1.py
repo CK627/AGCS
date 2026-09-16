@@ -46,8 +46,6 @@ from agcs_lib import (
     correct_camera,
     open_camera,
     capture,
-    DepthCamera,
-    Localizer,
 )
 
 try:
@@ -123,7 +121,6 @@ VOLTAGE_EXTRA_LOW_V = 10.3  # 补偿达到最大距离时对应的电压
 
 # ---------- 模型 + 雅可比（阶段二） ----------
 DEFAULT_MODEL = 'models/best.onnx'  # 默认模型路径（相对 spiderpi 根目录）
-DEFAULT_MAP = 'models/map.npz'      # 预建 3D 地图（深度定位用）
 MODEL_CONF = 0.8           # 模型置信度阈值
 JAC_DELTA = 20             # 标定时每个舵机的扰动脉宽
 CALIB_SAMPLES = 5          # 标定时 bbox 中心平均帧数
@@ -518,34 +515,6 @@ def update_imu(state, board):
 def angle_error(current, target):
     """计算两个航向角的最小误差，范围 -180 到 180。"""
     return (target - current + 180.0) % 360.0 - 180.0
-
-
-def localize_heading(depth_cam, localizer, imu_state):
-    """深度定位校正 IMU 航向漂移，返回 (heading_deg, pos_mm) 或 None。
-
-    ICP 匹配预建地图，得到相机在地图坐标系的位姿 (R, t)；航向 = 相机
-    forward 轴在地图水平面(XZ)的角度。第一次建立 IMU 与地图的航向偏移，
-    之后用定位航向覆盖漂移，让 imu_state['yaw'] 保持在地图坐标系。
-    """
-    if depth_cam is None or localizer is None:
-        return None
-    try:
-        depth = depth_cam.read_depth(timeout_ms=2000)
-        if depth is None:
-            return None
-        res = localizer.localize(depth, depth_cam)
-        if res is None:
-            return None
-        R, t, err = res
-        fwd = R @ np.array([0.0, 0.0, 1.0])
-        heading = float(np.degrees(np.arctan2(fwd[0], fwd[2])))
-        if imu_state.get('loc_offset') is None:
-            imu_state['loc_offset'] = heading - imu_state['yaw']
-        imu_state['yaw'] = heading - imu_state['loc_offset']
-        return heading, (float(t[0]), float(t[1]), float(t[2]))
-    except Exception as e:
-        print('定位校正失败: %s' % e, flush=True)
-        return None
 
 
 def color_keep_center(ik, board, detector, tilt, color_state):
@@ -945,7 +914,6 @@ def main():
                         help='只做第 1/2 次夹取的雅可比标定')
     parser.add_argument('--approach', action='store_true',
                         help='直接启用模型检测并慢慢靠近(不走固定路线)')
-    parser.add_argument('--map', default=DEFAULT_MAP, help='预建 3D 地图路径(深度定位)')
     parser.add_argument('--pull-up', type=int, default=None,
                         help='第一次夹取后拔起的脉宽（22 号肩，默认 %d）；'
                              '幅度不合适现场试值' % PULL_UP_22)
@@ -974,7 +942,6 @@ def main():
     classes = [c.strip() for c in args.classes.split(',') if c.strip()]
     # 相对路径按 spiderpi 根目录解析（模型/地图在 ~/spiderpi/models/ 下，不在 CompetitionUse/ 下）
     model_path = args.model if os.path.isabs(args.model) else os.path.join(_PKG_ROOT, args.model)
-    map_path = args.map if os.path.isabs(args.map) else os.path.join(_PKG_ROOT, args.map)
     model_det = ModelDetector(model_path, args.conf, classes, read_frame, publish)
 
     video_stop = threading.Event()
@@ -1018,23 +985,6 @@ def main():
         video_stop.set()
         cam.camera_close()
         return
-
-    # 深度定位（可选，用于校正 IMU 航向漂移）
-    depth_cam = None
-    localizer = None
-    if os.path.exists(map_path):
-        try:
-            depth_cam = DepthCamera()
-            depth_cam.open()
-            depth_cam.start_depth()
-            localizer = Localizer(map_path)
-            print('深度定位已启用，地图=%s' % map_path, flush=True)
-        except Exception as e:
-            print('深度定位初始化失败: %s' % e, flush=True)
-            if depth_cam is not None:
-                depth_cam.close()
-            depth_cam = None
-            localizer = None
 
     imu_state = init_imu(board)
     ik.stand(ik.initial_pos, t=500)
@@ -1099,8 +1049,6 @@ def main():
             imu_turn(ik, board, imu_state, angle)
             reset_imu(board, imu_state)
             target_yaw = imu_state['yaw']
-            if localize_heading(depth_cam, localizer, imu_state) is not None:
-                target_yaw = imu_state['yaw']
             report(heading_deg=norm_heading(imu_state['yaw']),
                    message='左转 %d°' % angle)
         elif name == 'turn_right':
@@ -1114,8 +1062,6 @@ def main():
             imu_turn(ik, board, imu_state, -angle)
             reset_imu(board, imu_state)
             target_yaw = imu_state['yaw']
-            if localize_heading(depth_cam, localizer, imu_state) is not None:
-                target_yaw = imu_state['yaw']
             report(heading_deg=norm_heading(imu_state['yaw']),
                    message='右转 %d°' % angle)
         elif name == 'pick':
@@ -1160,8 +1106,6 @@ def main():
         advance_pose(pose, imu_state['yaw'], dist_mm)
 
     video_stop.set()
-    if depth_cam is not None:
-        depth_cam.close()
     cam.camera_close()
     tracker = imu_state.get('tracker')
     if tracker is not None:
