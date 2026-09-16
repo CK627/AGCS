@@ -48,7 +48,7 @@ except ImportError:
 
 
 ROUTE_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), 'fixed_route.json')
+    os.path.dirname(os.path.abspath(__file__)), 'json1.json')
 
 OFFICIAL_ARM = {21: 500, 22: 705, 23: 90, 24: 330}  # 机械臂官方初始脉宽
 
