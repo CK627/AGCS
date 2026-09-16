@@ -136,11 +136,8 @@ def _grasp(board, pick_count, pull_up_pulse=None):
 
 
 def servo21_pick(board, pick_count, model_det, pull_up_pulse=None):
-    """只动 21 号：从左往正前扫角度，边扫边 YOLO 找虫子，找到就夹（不读固定脉宽）。"""
-    nominal = pick_posture(pick_count)
-    # 先把 22/23/24 摆到位，再只扫 21
-    no7.set_servos(board, nominal, [22, 23, 24])
-
+    """只动 21 号：从左往正前扫角度，边扫边 YOLO 找虫子，找到就夹（不碰 22/23/24）。"""
+    # 不读夹取 JSON、不摆 22/23/24，只硬编码扫 21 号；夹取仍走 _grasp（闭合→拔起→复位）。
     for p21 in SERVO21_SCAN:
         board.bus_servo_set_position(1.0, [[21, p21]])
         time.sleep(0.8)
@@ -157,22 +154,36 @@ def servo21_pick(board, pick_count, model_det, pull_up_pulse=None):
 
 # ---------- 融合导航（独立落地：相机写状态、IMU 管执行，先航向后横向） ----------
 
-from agcs_lib.heading_fusion import LaneFusion, LaneController
+from agcs_lib.heading_fusion import LaneFusion, LaneController, range_from_radius_px
 
-FUSION_F_PX = 277.0
-FUSION_CX0 = 160.0
-FUSION_HEAD_GAIN = 0.9
-FUSION_CROSS_GAIN = 0.35
-MARKER_RANGE_MM = 300.0   # 前向距离占位（未标定，先用固定值）
+# 融合导航参数。下面只是「能跑」的占位默认，真值用命令行调（见 main() 的 --f-px /
+# --marker-range / --fusion-* 等）。与 NO6 `Auto-capture.py` 的 --fusion 一套对齐：
+# 之前 MARKER_RANGE_MM=300 太近（色块大概率在 1m 量级），把 cross 估计带偏、机器人
+# 反复横移却收敛不掉，反而每一步横移都往 IMU 里注入 ±1° 航向噪声 → 越走越偏撞花盆。
+FUSION_CFG = {
+    'f_px': 277.0,          # 320 坐标系焦距（detect_color 内部 resize 到 320×240）
+    'f_px_full': 554.0,     # 原始 640 分辨率焦距，用于色块视半径反推距离
+    'cx0': 160.0,           # 320 坐标系光心横坐标
+    'head_gain': 0.9,       # 航向 P 增益（转「误差 × 该比例」度）
+    'head_max': 6.0,        # 单次转向上限（度）
+    'cross_gain': 0.35,     # 横向 P 增益（横移「偏差 × 该比例」mm）
+    'cross_deadzone': 8.0,  # 横向死区（mm），偏差小于它就不横移（少发横移=少注噪声）
+    'cross_max': 25.0,      # 单次横移上限（mm）
+    'marker_range': 1000.0, # 到色块的前向距离（mm），--marker-size-mm=0 时用定值
+    'marker_size': 0.0,     # 色块真实半径（mm），>0 时用视半径反推距离（需现场量）
+}
 
 _FUSION = {'fusion': None, 'ctrl': None}
 
 
 def _ensure_fusion():
     if _FUSION['fusion'] is None:
-        _FUSION['fusion'] = LaneFusion(f_px=FUSION_F_PX, cx0=FUSION_CX0)
-        _FUSION['ctrl'] = LaneController(head_gain=FUSION_HEAD_GAIN,
-                                         cross_gain=FUSION_CROSS_GAIN)
+        _FUSION['fusion'] = LaneFusion(f_px=FUSION_CFG['f_px'], cx0=FUSION_CFG['cx0'])
+        _FUSION['ctrl'] = LaneController(head_gain=FUSION_CFG['head_gain'],
+                                         head_max=FUSION_CFG['head_max'],
+                                         cross_gain=FUSION_CFG['cross_gain'],
+                                         cross_deadzone=FUSION_CFG['cross_deadzone'],
+                                         cross_max=FUSION_CFG['cross_max'])
 
 
 def fusion_move_straight(ik, board, detector, imu_state, target_yaw,
@@ -193,10 +204,17 @@ def fusion_move_straight(ik, board, detector, imu_state, target_yaw,
     while remaining > 0:
         det = detector()
         cx = None
+        rng = FUSION_CFG['marker_range']
         if det is not None:
             cx = det.get('bbox_center_x', det['center'][0])
+            # radius 是映射回原始 640 分辨率的像素，所以用 f_px_full 反推距离
+            if FUSION_CFG['marker_size'] > 0 and det.get('radius'):
+                r = range_from_radius_px(det['radius'], FUSION_CFG['marker_size'],
+                                         FUSION_CFG['f_px_full'])
+                if r is not None:
+                    rng = FUSION_CFG['marker_range'] = max(80.0, r)
         if cx is not None:
-            fusion.update_bearing(cx, MARKER_RANGE_MM)
+            fusion.update_bearing(cx, rng)
 
         turn, lateral = ctrl.decide(fusion.heading_error, fusion.cross_error)
         if turn != 0.0:
@@ -384,8 +402,35 @@ def main():
                     help='YOLO 靠近每步前进的名义距离 mm（默认 %d）' % STEP_MM)
     ap.add_argument('--max-steps', type=int, default=MAX_STEPS,
                     help='YOLO 靠近最多走几步；传 0 = 只居中不前进（默认 %d）' % MAX_STEPS)
+    # 融合导航调参（默认值只是占位，真值在机器人上试出来直接写回 FUSION_CFG 或用命令行）
+    ap.add_argument('--f-px', type=float, default=FUSION_CFG['f_px'],
+                    help='融合 320 坐标系焦距（默认 %.0f）' % FUSION_CFG['f_px'])
+    ap.add_argument('--cx0', type=float, default=FUSION_CFG['cx0'],
+                    help='融合 320 坐标系光心横坐标（默认 %.0f）' % FUSION_CFG['cx0'])
+    ap.add_argument('--marker-range', type=float, default=FUSION_CFG['marker_range'],
+                    help='到色块的前向距离 mm（--marker-size-mm=0 时用定值，默认 %.0f）'
+                         % FUSION_CFG['marker_range'])
+    ap.add_argument('--marker-size-mm', type=float, default=FUSION_CFG['marker_size'],
+                    help='色块真实半径 mm（range_from_radius_px 用半径），>0 用视半径反推距离（默认 %.0f）'
+                         % FUSION_CFG['marker_size'])
+    ap.add_argument('--fusion-head-gain', type=float, default=FUSION_CFG['head_gain'])
+    ap.add_argument('--fusion-head-max', type=float, default=FUSION_CFG['head_max'])
+    ap.add_argument('--fusion-cross-gain', type=float, default=FUSION_CFG['cross_gain'])
+    ap.add_argument('--fusion-cross-deadzone', type=float, default=FUSION_CFG['cross_deadzone'])
+    ap.add_argument('--fusion-cross-max', type=float, default=FUSION_CFG['cross_max'])
     ap.add_argument('-h', '--help', action='store_true', help='显示本文件参数 + NO7 参数')
     args, rest = ap.parse_known_args()
+
+    # 把命令行里的融合参数写回 FUSION_CFG（_ensure_fusion / fusion_move_straight 在运行时读）
+    FUSION_CFG['f_px'] = args.f_px
+    FUSION_CFG['cx0'] = args.cx0
+    FUSION_CFG['marker_range'] = args.marker_range
+    FUSION_CFG['marker_size'] = args.marker_size_mm
+    FUSION_CFG['head_gain'] = args.fusion_head_gain
+    FUSION_CFG['head_max'] = args.fusion_head_max
+    FUSION_CFG['cross_gain'] = args.fusion_cross_gain
+    FUSION_CFG['cross_deadzone'] = args.fusion_cross_deadzone
+    FUSION_CFG['cross_max'] = args.fusion_cross_max
 
     if args.help:
         print(__doc__)
@@ -412,6 +457,11 @@ def main():
     print('YOLO 靠近参数：stop_w=%d step_mm=%d max_steps=%d'
           % (args.stop_w, args.step_mm, args.max_steps), flush=True)
     print('摆臂起点姿态：pick1=%s pick2=%s' % (pick_posture(1), pick_posture(2)), flush=True)
+    print('融合导航参数：f_px=%.0f cx0=%.0f range=%.0fmm size=%.0fmm '
+          'head_gain=%.2f cross_gain=%.2f' %
+          (FUSION_CFG['f_px'], FUSION_CFG['cx0'], FUSION_CFG['marker_range'],
+           FUSION_CFG['marker_size'], FUSION_CFG['head_gain'], FUSION_CFG['cross_gain']),
+          flush=True)
     print('=' * 64, flush=True)
 
     no7.main()
