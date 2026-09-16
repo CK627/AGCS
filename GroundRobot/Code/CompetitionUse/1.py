@@ -109,10 +109,10 @@ def _load_no7():
 no7 = _load_no7()
 
 
-# ---------- 只动 21 号舵机的夹取（虫子固定在机器人左侧） ----------
+# ---------- 只动 24 号舵机（腕俯仰）的夹取 ----------
 
-GRASP_MODE = 'servo21'   # 'yolo'（原：走到 bbox 够大） | 'servo21'（扫 21 号找虫子）
-SERVO21_SCAN = (900, 850, 800, 750, 700, 650, 600, 550, 500)  # 从左(900°)往正前(500°)扫
+GRASP_MODE = 'servo24'   # 'yolo'（原：走到 bbox 够大） | 'servo24'（扫 24 号俯仰找虫子）
+SERVO24_SCAN = (150, 200, 250, 300, 350, 400, 450)  # 24 俯仰：小=低头看地、大=抬头，从低往高扫
 
 
 def _detect_pixel(model_det):
@@ -135,19 +135,19 @@ def _grasp(board, pick_count, pull_up_pulse=None):
     no7.restore_travel(board, no7.GRIPPER_CLOSE)
 
 
-def servo21_pick(board, pick_count, model_det, pull_up_pulse=None):
-    """只动 21 号：从左往正前扫角度，边扫边 YOLO 找虫子，找到就夹（不碰 22/23/24）。"""
-    # 不读夹取 JSON、不摆 22/23/24，只硬编码扫 21 号；夹取仍走 _grasp（闭合→拔起→复位）。
-    for p21 in SERVO21_SCAN:
-        board.bus_servo_set_position(1.0, [[21, p21]])
+def servo24_pick(board, pick_count, model_det, pull_up_pulse=None):
+    """只动 24 号（腕俯仰）：上下扫俯仰角，边扫边 YOLO 找虫子，找到就夹（不碰 21/22/23）。"""
+    # 不读夹取 JSON、不摆 21/22/23，只硬编码扫 24 号；夹取仍走 _grasp（闭合→拔起→复位）。
+    for p24 in SERVO24_SCAN:
+        board.bus_servo_set_position(1.0, [[24, p24]])
         time.sleep(0.8)
         if _detect_pixel(model_det) is not None:
-            print('✅ 21=%d 检测到虫子，执行夹取' % p21, flush=True)
+            print('✅ 24=%d 检测到虫子，执行夹取' % p24, flush=True)
             _grasp(board, pick_count, pull_up_pulse)
             return True
-        print('  21=%d 未检测到' % p21, flush=True)
+        print('  24=%d 未检测到' % p24, flush=True)
 
-    print('❌ 扫完 21 号整个范围都没检测到虫子，本次夹取跳过', flush=True)
+    print('❌ 扫完 24 号整个俯仰范围都没检测到虫子，本次夹取跳过', flush=True)
     no7.restore_travel(board, no7.GRIPPER_OPEN)
     return False
 
@@ -314,9 +314,9 @@ def yolo_do_pick(board, pick_count, pulses, model_det, calib, pull_up_pulse=None
           flush=True)
     print('YOLO 摆臂起点姿态：%s' % nominal, flush=True)
 
-    # 只动 21 号模式：先转左看虫子再夹，跳过「走到 bbox 够大 + 固定姿态 + 手动微调」
-    if GRASP_MODE == 'servo21':
-        servo21_pick(board, pick_count, model_det, pull_up_pulse)
+    # 只动 24 号模式：上下扫俯仰角找虫子再夹，跳过「走到 bbox 够大 + 固定姿态 + 手动微调」
+    if GRASP_MODE == 'servo24':
+        servo24_pick(board, pick_count, model_det, pull_up_pulse)
         return
 
     # do_pick 的签名里没有 ik，但 YOLO 靠近要 ik 才能走/转。IK 不持有状态，
