@@ -123,6 +123,8 @@ ls -t /home/pi/spiderpi/logs/*/autocapture/*.log | head -1 | xargs tail -80
 - 云台 PID 积分累积会抬头过头、把目标追出画面——目标已居中就跳过 PID 更新（tracker 死区）。
 - 官方 `action_group_control_demo.py` 的 `turn_right_low` 用 `times=0` 会无限转圈停不下来，别直接用（详见 `复用清单.md`）。
 - 摄像头画面远程看不到，需现场确认（夹没夹到、画面）。
+- **IMU 必须 `enable_reception()`**：`make_board()` 只建 Board 不开接收；`agcs_lib/imu.py` 的 `ImuTracker.run()` 已自包含地调用（2026-09-17 修），不调 `get_imu()` 永远返回 None、yaw 恒 0。
+- **边走边转用 `move(pos, mode, amplitude, movement_direction, rotation, speed, times)`，别用 `setStepMode`**：`setStepMode` 实测「转两下就停」不稳定；`move` 持续走+转。`rotation`（-1~1）近似**恒定角速度 ~1.7°/s**（rotation=1.0 实测 → `rot_max_dps≈1.7`），且**正 rotation → 负 yaw**（符号反）。要精确转角用 `turn_left/turn_right` 的 `rotation_angle`（度）。
 
 ## 当前状态与工作约定
 

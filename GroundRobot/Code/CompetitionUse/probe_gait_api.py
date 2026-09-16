@@ -122,15 +122,18 @@ def probe_spin(ik, board, seconds=3.0, rots=(0.25, 0.5, 1.0)):
         for r in rots:
             tr.reset()
             time.sleep(0.2)
-            n = _drive(ik, pos, seconds, rotation=r, amplitude=30.0,
-                       step_velocity=40.0)
+            # 用 move 标定（setStepMode 实测「转两下就停」，不稳定，弃用）
+            t0 = time.time()
+            ik.move(pos, 2, 30.0, 0.0, r, 60, 3)
+            dt = time.time() - t0
+            time.sleep(0.5)
             dyaw = state['yaw']
-            _stop(ik, pos)
-            time.sleep(0.8)
-            w = dyaw / seconds
+            w = dyaw / dt if dt > 0 else 0.0
             results.append((r, dyaw, w))
-            print('rotation=%+.2f  %5.2fs 内偏航 %+7.2f°  ->  %+7.2f °/s  (下发 %d 次)'
-                  % (r, seconds, dyaw, w, n), flush=True)
+            print('rotation=%+.2f  %5.2fs 内偏航 %+7.2f°  ->  %+7.2f °/s'
+                  % (r, dt, dyaw, w), flush=True)
+            ik.stand(ik.initial_pos, t=400)
+            time.sleep(0.3)
     finally:
         tr.stop()
         _stop(ik, pos)
