@@ -408,6 +408,11 @@ def move_straight_fusion(ik, board, detector, imu_state, tracker, distance_mm,
                 if r is not None:
                     marker_range_mm = max(80.0, r)
         if cx is not None:
+            # 第一次看到色块时，把它此刻的像素当成基准 cx0（保持初始方位，不怼画面中心）。
+            # 之前 cx0 写死 160（画面中心），等于「朝色块走」；色块放在路线旁边时会把路线带偏。
+            if fusion.updates == 0:
+                fusion.cx0 = cx
+                print('融合基准 cx0 → %.1f（色块初始像素）' % cx, flush=True)
             fusion.update_bearing(cx, marker_range_mm)
 
         turn, lateral = ctrl.decide(fusion.heading_error, fusion.cross_error)
