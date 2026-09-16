@@ -153,6 +153,87 @@ def servo21_pick(board, pick_count, model_det, pull_up_pulse=None):
     return True
 
 
+# ---------- 融合导航（独立落地：相机写状态、IMU 管执行，先航向后横向） ----------
+
+from agcs_lib.heading_fusion import LaneFusion, LaneController
+
+FUSION_F_PX = 277.0
+FUSION_CX0 = 160.0
+FUSION_HEAD_GAIN = 0.9
+FUSION_CROSS_GAIN = 0.35
+MARKER_RANGE_MM = 300.0   # 前向距离占位（未标定，先用固定值）
+
+_FUSION = {'fusion': None, 'ctrl': None}
+
+
+def _ensure_fusion():
+    if _FUSION['fusion'] is None:
+        _FUSION['fusion'] = LaneFusion(f_px=FUSION_F_PX, cx0=FUSION_CX0)
+        _FUSION['ctrl'] = LaneController(head_gain=FUSION_HEAD_GAIN,
+                                         cross_gain=FUSION_CROSS_GAIN)
+
+
+def fusion_move_straight(ik, board, detector, imu_state, target_yaw,
+                         distance_mm, tilt, color_enabled, color_state):
+    """融合版直线段（替换 NO7 的 move_straight_imu_color）。
+
+    - 相机只「写状态」（update_bearing 更新 e/cross），不再平移去消像素偏移；
+    - 单一控制器「先航向后横向」，同一小块只发一种指令；
+    - fusion 状态全程不归零。
+    """
+    _ensure_fusion()
+    fusion = _FUSION['fusion']
+    ctrl = _FUSION['ctrl']
+    tracker = imu_state.get('tracker')
+    remaining = abs(int(distance_mm))
+    forward = distance_mm >= 0
+    last_ds = 0.0
+    while remaining > 0:
+        det = detector()
+        cx = None
+        if det is not None:
+            cx = det.get('bbox_center_x', det['center'][0])
+        if cx is not None:
+            fusion.update_bearing(cx, MARKER_RANGE_MM)
+
+        turn, lateral = ctrl.decide(fusion.heading_error, fusion.cross_error)
+        if turn != 0.0:
+            if turn < 0:
+                ik.turn_left(ik.initial_pos, 2, abs(turn), no7.TURN_SPEED, 1)
+            else:
+                ik.turn_right(ik.initial_pos, 2, abs(turn), no7.TURN_SPEED, 1)
+            print('融合 e=%+.2f° cross=%+.0fmm -> 转%+.1f°'
+                  % (fusion.heading_error, fusion.cross_error, turn), flush=True)
+        elif lateral != 0.0:
+            if lateral < 0:
+                ik.left_move(ik.initial_pos, 2, abs(lateral), no7.MOVE_SPEED, 1)
+            else:
+                ik.right_move(ik.initial_pos, 2, abs(lateral), no7.MOVE_SPEED, 1)
+            print('融合 e=%+.2f° cross=%+.0fmm -> 横移%+.0fmm'
+                  % (fusion.heading_error, fusion.cross_error, lateral), flush=True)
+
+        if tracker is not None:
+            rate, dt = tracker.since_last()
+            d_theta_right = -rate * dt
+        else:
+            d_theta_right = 0.0
+        fusion.predict(d_theta_right, ds_mm=last_ds, lateral_mm=lateral)
+
+        move = min(100, remaining)
+        no7.move_one_chunk(ik, move, forward)
+        last_ds = move if forward else -move
+        remaining -= move
+        time.sleep(0.05)
+
+
+def fusion_reset_imu(board, imu_state):
+    """融合模式：只重标零漂，**不清零航向**（融合状态不归零，reset 是把误差搬到机器人身上）。"""
+    tracker = imu_state.get('tracker')
+    if tracker is None:
+        return
+    tracker.calibrate(0.5, settle=no7.IMU_SETTLE_S)
+
+
 # ---------- YOLO 靠近（照抄 NO7 的 model_approach，多了步数统计和上限）----------
 
 def yolo_approach(board, ik, model_det, stop_w, step_mm, max_steps):
@@ -320,6 +401,9 @@ def main():
 
     no7.do_pick = yolo_do_pick
     no7.run_calibrate = yolo_run_calibrate
+    # 融合导航（默认启用，替换 NO7 的 IMU+颜色 双回路）
+    no7.move_straight_imu_color = fusion_move_straight
+    no7.reset_imu = fusion_reset_imu
 
     print('=' * 64, flush=True)
     print('1.py：NO6 寻路 + YOLO 夹取（忽略 JSON 的 pick，place 仍按 JSON）', flush=True)
