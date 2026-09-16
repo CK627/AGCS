@@ -111,8 +111,8 @@ no7 = _load_no7()
 
 # ---------- 只动 21 号舵机的夹取（虫子固定在机器人左侧） ----------
 
-SERVO21_LEFT = 875    # 21 号转到此值相机才看得到虫子（原路线 21 偏左值，需现场确认具体角度）
-GRASP_MODE = 'servo21'   # 'yolo'（原：走到 bbox 够大） | 'servo21'（只动 21 号）
+GRASP_MODE = 'servo21'   # 'yolo'（原：走到 bbox 够大） | 'servo21'（扫 21 号找虫子）
+SERVO21_SCAN = (900, 850, 800, 750, 700, 650, 600, 550, 500)  # 从左(900°)往正前(500°)扫
 
 
 def _detect_pixel(model_det):
@@ -136,21 +136,23 @@ def _grasp(board, pick_count, pull_up_pulse=None):
 
 
 def servo21_pick(board, pick_count, model_det, pull_up_pulse=None):
-    """只动 21 号：先转左看虫子（虫子固定左侧），22/23/24 保持固定姿态，YOLO 确认后夹。"""
+    """只动 21 号：从左往正前扫角度，边扫边 YOLO 找虫子，找到就夹（不读固定脉宽）。"""
     nominal = pick_posture(pick_count)
-    pulses = dict(nominal)
-    pulses[21] = SERVO21_LEFT
-    print('21 号转左到 %d，22/23/24 保持 %s' % (SERVO21_LEFT, nominal), flush=True)
-    no7.set_servos(board, pulses, [21, 22, 23, 24])
+    # 先把 22/23/24 摆到位，再只扫 21
+    no7.set_servos(board, nominal, [22, 23, 24])
 
-    # 转完 21 后相机才能看到虫子，YOLO 确认
-    if _detect_pixel(model_det) is None:
-        print('❌ 21 转左后仍未检测到虫子，本次夹取跳过', flush=True)
-        no7.restore_travel(board, no7.GRIPPER_OPEN)
-        return False
-    print('✅ 检测到虫子（21=%d），执行夹取' % SERVO21_LEFT, flush=True)
-    _grasp(board, pick_count, pull_up_pulse)
-    return True
+    for p21 in SERVO21_SCAN:
+        board.bus_servo_set_position(1.0, [[21, p21]])
+        time.sleep(0.8)
+        if _detect_pixel(model_det) is not None:
+            print('✅ 21=%d 检测到虫子，执行夹取' % p21, flush=True)
+            _grasp(board, pick_count, pull_up_pulse)
+            return True
+        print('  21=%d 未检测到' % p21, flush=True)
+
+    print('❌ 扫完 21 号整个范围都没检测到虫子，本次夹取跳过', flush=True)
+    no7.restore_travel(board, no7.GRIPPER_OPEN)
+    return False
 
 
 # ---------- 融合导航（独立落地：相机写状态、IMU 管执行，先航向后横向） ----------
