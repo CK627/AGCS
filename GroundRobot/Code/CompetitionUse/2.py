@@ -29,6 +29,8 @@ if _PKG_ROOT not in sys.path:
 from agcs_lib import make_board
 
 SERVO21_POS = 875   # 21 号固定（维持）
+SERVO22_POS = 425   # 22 号肩（路线 JSON pick1 的 22=425，决定相机高度）
+SERVO23_POS = 295   # 23 号肘（路线 JSON pick1 的 23=295，决定相机前伸）
 SERVO24_POS = 300   # 24 号固定
 
 
@@ -101,6 +103,8 @@ def main():
     ap.add_argument('--classes', default='', help='目标类别，逗号分隔；留空=接受所有类别')
     ap.add_argument('--color', default='red', help='推流 LAB 显示用色（只影响显示）')
     ap.add_argument('--s21', type=int, default=SERVO21_POS, help='21 号固定脉宽（默认 %(default)d）')
+    ap.add_argument('--s22', type=int, default=SERVO22_POS, help='22 号肩固定脉宽（默认 %(default)d）')
+    ap.add_argument('--s23', type=int, default=SERVO23_POS, help='23 号肘固定脉宽（默认 %(default)d）')
     ap.add_argument('--s24', type=int, default=SERVO24_POS, help='24 号固定脉宽（默认 %(default)d）')
     ap.add_argument('--pull-up', type=int, default=no7.PULL_UP_22,
                     help='夹取后 22 号肩拔起脉宽（默认 %(default)d）')
@@ -108,10 +112,10 @@ def main():
 
     board = make_board()
 
-    # 固定 21、24，都不动
-    board.bus_servo_set_position(0.5, [[21, args.s21], [24, args.s24]])
-    time.sleep(1.0)
-    print('固定 21=%d 24=%d，开始持续检测' % (args.s21, args.s24), flush=True)
+    # 固定 21/22/23/24，都不动（22/23 决定相机高度/前伸，之前没设，停在复位位 22=705/23=90 → 相机高、朝下看）
+    board.bus_servo_set_position(0.5, [[21, args.s21], [22, args.s22], [23, args.s23], [24, args.s24]])
+    time.sleep(1.5)
+    print('固定 21=%d 22=%d 23=%d 24=%d，开始持续检测' % (args.s21, args.s22, args.s23, args.s24), flush=True)
 
     model_path = args.model if os.path.isabs(args.model) else os.path.join(_PKG_ROOT, args.model)
     classes = [c.strip() for c in args.classes.split(',') if c.strip()]
@@ -139,7 +143,7 @@ def main():
                 input('夹取完成，敲回车恢复原位…')
                 no7.restore_travel(board, no7.GRIPPER_OPEN)
                 # 恢复后重新摆回固定姿态，继续检测
-                board.bus_servo_set_position(0.5, [[21, args.s21], [24, args.s24]])
+                board.bus_servo_set_position(0.5, [[21, args.s21], [22, args.s22], [23, args.s23], [24, args.s24]])
                 time.sleep(1.0)
             else:
                 miss += 1
