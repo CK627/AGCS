@@ -83,6 +83,12 @@ FUSION_CX0 = 160.0
 FUSION_F_PX_FULL = 838.0   # 原始 640 分辨率焦距 = 2×FUSION_F_PX，色块视半径反推距离用
 FUSION_HEAD_GAIN = 0.9     # 航向 P 增益：转「误差 × 该比例」度
 FUSION_CROSS_GAIN = 0.35   # 横向 P 增益：横移「偏差 × 该比例」mm
+# --- 相机俯仰跟踪（接近时把 24 往下压，保证方块一直留在画面里不丢）---
+CAM_TRACK_MIN_24 = 160     # 24 号往下压的下限（太小=太朝下）
+CAM_TRACK_MAX_24 = 360     # 24 号往上抬的上限
+CAM_TRACK_STEP = 6         # 每块俯仰调整步长（脉宽）
+CAM_TRACK_CY_LOW = 185     # 方块中心 cy 超过它（快出画面底部）→ 往下压 24
+CAM_TRACK_CY_HIGH = 55     # 方块中心 cy 低于它（快出画面顶部）→ 往上抬 24
 camera_lock = threading.Lock()
 
 
@@ -336,22 +342,32 @@ def move_one_chunk(ik, move, forward):
 
 
 def move_straight_fusion(ik, board, detector, imu_state, tracker, distance_mm,
-                         fusion, ctrl, marker_range_mm, marker_size_mm):
+                         fusion, ctrl, marker_range_mm, marker_size_mm, cam_state):
     """融合模式的直线段：相机写状态、IMU 管执行，单一控制器先航向后横向。
 
     与 `move_straight_imu_color` 的本质区别：
     - 相机不再「平移去消掉像素偏移」，而是更新 (航向误差, 横向偏差) 这个估计；
     - 控制器同一小块里**只发一种指令**：航向没进死区就只转，进了才横移；
     - `fusion` 的状态全程不归零（归零 = 把误差从数字搬到机器人身上）。
+
+    cam_state：相机 24 号俯仰跟踪状态 {'pulse': 当前脉宽}。接近时方块往下掉出画面，
+    就往把 24 往下压，保证方块一直留在画面里，融合才不会丢参照。
     """
     remaining = abs(int(distance_mm))
     forward = distance_mm >= 0
-    last_ds = 0.0
     while remaining > 0:
         det = detector()
         cx = None
         if det is not None:
             cx = det.get('bbox_center_x', det['center'][0])
+            # 相机俯仰跟踪：方块快出画面底部就往下压 24，快出顶部就往上抬。
+            cy = det['center'][1]
+            if cy > CAM_TRACK_CY_LOW and cam_state['pulse'] > CAM_TRACK_MIN_24:
+                cam_state['pulse'] = max(CAM_TRACK_MIN_24, cam_state['pulse'] - CAM_TRACK_STEP)
+                board.bus_servo_set_position(0.15, [[24, cam_state['pulse']]])
+            elif cy < CAM_TRACK_CY_HIGH and cam_state['pulse'] < CAM_TRACK_MAX_24:
+                cam_state['pulse'] = min(CAM_TRACK_MAX_24, cam_state['pulse'] + CAM_TRACK_STEP)
+                board.bus_servo_set_position(0.15, [[24, cam_state['pulse']]])
             if marker_size_mm > 0 and det.get('radius'):
                 # radius 是映射回原始分辨率的像素，所以用 f_px_full 反推距离
                 r = range_from_radius_px(det['radius'], marker_size_mm, FUSION_F_PX_FULL)
@@ -594,6 +610,7 @@ def main():
     print('步幅缩放 stride_scale=%.3f' % STRIDE_SCALE, flush=True)
 
     restore_travel(board, GRIPPER_OPEN)
+    cam_state = {'pulse': OFFICIAL_ARM[24]}   # 24 号腕俯仰跟踪状态（相机上下）
     print('自动捕获启动，颜色目标=%s' % args.color, flush=True)
     ik.stand(ik.initial_pos, t=500)
     time.sleep(0.5)
@@ -621,7 +638,8 @@ def main():
             # 融合导航：相机写状态、IMU 管执行，状态不归零；丢帧卡尔曼自己扛得住
             marker_range = move_straight_fusion(
                 ik, board, detector, imu_state, imu_state['tracker'],
-                pending_forward, fusion, ctrl, marker_range, args.marker_size_mm)
+                pending_forward, fusion, ctrl, marker_range, args.marker_size_mm,
+                cam_state)
             pending_forward = 0
             advance_pose(pose, imu_state['yaw'], dist_mm)
             report(position_m=pose_dict(pose),
@@ -663,6 +681,7 @@ def main():
             imu_state['tracker'].since_last()
             if isinstance(fusion, ReferenceFusion):
                 fusion.reset()   # 方块被抓走，参照失效，等下一个方块重新初始化
+            cam_state['pulse'] = PICK1_RESTORE_24 if pick_count == 1 else OFFICIAL_ARM[24]
         elif name == 'place':
             place_count += 1
             print('%d/%d place%d' % (i, len(actions), place_count), flush=True)
@@ -672,6 +691,7 @@ def main():
             imu_state['tracker'].since_last()
             if isinstance(fusion, ReferenceFusion):
                 fusion.reset()   # 方块已放下，参照失效，等下一个方块重新初始化
+            cam_state['pulse'] = OFFICIAL_ARM[24]
         elif name == 'stand':
             ik.stand(ik.initial_pos, t=500)
 
@@ -680,7 +700,8 @@ def main():
         dist_mm = pending_forward
         move_straight_fusion(
             ik, board, detector, imu_state, imu_state['tracker'],
-            pending_forward, fusion, ctrl, marker_range, args.marker_size_mm)
+            pending_forward, fusion, ctrl, marker_range, args.marker_size_mm,
+            cam_state)
         advance_pose(pose, imu_state['yaw'], dist_mm)
 
     video_stop.set()
