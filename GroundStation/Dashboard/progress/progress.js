@@ -397,8 +397,14 @@ function buildFlowSvg() {
   s += `<rect class="scan-band" data-scan="2" clip-path="url(#scanClip2)" x="0" y="0" width="${W}" height="90" rx="10"`
      + ` style="--scanD:${scanH2 + 220}px;--scanT:3.2s"/>`;
   GEO.forEach((g, i) => {
-    s += `<rect class="scan-band" data-scanm="${i}" clip-path="url(#scanmClip${i})" x="0" y="0" width="${W}" height="70" rx="8"`
-       + ` style="--scanD:${g.H + 220}px;--scanT:1.9s"/>`;
+    if (i === 2) {
+      // 中枢互通：扫描方向改为从左到右（竖向光带横着扫过模块区）
+      s += `<rect class="scan-band x" data-scanm="${i}" clip-path="url(#scanmClip${i})" x="0" y="${modY[i]}" width="120" height="${g.H}" rx="8"`
+         + ` style="--scanD:1100px;--scanT:2.2s"/>`;
+    } else {
+      s += `<rect class="scan-band" data-scanm="${i}" clip-path="url(#scanmClip${i})" x="0" y="0" width="${W}" height="70" rx="8"`
+         + ` style="--scanD:${g.H + 220}px;--scanT:1.9s"/>`;
+    }
   });
   s += `</svg>`;
   return s;
