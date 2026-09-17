@@ -137,34 +137,6 @@ body {
 }
 @keyframes pipeCore { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -1; } }
 
-/* ==================== 小目标扫描提示条 ====================
-   每个小目标（步骤框）到达时用一条青色光带单独扫一遍：
-   普通模块从上到下（sb.y），中枢互通从左到右（sb.x）。
-   .on 由 applyFlowStates 在该步到达时加上（每个小目标只扫一次）。 */
-.scan-band {
-  fill: rgba(34, 211, 238, 0.16);
-  stroke: rgba(165, 243, 252, 0.9);
-  stroke-width: 2;
-  opacity: 0;
-  pointer-events: none;
-}
-.scan-band.on {
-  animation: boxScanY var(--scanT, 1.2s) cubic-bezier(0.4, 0, 0.2, 1) 1 both;
-}
-.scan-band.sb.x.on { animation-name: boxScanX; }
-@keyframes boxScanY {
-  0% { transform: translateY(-50px); opacity: 0; }
-  10% { opacity: 1; }
-  85% { opacity: 1; }
-  100% { transform: translateY(var(--scanD, 220px)); opacity: 0; }
-}
-@keyframes boxScanX {
-  0% { transform: translateX(-50px); opacity: 0; }
-  10% { opacity: 1; }
-  85% { opacity: 1; }
-  100% { transform: translateX(var(--scanD, 220px)); opacity: 0; }
-}
-
 /* ==================== 阶段条 ====================
    发光在「框」上（彩色背景 + 彩色描边），文字保持正常白字；
    两个阶段颜色不同（一蓝一紫），全做完变绿。 */

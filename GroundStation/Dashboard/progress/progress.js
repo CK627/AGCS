@@ -381,11 +381,6 @@ function buildFlowSvg() {
            + `<rect class="fl-step" x="${bx}" y="${ry}" width="${L.stW}" height="${g.boxH}" rx="6"/>`
            + vText(txt, ccx, ty0, 'v-t', 13.6)
            + `</g>`;
-        // 小目标扫描提示条：该步到达时扫一遍（中枢从左到右，其余自上而下）
-        s += `<defs><clipPath id="scansClip${i}-${idx}"><rect x="${bx}" y="${ry}" width="${L.stW}" height="${g.boxH}"/></clipPath></defs>`;
-        s += (i === 2
-          ? `<rect class="scan-band sb x" data-scans="${i}:${idx}" clip-path="url(#scansClip${i}-${idx})" x="${bx}" y="${ry + 8}" width="36" height="${g.boxH - 16}" rx="6" style="--scanD:${L.stW + 50}px;--scanT:1.2s"/>`
-          : `<rect class="scan-band sb y" data-scans="${i}:${idx}" clip-path="url(#scansClip${i}-${idx})" x="${bx + 8}" y="${ry}" width="${L.stW - 16}" height="36" rx="6" style="--scanD:${g.boxH + 50}px;--scanT:1.2s"/>`);
         idx++;
       });
     });
@@ -423,9 +418,6 @@ function modState(steps) {
 }
 
 const stepPipe = st => (st === 'done' ? 'done' : (st === 'active' ? 'live' : 'pending'));
-
-// 小目标扫描提示条是否已经放过（每个小目标只在到达时扫一次）
-const scannedStep = {};
 
 function applyFlowStates(data) {
   const byKey = {};
@@ -529,21 +521,7 @@ function applyFlowStates(data) {
       for (let j = 1; j < g.cols; j++) setP(`p-col${i}-${j}`, gatedStep(sts[j]));
       setP(`p-mg${i}`, gatedStep(sts[0]));
     }
-    sts.forEach((c, j) => {
-      setCls(`[data-stepg="${i}:${j}"]`, `stepg ${c}`);
-      // 小目标扫描：该步到达（进行中/已完成）时扫一遍，回退清空后再到达会重扫
-      const k = `${i}:${j}`;
-      const band = document.querySelector(`[data-scans="${k}"]`);
-      if (c === 'active' || c === 'done') {
-        if (!scannedStep[k] && band) {
-          band.classList.add('on');
-          scannedStep[k] = true;
-        }
-      } else if (scannedStep[k]) {
-        scannedStep[k] = false;
-        if (band) band.classList.remove('on');
-      }
-    });
+    sts.forEach((c, j) => setCls(`[data-stepg="${i}:${j}"]`, `stepg ${c}`));
   });
 }
 
