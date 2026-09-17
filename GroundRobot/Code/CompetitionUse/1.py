@@ -2,8 +2,9 @@
 # coding=utf8
 """1.py —— 融合导航 + JSON 路线（独立脚本，不依赖 NO6/NO7）。
 
-直线段走融合导航（LaneFusion + LaneController：相机写状态、IMU 管执行、
-先航向后横向），夹取/放下/路线读 json1.json 的固定脉宽，不碰 YOLO。
+直线段走融合导航（相机写状态、IMU 管执行、先航向后横向）。默认用 ReferenceFusion
+（B 方案：按路线走、方块当固定参照，纠正漂移但不被方块吸过去）；--fusion lane
+可退回旧的 LaneFusion(cx0 hack)。夹取/放下/路线读 json1.json 的固定脉宽，不碰 YOLO。
 YOLO 夹取那套在 2.py。
 """
 
@@ -38,6 +39,7 @@ from agcs_lib import (
 from agcs_lib.heading_fusion import (
     LaneFusion,
     LaneController,
+    ReferenceFusion,
     range_from_radius_px,
 )
 
@@ -354,8 +356,9 @@ def move_straight_fusion(ik, board, detector, imu_state, tracker, distance_mm,
                 if r is not None:
                     marker_range_mm = max(80.0, r)
         if cx is not None:
-            # 第一次看到色块时，把它此刻的像素当成基准 cx0（保持初始方位，不怼画面中心）。
-            if fusion.updates == 0:
+            if not isinstance(fusion, ReferenceFusion) and fusion.updates == 0:
+                # LaneFusion 旧行为：把色块初始像素冻成基准（会「朝方块走」）。
+                # ReferenceFusion 内部自己跟踪方块位置 (bx,by)，不需要这个 hack。
                 fusion.cx0 = cx
                 print('融合基准 cx0 → %.1f（色块初始像素）' % cx, flush=True)
             fusion.update_bearing(cx, marker_range_mm)
@@ -380,11 +383,10 @@ def move_straight_fusion(ik, board, detector, imu_state, tracker, distance_mm,
         rate, dt = tracker.since_last()
         # 约定：imu_state['yaw'] 是「左正」，本模块用「右正」，故取负
         d_theta_right = -rate * dt
-        fusion.predict(d_theta_right, ds_mm=last_ds, lateral_mm=lateral)
-
         move = min(100, remaining)
+        fusion.predict(d_theta_right, ds_mm=(move if forward else -move),
+                       lateral_mm=lateral)
         move_one_chunk(ik, move, forward)
-        last_ds = move if forward else -move
         remaining -= move
         time.sleep(0.05)
     return marker_range_mm
@@ -401,7 +403,12 @@ def feed_turn_to_fusion(imu_state, tracker, fusion, yaw_before, cmd_right_deg):
     """
     d_yaw_left = imu_state['yaw'] - yaw_before
     residual = -d_yaw_left - cmd_right_deg      # 右正：实际 − 命令
-    fusion.predict(residual, ds_mm=0.0)
+    if isinstance(fusion, ReferenceFusion):
+        # 方块位置按「命令转角」推进（直行的命令转角=0 由 predict 缺省处理），
+        # e 只累积残差 —— 这样方块参照系不会跟着转弯残差歪掉。
+        fusion.predict(residual, ds_mm=0.0, d_theta_cmd_deg=cmd_right_deg)
+    else:
+        fusion.predict(residual, ds_mm=0.0)
     # 把 since_last 的基准挪到「此刻」，否则直线段第一次取值会把转弯尾巴再积一遍
     tracker.since_last()
     print('转弯残差 %+.2f°（IMU 实测 %+.2f° / 命令 %+.1f°）-> e=%+.2f°'
@@ -535,6 +542,9 @@ def main():
                         help='到色块的前向距离（mm），--marker-size-mm=0 时生效')
     parser.add_argument('--fusion-head-gain', type=float, default=FUSION_HEAD_GAIN)
     parser.add_argument('--fusion-cross-gain', type=float, default=FUSION_CROSS_GAIN)
+    parser.add_argument('--fusion', default='reference', choices=['lane', 'reference'],
+                        help='直线段融合算法：lane=旧的「朝方块走」(cx0 hack)，'
+                             'reference=按路线走、方块当参照（B 方案，默认）')
     args = parser.parse_args()
 
     STRIDE_SCALE = args.stride_scale
@@ -564,12 +574,15 @@ def main():
            last_result=None,
            message='自动捕获，颜色=%s' % args.color)
 
-    fusion = LaneFusion(f_px=args.f_px, cx0=args.cx0)
+    if args.fusion == 'reference':
+        fusion = ReferenceFusion(f_px=args.f_px, cx0=args.cx0)
+    else:
+        fusion = LaneFusion(f_px=args.f_px, cx0=args.cx0)
     ctrl = LaneController(head_gain=args.fusion_head_gain,
                           cross_gain=args.fusion_cross_gain)
     marker_range = args.marker_range
-    print('融合导航已开启：相机写状态 / IMU 管执行 / 状态不归零 '
-          '(f_px=%.0f cx0=%.0f)' % (args.f_px, args.cx0), flush=True)
+    print('融合导航已开启（%s）：相机写状态 / IMU 管执行 / 状态不归零 '
+          '(f_px=%.0f cx0=%.0f)' % (args.fusion, args.f_px, args.cx0), flush=True)
     print('步幅缩放 stride_scale=%.3f' % STRIDE_SCALE, flush=True)
 
     restore_travel(board, GRIPPER_OPEN)
