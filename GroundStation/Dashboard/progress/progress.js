@@ -535,17 +535,14 @@ async function refreshFlow() {
   try {
     d = await (await fetch('/api/progress/flow')).json();
   } catch (e) {
-    setTxt('fOnline', '● 接口错误');
-    document.getElementById('fOnline').className = 'chip bad';
+    const on = document.getElementById('fOnline');
+    if (on) { on.textContent = '● 接口错误'; on.className = 'chip bad'; }
     return;
   }
   const on = document.getElementById('fOnline');
   const wrap = document.getElementById('flowWrap');
   if (!d.hub_online) {
-    on.textContent = '● 中枢未连接';
-    on.className = 'chip bad';
-    setTxt('fTotal', '-');
-    setTxt('fCurrent', d.error || '中枢不可达');
+    if (on) { on.textContent = '● 中枢未连接'; on.className = 'chip bad'; }
     if (flowSig !== 'offline') {
       flowSig = 'offline';
       rendered = false;
@@ -559,11 +556,10 @@ async function refreshFlow() {
 
   const mods = d.modules || [];
   const total = d.total_percent;
-  on.textContent = total > 0 ? '● 进行中' : '● 未开始';
-  on.className = 'chip ' + (total > 0 ? 'ok' : '');
-  setTxt('fTotal', total != null ? total + '%' : '-');
-  const act = mods.filter(m => m.current >= 0 && m.current_name && m.current_name !== '-');
-  setTxt('fCurrent', act.length ? act.map(m => m.current_name).join('　|　') : '未开始');
+  if (on) {
+    on.textContent = total > 0 ? '● 进行中' : '● 未开始';
+    on.className = 'chip ' + (total > 0 ? 'ok' : '');
+  }
 
   const sig = mods.map(m => m.key + ':' + m.percent + ':' +
     (m.steps || []).map(t => t.state.charAt(0)).join('') +
