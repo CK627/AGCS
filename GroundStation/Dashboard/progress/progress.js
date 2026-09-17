@@ -294,19 +294,35 @@ function buildFlowSvg() {
                       `p-hub-r${r}-${j}`, { delay: base + (j - 1) * 0.12 });
         }
       });
+      // 每列左进右出：从左缘中缝一分二，一路贴框顶、一路贴框底绕过，右缘中缝二合一
+      g.rows.forEach((row, r) => {
+        const mid = r === 0 ? r1y : rNy;
+        const base = r === 0 ? r0Seg : r1Seg;
+        row.forEach((txt, j) => {
+          const bx = g.rowX + j * (L.stW + L.stGap);
+          const ry = rowsY + r * (g.boxH + L.rowGap);
+          const topY = ry - 6;
+          const botY = ry + g.boxH + 6;
+          const dly = base + (j === 0 ? 0 : (j - 1) * 0.12) + 0.15;
+          s += flPipe(`M${bx} ${mid} L${bx} ${topY} L${bx + L.stW} ${topY} L${bx + L.stW} ${mid}`,
+                      `p-hub-r${r}-${j}-t`, { delay: dly });
+          s += flPipe(`M${bx} ${mid} L${bx} ${botY} L${bx + L.stW} ${botY} L${bx + L.stW} ${mid}`,
+                      `p-hub-r${r}-${j}-b`, { delay: dly });
+        });
+      });
       // 合并回路：架设平台（第一行最右列）从右侧出管、沿右侧向下、底部往左接上流出；
-      // 部署软件（第二行最右列）从列底排出，两路汇合后一起流回主管道。
-      const row0Bottom = rowsY + g.boxH;
-      const row1Top = row0Bottom + L.rowGap;
+      // 部署软件（第二行最右列）同样从右侧出管下行，两路汇合后一起流回主管道。
+      const row1Top = rowsY + g.boxH + L.rowGap;
       const row1Bottom = row1Top + g.boxH;
       const yCol = row1Bottom + 8;                                   // 底部收集管高度
       const gapX = colCx(1) + L.stW / 2 + L.stGap / 2;               // 第二行 col1/col2 之间的缝
-      const outRDelay = r0Seg + 0.12 + segDur * 0.8;
-      const outLDelay = r1Seg + 0.12 + segDur * 0.8;
+      const outRDelay = r0Seg + 0.3 + segDur * 0.8;
+      const outLDelay = r1Seg + 0.3 + segDur * 0.8;
       const sideX = colCx(2) + L.stW / 2 + 14;                       // 右侧竖管（贴着两列右侧下行）
-      s += flPipe(`M${colCx(2) + L.stW / 2} ${r1y} L${sideX} ${r1y} L${sideX} ${yCol} L${colCx(2)} ${yCol}`,
+      const sideX2 = colCx(2) + L.stW / 2 + 28;                      // 第二行右侧竖管（错开一行）
+      s += flPipe(`M${colCx(2) + L.stW / 2} ${r1y} L${sideX} ${r1y} L${sideX} ${yCol} L${gapX} ${yCol}`,
                   'p-hub-out-r', { delay: outRDelay });
-      s += flPipe(`M${colCx(2)} ${row1Bottom} L${colCx(2)} ${yCol} L${gapX} ${yCol}`,
+      s += flPipe(`M${colCx(2) + L.stW / 2} ${rNy} L${sideX2} ${rNy} L${sideX2} ${yCol} L${sideX} ${yCol}`,
                   'p-hub-out-l', { delay: outLDelay });
       s += flPipe(`M${gapX} ${yCol} L${railX + 6.5} ${yCol}`, 'p-mg2',
                   { delay: outLDelay + fillDur(8) * 0.8 });
@@ -492,6 +508,13 @@ function applyFlowStates(data) {
       setP('p-hub-r1-in', gatedStep(sts[3]));
       setP('p-hub-r1-1', gatedStep(sts[4]));
       setP('p-hub-r1-2', gatedStep(sts[5]));
+      for (let r = 0; r < 2; r++) {
+        g.rows[r].forEach((txt, j) => {
+          const cp = gatedStep(sts[r * 3 + j]);
+          setP(`p-hub-r${r}-${j}-t`, cp);
+          setP(`p-hub-r${r}-${j}-b`, cp);
+        });
+      }
       setP('p-hub-out-r', gatedStep(sts[2]));
       setP('p-hub-out-l', gatedStep(sts[5]));
       setP('p-mg2', gatedStep(sts[5]));
