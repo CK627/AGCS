@@ -294,17 +294,17 @@ function buildFlowSvg() {
                       `p-hub-r${r}-${j}`, { delay: base + (j - 1) * 0.12 });
         }
       });
-      // 合并回路：两行都在最右列排出；第一行先折进列缝下到收集管，
-      // 第二行直排到收集管后往左汇合，再一起流回主管道。
+      // 合并回路：架设平台（第一行最右列）从右侧出管、沿右侧向下、底部往左接上流出；
+      // 部署软件（第二行最右列）从列底排出，两路汇合后一起流回主管道。
       const row0Bottom = rowsY + g.boxH;
       const row1Top = row0Bottom + L.rowGap;
       const row1Bottom = row1Top + g.boxH;
-      const gapY = row0Bottom + 8;                                   // 两行之间的中缝
       const yCol = row1Bottom + 8;                                   // 底部收集管高度
       const gapX = colCx(1) + L.stW / 2 + L.stGap / 2;               // 第二行 col1/col2 之间的缝
       const outRDelay = r0Seg + 0.12 + segDur * 0.8;
       const outLDelay = r1Seg + 0.12 + segDur * 0.8;
-      s += flPipe(`M${colCx(2)} ${row0Bottom} L${colCx(2)} ${gapY} L${gapX} ${gapY} L${gapX} ${yCol}`,
+      const sideX = colCx(2) + L.stW / 2 + 14;                       // 右侧竖管（贴着两列右侧下行）
+      s += flPipe(`M${colCx(2) + L.stW / 2} ${r1y} L${sideX} ${r1y} L${sideX} ${yCol} L${colCx(2)} ${yCol}`,
                   'p-hub-out-r', { delay: outRDelay });
       s += flPipe(`M${colCx(2)} ${row1Bottom} L${colCx(2)} ${yCol} L${gapX} ${yCol}`,
                   'p-hub-out-l', { delay: outLDelay });
