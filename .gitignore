@@ -44,3 +44,17 @@ dist/
 node_modules/
 .venv/
 venv/
+
+# 仪表盘运行时产物（启动脚本每次运行都会重新生成，不是源码）
+server.pid
+server.port
+progress.pid
+progress.port
+GroundStation/Dashboard/logs/
+
+# 中枢仪表盘本地配置（含服务器 SSH 密码等敏感信息，不入库）
+GroundStation/Dashboard/data/config.yaml
+
+# 进度/清单运行时状态（后端自动读写，缺失时用默认值重建）
+GroundStation/Dashboard/data/progress.json
+GroundStation/Dashboard/data/checklist.json

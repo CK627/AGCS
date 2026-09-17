@@ -1,185 +1,224 @@
 @echo off
-chcp 65001 >nul 2>&1
 setlocal enabledelayedexpansion
 
-REM 地面站仪表盘 管理入口 (Windows)
+REM Ground station manager (Windows): hub dashboard + progress flowchart
 
 set "SCRIPT_DIR=%~dp0"
 set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
 for %%i in ("%SCRIPT_DIR%\..\..") do set "PROJECT_DIR=%%~fi"
+
+set "DEFAULT_PORT=20000"
+set "DEFAULT_PPORT=20010"
 
 if "%~1"=="" goto :do_start
 if "%~1"=="start" goto :do_start
 if "%~1"=="stop" goto :do_stop
 if "%~1"=="restart" goto :do_restart
 if "%~1"=="status" goto :do_status
+if "%~1"=="setup" goto :do_setup
 if "%~1"=="install" goto :do_install
 if "%~1"=="update" goto :do_update
 if "%~1"=="uninstall" goto :do_uninstall
 if "%~1"=="help" goto :do_help
 
-echo 未知命令: %~1
+echo Unknown command: %~1
 goto :do_help
 
 REM ============================================
-REM 启动
+REM Start both services (silent, runs via pythonw)
 REM ============================================
 :do_start
 set "PORT=%~2"
-if "%PORT%"=="" set "PORT=20001"
+if "%PORT%"=="" set "PORT=%DEFAULT_PORT%"
+set "PPORT=%~3"
+if "%PPORT%"=="" set "PPORT=%DEFAULT_PPORT%"
 
-echo === 地面站仪表盘 启动 (端口: %PORT%) ===
+echo === Ground station start (hub: %PORT%, progress: %PPORT%) ===
 
-tasklist /FI "WINDOWTITLE eq 地面站仪表盘" 2>nul | find "python.exe" >nul
-if !errorlevel! equ 0 (
-    echo 服务已在运行中
-    goto :eof
-)
-
-cd /d "%PROJECT_DIR%\backend"
 if not exist "%PROJECT_DIR%\data" mkdir "%PROJECT_DIR%\data"
 if not exist "%PROJECT_DIR%\logs" mkdir "%PROJECT_DIR%\logs"
 
-start "地面站仪表盘" python app.py --port %PORT%
-echo 服务已启动
-echo %PORT%> "%PROJECT_DIR%\data\server.port"
-echo 访问: http://localhost:%PORT%
+REM ---- hub ----
+netstat -ano 2>nul | findstr "LISTENING" | findstr ":%PORT% " >nul
+if !errorlevel! equ 0 (
+    echo Hub already running on port %PORT%.
+) else (
+    set PYTHONIOENCODING=utf-8
+    cd /d "%PROJECT_DIR%\backend"
+    start "" pythonw app.py --port %PORT%
+    echo %PORT%> "%PROJECT_DIR%\data\server.port"
+    echo Hub started. Logs: %PROJECT_DIR%\logs\nohup.log
+)
+
+REM ---- progress flowchart (own port) ----
+netstat -ano 2>nul | findstr "LISTENING" | findstr ":%PPORT% " >nul
+if !errorlevel! equ 0 (
+    echo Progress page already running on port %PPORT%.
+) else (
+    set PYTHONIOENCODING=utf-8
+    cd /d "%PROJECT_DIR%\progress"
+    start "" pythonw app.py --port %PPORT% --hub http://127.0.0.1:%PORT%
+    echo %PPORT%> "%PROJECT_DIR%\data\progress.port"
+    echo Progress page started. Logs: %PROJECT_DIR%\logs\progress.log
+)
+
+echo.
+echo Hub      : http://127.0.0.1:%PORT%
+echo Progress : http://127.0.0.1:%PPORT%
 goto :eof
 
 REM ============================================
-REM 停止
+REM Stop both (kill by port; pythonw has no window title)
 REM ============================================
 :do_stop
-echo === 地面站仪表盘 停止 ===
-taskkill /FI "WINDOWTITLE eq 地面站仪表盘" /T >nul 2>&1
-del /q "%PROJECT_DIR%\data\server.port" 2>nul
-echo 已停止
+echo === Ground station stop ===
+call :kill_by_port
+del "%PROJECT_DIR%\data\server.pid" 2>nul
+del "%PROJECT_DIR%\data\server.port" 2>nul
+del "%PROJECT_DIR%\data\progress.pid" 2>nul
+del "%PROJECT_DIR%\data\progress.port" 2>nul
+echo Stopped.
 goto :eof
 
 REM ============================================
-REM 重启
+REM Restart both
 REM ============================================
 :do_restart
-echo === 地面站仪表盘 重启 ===
-taskkill /FI "WINDOWTITLE eq 地面站仪表盘" /T >nul 2>&1
+echo === Ground station restart ===
+call :kill_by_port
 timeout /t 1 /nobreak >nul
 set "PORT=%~2"
-if "%PORT%"=="" set "PORT=20001"
+if "%PORT%"=="" set "PORT=%DEFAULT_PORT%"
+set "PPORT=%~3"
+if "%PPORT%"=="" set "PPORT=%DEFAULT_PPORT%"
 goto :do_start
 
 REM ============================================
-REM 状态
+REM Status (both ports)
 REM ============================================
 :do_status
-echo === 地面站仪表盘 状态 ===
-tasklist /FI "WINDOWTITLE eq 地面站仪表盘" 2>nul | find "python.exe" >nul
+echo === Ground station status ===
+set "PORT=%DEFAULT_PORT%"
+if exist "%PROJECT_DIR%\data\server.port" set /p PORT=<"%PROJECT_DIR%\data\server.port"
+set "PPORT=%DEFAULT_PPORT%"
+if exist "%PROJECT_DIR%\data\progress.port" set /p PPORT=<"%PROJECT_DIR%\data\progress.port"
+
+netstat -ano 2>nul | findstr "LISTENING" | findstr ":%PORT% " >nul
 if !errorlevel! equ 0 (
-    echo 状态: 运行中
-    set "PORT=20001"
-    if exist "%PROJECT_DIR%\data\server.port" set /p PORT=<"%PROJECT_DIR%\data\server.port"
-    echo 访问: http://localhost:!PORT!
+    echo Hub      : running  http://127.0.0.1:%PORT%
 ) else (
-    echo 状态: 未运行
+    echo Hub      : not running
+)
+
+netstat -ano 2>nul | findstr "LISTENING" | findstr ":%PPORT% " >nul
+if !errorlevel! equ 0 (
+    echo Progress : running  http://127.0.0.1:%PPORT%
+) else (
+    echo Progress : not running
 )
 goto :eof
 
 REM ============================================
-REM 安装
+REM Setup (install dependencies for both)
+REM ============================================
+:do_setup
+echo === Ground station setup ===
+cd /d "%PROJECT_DIR%\backend"
+python -m pip install -r requirements.txt
+cd /d "%PROJECT_DIR%\progress"
+python -m pip install -r requirements.txt
+pause
+goto :eof
+
+REM ============================================
+REM Install (check environment)
 REM ============================================
 :do_install
-echo ========================================
-echo   地面站仪表盘 环境安装 (Windows)
-echo ========================================
+echo === Ground station environment check ===
+where python >nul 2>&1
+if !errorlevel! neq 0 (
+    echo Python not found. Please install Python 3.8+ and add it to PATH.
+    pause
+    goto :eof
+)
+python --version
 echo.
-
-echo [1/1] 安装 Python 依赖...
-cd /d "%PROJECT_DIR%\backend"
-pip install -r requirements.txt
-cd /d "%PROJECT_DIR%"
-echo.
-
-echo ========================================
-echo   安装完成！
-echo ========================================
-echo.
-echo 启动: scripts\Windows\start.bat start
+echo Run "start.bat setup" to install dependencies.
 pause
 goto :eof
 
 REM ============================================
-REM 更新
+REM Update (git pull + deps)
 REM ============================================
 :do_update
-echo === 地面站仪表盘 更新 ===
-
-echo [1/3] 停止服务...
-taskkill /FI "WINDOWTITLE eq 地面站仪表盘" /T >nul 2>&1
-
-echo [2/3] 拉取最新代码...
+echo === Ground station update ===
+echo [1/3] Stopping...
+call :kill_by_port
+echo [2/3] Pulling latest code...
 cd /d "%PROJECT_DIR%"
-git pull origin main
-if !errorlevel! neq 0 echo 拉取失败 && goto :eof
-
-echo [3/3] 更新依赖...
-pip install -r "%PROJECT_DIR%\backend\requirements.txt" -q
-
+git pull origin ground-station
+if !errorlevel! neq 0 echo Pull failed && goto :eof
+echo [3/3] Updating dependencies...
+cd /d "%PROJECT_DIR%\backend"
+python -m pip install -r requirements.txt -q
+cd /d "%PROJECT_DIR%\progress"
+python -m pip install -r requirements.txt -q
 echo.
-echo 更新完成！重新启动: scripts\Windows\start.bat start
+echo Updated. Restart with: start.bat start
 goto :eof
 
 REM ============================================
-REM 卸载
+REM Uninstall (remove runtime data only)
 REM ============================================
 :do_uninstall
-echo ========================================
-echo   地面站仪表盘 卸载 (Windows)
-echo ========================================
-echo.
-
-echo [1/3] 停止服务...
-taskkill /FI "WINDOWTITLE eq 地面站仪表盘" /T >nul 2>&1
-echo.
-
-echo [2/3] 清理运行时数据...
+echo === Ground station uninstall ===
+call :kill_by_port
 if exist "%PROJECT_DIR%\data" rmdir /s /q "%PROJECT_DIR%\data"
 if exist "%PROJECT_DIR%\logs" rmdir /s /q "%PROJECT_DIR%\logs"
-echo 完成
-echo.
-
-set /p "CONFIRM=[3/3] 卸载 Python 依赖? (y/N) "
-if /i "%CONFIRM%"=="y" (
-    pip uninstall -y flask waitress requests pymavlink opencv-python numpy 2>nul
-    echo 依赖已卸载
-) else (
-    echo 跳过
-)
-
-echo.
-echo 卸载完成
+echo Removed runtime data (data/ and logs/). Code is kept.
 pause
 goto :eof
 
 REM ============================================
-REM 帮助
+REM Kill by port (hub + progress)
+REM ============================================
+:kill_by_port
+set "KP_PORT=%DEFAULT_PORT%"
+if exist "%PROJECT_DIR%\data\server.port" set /p KP_PORT=<"%PROJECT_DIR%\data\server.port"
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr "LISTENING" ^| findstr ":%KP_PORT% " 2^>nul') do (
+    taskkill /PID %%a /T /F >nul 2>&1
+)
+set "KP_PPORT=%DEFAULT_PPORT%"
+if exist "%PROJECT_DIR%\data\progress.port" set /p KP_PPORT=<"%PROJECT_DIR%\data\progress.port"
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr "LISTENING" ^| findstr ":%KP_PPORT% " 2^>nul') do (
+    taskkill /PID %%a /T /F >nul 2>&1
+)
+goto :eof
+
+REM ============================================
+REM Help
 REM ============================================
 :do_help
-echo 地面站仪表盘 管理脚本 (Windows)
+echo Ground station manager (Windows)
+echo Manages 2 services together: hub dashboard + progress flowchart
 echo.
-echo 用法:  start.bat [命令] [参数]
+echo Usage: start.bat [command] [args]
 echo.
-echo 命令:
-echo   start [端口]   启动服务（默认端口 20001）
-echo   stop           停止服务
-echo   restart [端口] 重启服务
-echo   status         查看运行状态
-echo   install        环境安装（Python 依赖）
-echo   update         更新到最新版本
-echo   uninstall      卸载
-echo   help           帮助
+echo Commands:
+echo   start [hub_port] [progress_port]   Start both (default %DEFAULT_PORT% / %DEFAULT_PPORT%)
+echo   stop                               Stop both
+echo   restart [hub_port] [progress_port] Restart both
+echo   status                             Show status of both
+echo   setup                              Install dependencies
+echo   install                            Check environment
+echo   update                             Update to latest version
+echo   uninstall                          Remove runtime data
+echo   help                               Show this help
 echo.
-echo 示例:
-echo   start.bat                   启动（默认端口 20001）
-echo   start.bat start 8080        启动并指定端口 8080
-echo   start.bat restart           重启服务
-echo   start.bat stop              停止服务
+echo Examples:
+echo   start.bat                          Start (default ports)
+echo   start.bat start 8080 8081          Hub on 8080, progress on 8081
+echo   start.bat restart                  Restart both
+echo   start.bat stop                     Stop both
+echo   start.bat setup                    Install dependencies
 goto :eof

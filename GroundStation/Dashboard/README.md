@@ -11,4 +11,4 @@
 bash GroundStation/Dashboard/scripts/macOS/start.sh
 ```
 
-浏览器打开 http://localhost:20001。
+浏览器打开 http://localhost:20000。

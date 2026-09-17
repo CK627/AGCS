@@ -3,30 +3,323 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>地面站中枢</title>
+<title>芯联智控-地面站中枢</title>
+<link rel="icon" type="image/png" href="/images/favicon.png">
 <link rel="stylesheet" href="/common.css">
+<style>
+  .header { position: relative; text-align: center; margin-bottom: 8px; }
+  .header .brand { position: absolute; left: 0; top: 50%; transform: translateY(-50%); display: flex; align-items: center; gap: 10px; white-space: nowrap; }
+  .header .brand .logo { height: 40px; }
+  .header .brand .comp { font-size: 15px; color: #e2e8f0; }
+  .header h1 { margin: 0; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 14px; margin-left: 8px; }
+
+  .cfgbtn { position: absolute; right: 0; top: 50%; transform: translateY(-50%); background: #334155; color: #e2e8f0; border: 0; border-radius: 6px; padding: 5px 12px; font-size: 14px; cursor: pointer; }
+  /* 右上角按钮组：进度流程图（独立端口的新页面） + 配置 */
+  .hdr-acts { position: absolute; right: 0; top: 50%; transform: translateY(-50%); display: flex; gap: 8px; }
+  .hdrbtn { background: #334155; color: #e2e8f0; border: 0; border-radius: 6px; padding: 5px 12px; font-size: 14px; cursor: pointer; text-decoration: none; display: inline-block; white-space: nowrap; }
+  .hdrbtn:hover { background: #475569; }
+  .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; z-index: 999; display: none; }
+  .modal.show { display: flex; }
+  .modal-box { background: #1e293b; border-radius: 10px; padding: 16px; width: 980px; max-width: 94vw; }
+  .modal-head { display: flex; align-items: center; margin-bottom: 10px; }
+  .modal-head h2 { flex: 1; margin: 0; font-size: 15px; color: #94a3b8; font-weight: 400; }
+  .modal-x { background: #334155; color: #e2e8f0; border: 0; border-radius: 6px; width: 28px; height: 28px; cursor: pointer; }
+  /* 配置表单：按模块分组，每组一"列"（字段竖排：标签在上、控件在下），两列并排 */
+  .modal-box #configForm {
+    max-height: 620px; overflow-y: auto;
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px; align-items: start;
+  }
+  @media (max-width: 880px) { .modal-box #configForm { grid-template-columns: 1fr; } }
+  .cfg-group { background: #0b1220; border-radius: 8px; padding: 10px 12px; }
+  .cfg-group > h3 {
+    font-size: 13px; font-weight: 400; color: #93c5fd;
+    margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid #1e293b;
+  }
+  .cfg-group > h3 span { color: #475569; font-size: 12px; margin-left: 6px; }
+  .field { display: flex; flex-direction: column; align-items: stretch; gap: 4px; margin-bottom: 8px; }
+  .field:last-child { margin-bottom: 0; }
+  .field > label { font-size: 12px; color: #94a3b8; }
+  .field > input, .field > select {
+    flex: 0 0 auto; width: 100%;
+    background: #111c30; color: #e2e8f0; border: 1px solid #334155;
+    border-radius: 6px; padding: 6px 8px; font-size: 14px;
+  }
+  /* 开关类字段：标签与勾选框同一行，省高度 */
+  .field.check { flex-direction: row; align-items: center; gap: 8px; }
+  .field.check > label { flex: 1; }
+  .field.check > input[type="checkbox"] { flex: 0 0 auto; width: 16px; height: 16px; }
+  .modal-foot { display: flex; align-items: center; margin-top: 10px; gap: 10px; }
+  .modal-foot #configMsg { flex: 1; font-size: 13px; color: #94a3b8; }
+  .modal-foot #configSave { background: #2563eb; color: #fff; border: 0; border-radius: 6px; padding: 6px 16px; cursor: pointer; }
+
+  /* ==================== 任务清单弹窗 ==================== */
+  .modal-box #checkList {
+    height: min(62vh, 620px);          /* 固定高度：切阶段时弹窗不再忽高忽低 */
+    overflow-y: auto; overscroll-behavior: contain;
+  }
+  .modal-box #checkList::-webkit-scrollbar { width: 8px; }
+  .modal-box #checkList::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+  .modal-box #checkList::-webkit-scrollbar-track { background: transparent; }
+  .modal.show .modal-box { animation: modalIn .3s cubic-bezier(.22, 1, .36, 1); }
+  @keyframes modalIn { from { opacity: 0; transform: translateY(18px) scale(.985); } to { opacity: 1; transform: none; } }
+  .chk-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  @media (max-width: 880px) { .chk-grid { grid-template-columns: 1fr; } }
+  .chk-group { background: #0b1220; border-radius: 8px; padding: 10px 12px; }
+  .chk-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 13px; color: #94a3b8; }
+  .chk-head .pct { margin-left: auto; font-size: 12px; color: #22d3ee; }
+  .chk-item { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 6px; cursor: pointer; }
+  .chk-item:hover { background: #16233b; }
+  .chk-item input { width: 15px; height: 15px; flex: 0 0 auto; accent-color: #22c55e; cursor: pointer; margin: 0; }
+  .chk-item .nm { font-size: 13px; color: #cbd5e1; }
+  .chk-item .st { margin-left: auto; font-size: 11px; color: #475569; white-space: nowrap; }
+  .chk-item.done .nm { color: #86efac; }
+  .chk-item.done .st { color: #22c55e; }
+  .chk-item.active { background: #0b2f3d; }
+  .chk-item.active .nm { color: #a5f3fc; font-weight: 600; }
+  .chk-item.active .st { color: #22d3ee; }
+  .chk-sum { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .chk-sum .bar { flex: 1; height: 6px; background: #1e293b; border-radius: 999px; overflow: hidden; }
+  .chk-sum .bar > i {
+    display: block; height: 100%; width: 0; border-radius: 999px;
+    background: linear-gradient(90deg, #16a34a, #22c55e);
+    transition: width .7s cubic-bezier(.22, 1, .36, 1);   /* 进度条平滑生长，不再一下跳满 */
+  }
+
+  /* ---- 左侧阶段选择（全部 / 第一阶段 / 第二阶段） ---- */
+  .chk-body { display: flex; gap: 10px; align-items: flex-start; }
+  .chk-nav { flex: 0 0 132px; display: flex; flex-direction: column; gap: 6px; }
+  .chk-nav button {
+    text-align: left; background: #0b1220; color: #94a3b8; border: 1px solid transparent;
+    border-radius: 8px; padding: 10px 12px; font-size: 13px; cursor: pointer;
+    display: flex; align-items: center; justify-content: space-between; gap: 6px;
+    transition: background .2s, color .2s, border-color .2s;
+  }
+  .chk-nav button:hover { background: #16233b; color: #e2e8f0; }
+  .chk-nav button.on { background: #172554; color: #dbeafe; border-color: #3b82f6; font-weight: 600; }
+  .chk-nav .cnt { font-size: 11px; color: #64748b; font-weight: 400; }
+  .chk-nav button.on .cnt { color: #93c5fd; }
+  .chk-body .chk-grid { flex: 1; min-width: 0; }
+  .chk-group.hide { display: none; }
+  .chk-group { animation: chkIn .4s ease both; animation-delay: calc(var(--i, 0) * 70ms); }  /* 逐组渐入 */
+  @keyframes chkIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  @keyframes chkPop { 0% { transform: scale(1); } 45% { transform: scale(1.45); } 100% { transform: scale(1); } }
+  .chk-item.pop input { animation: chkPop .4s ease; }    /* 刚勾上的框弹一下 */
+  .modal-foot .btn-ghost { background: #334155; color: #e2e8f0; border: 0; border-radius: 6px; padding: 6px 14px; font-size: 13px; cursor: pointer; }
+  .modal-foot .btn-ghost:hover { background: #475569; }
+
+  /* 服务器信息面板 */
+  /* 面板基准高度：服务器信息多，撑高这一行，同行右侧的 YOLO 画面也会跟着变大（画面框是 flex 自适应）。
+     想让 YOLO 画面再大/再小，只改这一行即可。 */
+  #serverPanel { min-height: 540px; }
+  .srv-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+  .srv-grid + .srv-grid { margin-top: 10px; }
+  .srv-card { background: #0b1220; border-radius: 8px; padding: 8px 10px; }
+  .srv-card h3 { font-size: 12px; color: #94a3b8; font-weight: 400; margin-bottom: 2px; }
+  .srv-card .srv-v { font-size: 20px; font-weight: 600; }
+  .srv-card .srv-s { font-size: 12px; color: #94a3b8; margin-top: 2px; }
+  .srv-mini .srv-card .srv-v { font-size: 17px; }
+  .srv-bar { background: #1e293b; border-radius: 999px; height: 6px; overflow: hidden; margin-top: 6px; }
+  .srv-fill { background: #22c55e; height: 100%; width: 0%; border-radius: 999px; transition: width 0.3s; }
+  .srv-fill.warn { background: #f59e0b; }
+  .srv-fill.bad { background: #ef4444; }
+  /* 两列详情行：标签左、数值右 */
+  .srv-rows { display: grid; grid-template-columns: 1fr 1fr; gap: 0 20px; margin-top: 10px; }
+  .srv-row {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+    font-size: 13px; color: #94a3b8; padding: 5px 0; border-bottom: 1px dashed #24334a;
+  }
+  .srv-row b { color: #e2e8f0; font-weight: 400; text-align: right; word-break: break-all; }
+  .srv-msg { font-size: 13px; color: #64748b; margin-top: 8px; }
+
+  /* 无人机面板：两台左右并列；每台内部 = 画面 → 9 张数据卡片 → 2 条曲线。
+     数据卡片沿用无人机仪表盘（Dron/Dashboard）的 .card 版式：
+     信息以"卡片"呈现，与其它面板用 chip 小标签的方式区分开，两边看同一套字段。 */
+  .drone-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  @media (max-width: 1100px) { .drone-grid { grid-template-columns: 1fr; } }
+  .drone-cell { background: #0b1220; border-radius: 8px; padding: 8px; }
+  .drone-cell-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .drone-cell-head h3 { flex: 1; margin: 0; font-size: 15px; font-weight: 400; color: #94a3b8; }
+  .drone-cell-head .ok, .drone-cell-head .bad { padding: 2px 8px; border-radius: 999px; font-size: 12px; }
+  .drone-cell .videoBox { height: 200px; border-radius: 6px; }
+  .drone-cell .grid { grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
+  .drone-cell .card { background: #1e293b; border-radius: 8px; padding: 8px 10px; }
+  .drone-cell .card h2 { font-size: 12px; color: #94a3b8; font-weight: 400; margin-bottom: 0; }
+  .drone-cell .card .v { font-size: 15px; font-weight: 600; margin-top: 2px; overflow-wrap: break-word; }
+  .drone-cell .card .v.txt { font-size: 13px; font-weight: 400; }
+  .drone-cell .card .s { font-size: 12px; color: #94a3b8; }
+  .drone-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+  .drone-charts canvas { height: 112px; margin-top: 0; }
+  @media (max-width: 1500px) { .drone-charts { grid-template-columns: 1fr; } }
+  .drone-placeholder { color: #64748b; font-size: 13px; padding: 16px; text-align: center; grid-column: 1 / -1; }
+  .drone-placeholder b { color: #94a3b8; font-weight: 400; }
+
+  #serverPanel:fullscreen, #dronePanel:fullscreen { background: #0f172a; width: 100vw; height: 100vh; overflow: auto; padding: 16px; }
+  /* 无人机面板全屏特殊处理：画面与曲线放大，卡片随之放大 */
+  #dronePanel:fullscreen .drone-cell .videoBox { height: 52vh; }
+  #dronePanel:fullscreen .drone-cell-head h3 { font-size: 18px; }
+  #dronePanel:fullscreen .drone-cell .card .v { font-size: 20px; }
+  #dronePanel:fullscreen .drone-charts { grid-template-columns: 1fr 1fr; }
+  #dronePanel:fullscreen .drone-charts canvas { height: 20vh; }
+
+  /* ==================== 画面填充 ====================
+     画面框高度保持固定（布局尺寸不变）。
+     - 非全屏：画面按框的比例铺满整个框（把多余边缘裁掉），两侧/上下不留黑边；
+     - 全屏  ：改为完整显示（不裁切），按屏幕比例尽可能放大。
+     注意：原先写死高度的 ID 选择器优先级高于 .videoBox:fullscreen（1,0,0 > 0,2,0），
+     会把全屏的 height:100vh 压掉，导致全屏时框还是 300px —— 下面用 !important 兜住。 */
+  #yoloVideoBox, #robotVideoBox { flex: 1 1 300px; min-height: 300px; height: auto; }
+  .videoBox:fullscreen { height: 100vh !important; width: 100vw !important; }
+  /* 全屏时把画面铺满屏幕：max-width 只是上限、不会放大，必须给 width/height 100% 才会撑满 */
+  .videoBox:fullscreen img { width: 100%; height: 100%; object-fit: contain; }
+  /* 非全屏时铺满画面框（用 :not(:fullscreen) 限定，避免和上面的全屏规则抢） */
+  #yoloVideoBox:not(:fullscreen) img,
+  #robotVideoBox:not(:fullscreen) img,
+  .drone-cell .videoBox:not(:fullscreen) img { object-fit: cover; }
+
+  /* 面板之间保持等高对齐（同行两栏一样高）；同时让"画面 / 卡片"把面板内部撑满，
+     这样既不会一高一低，也不会在面板里留一大块空白。 */
+  #serverPanel, #yoloPanel, #robotPanel { display: flex; flex-direction: column; }
+  #serverPanel > .titlebar,
+  #yoloPanel > .titlebar,
+  #robotPanel > .titlebar { flex: 0 0 auto; }
+  #serverPanel .srv-grid { flex: 1 1 auto; }
+  #serverPanel .srv-card { display: flex; flex-direction: column; justify-content: center; }
+
+</style>
 </head>
 <body>
-  <h1>地面站中枢（空地协同） <span id="status" class="bad">机器人未连接</span></h1>
-  <div class="hint">无人机 + 地面机器人 + YOLO 统一视图：机器人画面回传 / 实时参数，无人机 SDK 数据 / 图传检测。</div>
+  <div class="header">
+    <div class="brand">
+      <img src="/images/logo.png" class="logo" alt="logo">
+      <span class="comp">2026年世界职业院校技能大赛</span>
+    </div>
+    <h1>芯联智控-地面站中枢
+      <span id="srvStatus" class="badge bad">服务器未连接</span>
+      <span id="dStatus" class="badge bad">无人机未连接</span>
+      <span id="rStatus" class="badge bad">机器人未连接</span>
+      <span id="yStatus" class="badge bad">YOLO模型未加载</span>
+    </h1>
+    <div class="hdr-acts">
+      <button id="checkBtn" class="hdrbtn" title="任务清单：勾选即推进对应步骤的进度">任务清单</button>
+      <a class="hdrbtn" href="{{ progress_url }}" target="_blank" title="研发进度流程图（独立端口）">进度流程</a>
+      <button id="configBtn" class="hdrbtn">⚙ 配置</button>
+    </div>
+  </div>
+  <div class="hint">服务器 + 无人机（两台画面 + 数据卡片 + 曲线） + 机器人 + YOLO 统一视图。</div>
 
-  <!-- ==================== 最上方：无人机 · YOLO 模型状态 ==================== -->
-  <div class="box">
-    <h2>🧠 无人机 · YOLO 模型状态</h2>
-    <div class="grid">
-      <div class="card"><h2>模型</h2><div class="v txt" id="modelName">-</div><div class="s">weights 文件</div></div>
-      <div class="card"><h2>加载状态</h2><div class="v" id="modelLoaded">-</div><div class="s" id="modelMsg"></div></div>
-      <div class="card"><h2>置信度阈值</h2><div class="v" id="modelConf">-</div><div class="s">conf</div></div>
-      <div class="card"><h2>推理 FPS</h2><div class="v" id="modelFps">-</div><div class="s">地面站推理</div></div>
-      <div class="card"><h2>累计检测</h2><div class="v" id="modelTotal">-</div><div class="s">总计目标数</div></div>
-      <div class="card"><h2>各类别计数</h2><div class="v txt" id="modelCounts">-</div><div class="s">class=count</div></div>
-      <div class="card"><h2>最近检测</h2><div class="v txt" id="modelLast">-</div><div class="s">最新若干个目标</div></div>
+  <!-- ==================== 第一行：服务器信息（左）+ YOLO 模型检测流（右） ==================== -->
+  <div class="wrap" id="rowTop">
+    <div class="box" id="serverPanel">
+      <div class="titlebar">
+        <h2>🖧 服务器信息</h2>
+        <span class="chip" id="sOnline">连接 -</span>
+        <span class="chip">名称 <b id="sName">-</b></span>
+        <span class="chip">方式 <b id="sMode">-</b></span>
+        <span class="chip">延迟 <b id="sLatency">-</b></span>
+        <span class="chip">运行 <b id="sUptime">-</b></span>
+        <span class="chip">主机 <b id="sHost">-</b></span>
+        <button class="fsbtn" data-fs="serverPanel">⛶ 全屏</button>
+      </div>
+
+      <!-- 第 1 组：带进度条的占用率卡片 -->
+      <div class="srv-grid">
+        <div class="srv-card">
+          <h3>CPU 使用率</h3>
+          <div class="srv-v" id="sCpu">-</div>
+          <div class="srv-bar"><div class="srv-fill" id="sCpuBar"></div></div>
+          <div class="srv-s" id="sCpuSub">-</div>
+        </div>
+        <div class="srv-card">
+          <h3>内存</h3>
+          <div class="srv-v" id="sMem">-</div>
+          <div class="srv-bar"><div class="srv-fill" id="sMemBar"></div></div>
+          <div class="srv-s" id="sMemSub">-</div>
+        </div>
+        <div class="srv-card">
+          <h3>磁盘</h3>
+          <div class="srv-v" id="sDisk">-</div>
+          <div class="srv-bar"><div class="srv-fill" id="sDiskBar"></div></div>
+          <div class="srv-s" id="sDiskSub">-</div>
+        </div>
+        <div class="srv-card">
+          <h3>交换分区</h3>
+          <div class="srv-v" id="sSwap">-</div>
+          <div class="srv-bar"><div class="srv-fill" id="sSwapBar"></div></div>
+          <div class="srv-s" id="sSwapSub">-</div>
+        </div>
+      </div>
+
+      <!-- 第 2 组：纯数值卡片 -->
+      <div class="srv-grid srv-mini">
+        <div class="srv-card">
+          <h3>进程数</h3>
+          <div class="srv-v" id="sProc">-</div>
+          <div class="srv-s" id="sProcSub">个</div>
+        </div>
+        <div class="srv-card">
+          <h3>系统负载</h3>
+          <div class="srv-v" id="sLoad">-</div>
+          <div class="srv-s" id="sLoadSub">1 / 5 / 15 分钟</div>
+        </div>
+        <div class="srv-card">
+          <h3>网络速率</h3>
+          <div class="srv-v" id="sNetRate">-</div>
+          <div class="srv-s" id="sNetRateSub">↓ 收 / ↑ 发</div>
+        </div>
+        <div class="srv-card">
+          <h3>累计流量</h3>
+          <div class="srv-v" id="sNetTotal">-</div>
+          <div class="srv-s" id="sNetTotalSub">↓ 收 / ↑ 发</div>
+        </div>
+      </div>
+
+      <!-- 第 3 组：两列详情行 -->
+      <div class="srv-rows" id="srvRows"></div>
+
+      <div class="srv-msg" id="sMsg">-</div>
+    </div>
+
+    <div class="box" id="yoloPanel">
+      <div class="titlebar">
+        <h2>🧠 YOLO 模型检测流</h2>
+        <span class="chip">模型 <b id="modelName">-</b></span>
+        <span class="chip" id="modelLoaded">加载 -</span>
+        <span class="chip msg">消息 <b id="modelMsg">-</b></span>
+        <span class="chip">置信度 <b id="modelConf">-</b></span>
+        <span class="chip">FPS <b id="modelFps">-</b></span>
+        <span class="chip">累计 <b id="modelTotal">-</b></span>
+        <span class="chip">各类别 <b id="modelCounts">-</b></span>
+        <span class="chip msg">最近 <b id="modelLast">-</b></span>
+        <button class="fsbtn" data-fs="yoloVideoBox">⛶ 全屏</button>
+      </div>
+      <div class="videoBox" id="yoloVideoBox">
+        {% if yolo_video_enabled %}<!-- JS videoHeal() 自动挂图，断流 5 秒自愈 -->
+        {% else %}
+        <div class="offline">画面已关闭（data/config.yaml 的 yolo.video=false）</div>
+        {% endif %}
+      </div>
     </div>
   </div>
 
-  <!-- ==================== 下方分两栏：机器人 / 无人机 ==================== -->
-  <div class="wrap" style="margin-top:14px">
-    <div class="box">
+  <!-- ==================== 第二行：无人机（两台左右并列；每台 = 画面 + 9 张数据卡片 + 姿态/高度曲线） ==================== -->
+  <div class="wrap" id="rowBottom" style="margin-top:14px">
+    <div class="box" id="dronePanel">
+      <div class="titlebar">
+        <h2>📡 无人机</h2>
+        <span class="chip" id="dOnline">连接 -</span>
+        <span class="chip">台数 <b id="dCount">-</b></span>
+        <span class="chip">源 <b id="dSrc">-</b></span>
+        <span class="chip msg">消息 <b id="dNews">-</b></span>
+        <button class="fsbtn" data-fs="dronePanel">⛶ 全屏</button>
+      </div>
+      <div class="drone-grid" id="droneGrid">
+        <div class="drone-placeholder">等待无人机数据…</div>
+      </div>
+    </div>
+
+    <div class="box" id="robotPanel">
       <div class="titlebar">
         <h2>🕷 机器人（摄像头画面回传）</h2>
         <span class="chip" id="rOnline">连接 -</span>
@@ -46,33 +339,49 @@
         {% endif %}
       </div>
     </div>
+  </div>
 
-    <div class="box">
-      <div class="titlebar">
-        <h2>📡 无人机画面（YOLO 检测预览）</h2>
-        <span class="chip" id="dOnline">连接 -</span>
-        <span class="chip">源 <b id="dSrc">-</b></span>
-        <span class="chip">位置 <b id="dPos">-</b></span>
-        <span class="chip">偏航 <b id="dYaw">-</b></span>
-        <span class="chip">电压 <b id="dVolt">-</b></span>
-        <span class="chip">避障 <b id="dObs">-</b></span>
-        <span class="chip">按键 <b id="dKey">-</b></span>
-        <span class="chip msg">消息 <b id="dNews">-</b></span>
-        <button class="fsbtn" data-fs="droneVideoBox">⛶ 全屏</button>
+  <div id="configModal" class="modal">
+    <div class="modal-box">
+      <div class="modal-head">
+        <h2>配置（data/config.yaml）</h2>
+        <button id="configClose" class="modal-x">✕</button>
       </div>
-      <div class="videoBox" id="droneVideoBox">
-        {% if drone_video_enabled %}<!-- JS videoHeal() 自动挂图，断流 5 秒自愈 -->
-        {% else %}
-        <div class="offline">画面已关闭（data/config.yaml 的 drone.video=false）</div>
-        {% endif %}
+      <div id="configForm"></div>
+      <div class="modal-foot">
+        <span id="configMsg"></span>
+        <button id="configSave">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 任务清单：勾选即推进进度（数据同 /api/progress/flow） ==================== -->
+  <div id="checkModal" class="modal">
+    <div class="modal-box">
+      <div class="modal-head">
+        <h2>任务清单（勾选＝推进到该步；取消＝退回该步之前）</h2>
+        <button id="checkClose" class="modal-x">✕</button>
+      </div>
+      <div class="chk-sum">
+        <span class="chip">已完成 <b id="checkSum">-</b></span>
+        <div class="bar"><i id="checkBar"></i></div>
+        <span class="chip">总进度 <b id="checkPct">-</b></span>
+      </div>
+      <div id="checkList"><div class="chk-group">正在读取清单…</div></div>
+      <div class="modal-foot">
+        <span id="checkMsg"></span>
+        <button id="checkReset" class="btn-ghost">↺ 一键初始化</button>
       </div>
     </div>
   </div>
 
 <script>
-const statusEl = document.getElementById('status');
+const srvStatusEl = document.getElementById('srvStatus');
+const rStatusEl = document.getElementById('rStatus');
+const dStatusEl = document.getElementById('dStatus');
+const yStatusEl = document.getElementById('yStatus');
 
-// 全屏显示画面（机器人 / 无人机）
+// 全屏显示画面（YOLO / 无人机 / 机器人 / 服务器）
 document.querySelectorAll('.fsbtn').forEach(btn => {
   btn.onclick = () => {
     const box = document.getElementById(btn.dataset.fs);
@@ -92,6 +401,7 @@ document.addEventListener('fullscreenchange', () => {
 // MJPEG 画面自愈：挂 <img>，断流/被热关闭后 5 秒自动重试，恢复后画面自动回来
 function videoHeal(boxId, src) {
   const box = document.getElementById(boxId);
+  if (!box) return;
   const img = document.createElement('img');
   img.src = src + (src.includes('?') ? '&' : '?') + 't=' + Date.now();
   img.alt = '画面未连接';
@@ -102,18 +412,429 @@ function videoHeal(boxId, src) {
   box.innerHTML = '';
   box.appendChild(img);
 }
+{% if yolo_video_enabled %}videoHeal('yoloVideoBox', '/video.mjpeg');{% endif %}
 {% if robot_video_enabled %}videoHeal('robotVideoBox', '/robot_video_feed');{% endif %}
-{% if drone_video_enabled %}videoHeal('droneVideoBox', '/video.mjpeg');{% endif %}
+// 无人机的两路画面在 buildDroneCells() 里按实际台数挂载（拿到 /api/drone/status 后）
+const DRONE_VIDEO_ENABLED = {{ 'true' if drone_video_enabled else 'false' }};
 
-function setStatus(ok) {
-  statusEl.textContent = ok ? '机器人已连接' : '机器人未连接';
-  statusEl.className = ok ? 'ok' : 'bad';
+// ---------------- 顶部状态徽标 ----------------
+function setSrvStatus(ok) {
+  srvStatusEl.textContent = ok ? '服务器已连接' : '服务器未连接';
+  srvStatusEl.className = 'badge ' + (ok ? 'ok' : 'bad');
+}
+function setRobotStatus(ok) {
+  rStatusEl.textContent = ok ? '机器人已连接' : '机器人未连接';
+  rStatusEl.className = 'badge ' + (ok ? 'ok' : 'bad');
+}
+function setDroneStatus(ok) {
+  dStatusEl.textContent = ok ? '无人机已连接' : '无人机未连接';
+  dStatusEl.className = 'badge ' + (ok ? 'ok' : 'bad');
+}
+function setYoloStatus(loaded) {
+  yStatusEl.textContent = loaded ? 'YOLO模型已加载' : 'YOLO模型未加载';
+  yStatusEl.className = 'badge ' + (loaded ? 'ok' : 'bad');
 }
 
+function fmtDuration(sec) {
+  if (sec == null) return '-';
+  sec = Math.floor(sec);
+  const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  if (d > 0) return d + ' 天 ' + h + ' 小时';
+  if (h > 0) return h + ' 小时 ' + m + ' 分';
+  return m + ' 分';
+}
+
+// ---------------- 服务器信息 ----------------
+function setSrvCard(id, percent, sub) {
+  const v = document.getElementById(id);
+  const bar = document.getElementById(id + 'Bar');
+  const s = document.getElementById(id + 'Sub');
+  if (v) v.textContent = percent != null ? percent + '%' : '-';
+  if (bar) {
+    const p = percent != null ? Math.max(0, Math.min(100, percent)) : 0;
+    bar.style.width = p + '%';
+    bar.className = 'srv-fill' + (p >= 90 ? ' bad' : (p >= 75 ? ' warn' : ''));
+  }
+  if (s) s.textContent = sub || '-';
+}
+function setSrvText(id, text) {
+  const e = document.getElementById(id);
+  if (e) e.textContent = (text == null || text === '') ? '-' : text;
+}
+function pair(used, total, unit, digits) {
+  if (used == null || total == null) return '-';
+  const d = digits == null ? 0 : digits;
+  return Number(used).toFixed(d) + ' / ' + Number(total).toFixed(d) + ' ' + unit;
+}
+function sizeMb(mb) {                       // 累计流量：MB → 可读
+  if (mb == null) return '-';
+  return mb >= 1024 ? (mb / 1024).toFixed(2) + ' GB' : Number(mb).toFixed(1) + ' MB';
+}
+function speed(kbps) {                      // 实时速率：KB/s → 可读
+  if (kbps == null) return '-';
+  return kbps >= 1024 ? (kbps / 1024).toFixed(2) + ' MB/s' : Number(kbps).toFixed(1) + ' KB/s';
+}
+function fmtClock(ts) {
+  if (!ts) return '-';
+  const d = new Date(ts * 1000);
+  const p = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' '
+    + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+function cpuSubText(cpu) {
+  const parts = [];
+  if (cpu.count != null) {
+    parts.push(cpu.count + ' 核'
+      + (cpu.count_physical && cpu.count_physical !== cpu.count
+        ? '（物理 ' + cpu.count_physical + '）' : ''));
+  }
+  if (cpu.freq_mhz) parts.push((cpu.freq_mhz / 1000).toFixed(2) + ' GHz');
+  return parts.length ? parts.join('　') : '-';
+}
+// 两列详情行：标签左、数值右
+function renderSrvRows(s) {
+  const box = document.getElementById('srvRows');
+  if (!box) return;
+  const cpu = s.cpu || {}, mem = s.mem || {}, disk = s.disk || {}, net = s.net || {};
+  const gb = v => (v == null ? '-' : Number(v).toFixed(1) + ' GB');
+  const mb0 = v => (v == null ? '-' : Math.round(Number(v)) + ' MB');
+  const rows = [
+    ['主机名', s.host || '-'],
+    ['服务器时间', fmtClock(s.server_time)],
+    ['处理器', (s.cpu_name || '未知') + (cpu.freq_mhz ? '　' + (cpu.freq_mhz / 1000).toFixed(2) + ' GHz' : '')],
+    ['系统内核', s.platform || '-'],
+    ['机器运行时长', fmtDuration(s.uptime_sec)],
+    ['中枢已监控', fmtDuration(s.agent_uptime_sec)],
+    ['内存可用', mb0(mem.available_mb) + ' / 共 ' + mb0(mem.total_mb)],
+    ['磁盘可用', gb(disk.free_gb) + ' / 共 ' + gb(disk.total_gb)],
+    ['上次采集', fmtClock(s.checked_at)],
+    ['采集方式', s.mode === 'local' ? '本机采集' : (s.mode === 'http' ? 'HTTP 拉取' : '-')],
+    ['采集延迟', s.latency_ms != null ? s.latency_ms + ' ms'
+      : (s.mode === 'local' ? '—（本机）' : '-')],
+    ['服务器状态', s.online ? '在线' : '离线'],
+  ];
+  if (box.children.length !== rows.length) {
+    box.innerHTML = rows.map(() => '<div class="srv-row"><span></span><b></b></div>').join('');
+  }
+  rows.forEach((r, i) => {
+    const el = box.children[i];
+    if (!el) return;
+    el.children[0].textContent = r[0];
+    el.children[1].textContent = r[1];
+  });
+}
+
+async function refreshServer() {
+  try {
+    const s = await (await fetch('/api/server/status')).json();
+    setSrvStatus(s.online);
+    const on = document.getElementById('sOnline');
+    on.textContent = s.online ? '● 在线' : '● 离线';
+    on.className = 'chip ' + (s.online ? 'ok' : 'bad');
+    document.getElementById('sName').textContent = s.name || '-';
+    document.getElementById('sHost').textContent = s.host || '-';
+    document.getElementById('sMode').textContent =
+      s.mode === 'local' ? '本机采集' : (s.mode === 'http' ? 'HTTP 拉取' : '-');
+    document.getElementById('sLatency').textContent =
+      s.latency_ms != null ? s.latency_ms + ' ms' : (s.mode === 'local' ? '—（本机）' : '-');
+    document.getElementById('sUptime').textContent = fmtDuration(s.uptime_sec);
+
+    const cpu = s.cpu || {}, mem = s.mem || {}, disk = s.disk || {},
+          swap = s.swap || {}, net = s.net || {};
+
+    // 第 1 组：占用率（带进度条）
+    setSrvCard('sCpu', cpu.percent, cpuSubText(cpu));
+    setSrvCard('sMem', mem.percent, pair(mem.used_mb, mem.total_mb, 'MB', 0));
+    setSrvCard('sDisk', disk.percent, pair(disk.used_gb, disk.total_gb, 'GB', 1));
+    setSrvCard('sSwap', swap.percent, pair(swap.used_mb, swap.total_mb, 'MB', 0));
+
+    // 第 2 组：纯数值
+    setSrvText('sProc', s.proc_count != null ? s.proc_count : '-');
+    setSrvText('sProcSub', '个进程');
+    setSrvText('sLoad', cpu.load_avg ? cpu.load_avg.join(' / ') : '-');
+    setSrvText('sLoadSub', '1 / 5 / 15 分钟均值');
+    setSrvText('sNetRate', net.recv_kbps != null ? ('↓ ' + speed(net.recv_kbps)) : '-');
+    setSrvText('sNetRateSub', net.sent_kbps != null ? ('↑ ' + speed(net.sent_kbps)) : '↓ 收 / ↑ 发');
+    setSrvText('sNetTotal', net.recv_mb != null ? ('↓ ' + sizeMb(net.recv_mb)) : '-');
+    setSrvText('sNetTotalSub', net.sent_mb != null ? ('↑ ' + sizeMb(net.sent_mb)) : '↓ 收 / ↑ 发');
+
+    // 第 3 组：详情行
+    renderSrvRows(s);
+    setSrvText('sMsg', s.message || '-');
+  } catch (e) {
+    setSrvStatus(false);
+    const on = document.getElementById('sOnline');
+    on.textContent = '● 接口错误';
+    on.className = 'chip bad';
+  }
+}
+
+// ---------------- 无人机：两台左右并列，每台 = 画面 + 9 张数据卡片 + 姿态/高度曲线 ----------------
+// 卡片字段与无人机仪表盘（Dron/Dashboard）完全一致，两台各显示自己那台的数据。
+let droneCellsBuilt = -1;      // 已生成的台数（-1 表示还是占位）
+let dronePlaceholderMsg = null;
+
+function el(id, i) {
+  return document.getElementById(id + '_' + i);
+}
+const f0 = v => (v == null || isNaN(Number(v))) ? '-' : Number(v).toFixed(0);
+const f1 = v => (v == null || isNaN(Number(v))) ? '-' : Number(v).toFixed(1);
+const f2 = v => (v == null || isNaN(Number(v))) ? '-' : Number(v).toFixed(2);
+function setTxt(node, text) { if (node) node.textContent = text; }
+
+// 一台无人机的版式：标题 → 画面 → 9 张数据卡片 → 2 条曲线（与仪表盘同款，仅排布为上下）
+function droneCellHtml(i) {
+  return `
+    <div class="drone-cell">
+      <div class="drone-cell-head">
+        <h3>无人机 ${i + 1}</h3>
+        <span class="bad" id="st_${i}">未连接</span>
+        <button class="fsbtn" data-fs="droneVideoBox${i}">⛶ 全屏</button>
+      </div>
+      <div class="videoBox" id="droneVideoBox${i}">
+        ${DRONE_VIDEO_ENABLED
+          ? '<span class="offline">画面 ' + (i + 1) + '（图传未连接）</span>'
+          : '<span class="offline">画面已关闭（data/config.yaml 的 drone.video=false）</span>'}
+      </div>
+      <div class="grid">
+        <div class="card"><h2>数据源</h2><div class="v" id="src_${i}">-</div><div class="s" id="src2_${i}">-</div></div>
+        <div class="card"><h2>姿态 r/p/y</h2><div class="v" id="att_${i}">-</div><div class="s">单位：度</div></div>
+        <div class="card"><h2>位置 x/y/z</h2><div class="v" id="pos_${i}">-</div><div class="s" id="alt_${i}">高度 - m</div></div>
+        <div class="card"><h2>定位误差 x/y/z</h2><div class="v" id="errVal_${i}">-</div><div class="s">单位：cm</div></div>
+        <div class="card"><h2>电池</h2><div class="v" id="bat_${i}">-</div><div class="s">单位：伏</div></div>
+        <div class="card"><h2>避障 前/后/左/右</h2><div class="v" id="obs_${i}">-</div><div class="s">单位：cm</div></div>
+        <div class="card"><h2>遥控器按键</h2><div class="v" id="key_${i}">-</div><div class="s">是否按下</div></div>
+        <div class="card"><h2>计时器</h2><div class="v" id="timer_${i}">-</div><div class="s">单位：秒</div></div>
+        <div class="card"><h2>消息</h2><div class="v txt" id="news_${i}">-</div><div class="s" id="newsId_${i}">-</div></div>
+      </div>
+      <div class="drone-charts">
+        <canvas id="attChart_${i}"></canvas>
+        <canvas id="altChart_${i}"></canvas>
+      </div>
+    </div>`;
+}
+
+function buildDroneCells(n) {
+  const grid = document.getElementById('droneGrid');
+  if (!grid) return;
+  let html = '';
+  for (let i = 0; i < n; i++) html += droneCellHtml(i);
+  grid.innerHTML = html;
+  // 每台自己的全屏按钮：只放大该台的画面
+  grid.querySelectorAll('.fsbtn').forEach(btn => {
+    btn.onclick = () => {
+      const box = document.getElementById(btn.dataset.fs);
+      if (!box) return;
+      if (!document.fullscreenElement) {
+        (box.requestFullscreen || box.webkitRequestFullscreen).call(box);
+      } else {
+        document.exitFullscreen();
+      }
+    };
+  });
+  if (DRONE_VIDEO_ENABLED) {   // 每台挂自己那路图传（cam=i，与仪表盘画面一致）
+    for (let i = 0; i < n; i++) videoHeal('droneVideoBox' + i, '/drone_video_feed?cam=' + i);
+  }
+  droneCellsBuilt = n;
+  dronePlaceholderMsg = null;
+}
+
+function showDronePlaceholder(msg) {
+  const grid = document.getElementById('droneGrid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  const ph = document.createElement('div');
+  ph.className = 'drone-placeholder';
+  ph.appendChild(document.createTextNode('等待无人机数据…'));
+  if (msg) {
+    const sub = document.createElement('div');
+    sub.style.marginTop = '6px';
+    sub.textContent = msg;
+    ph.appendChild(sub);
+  }
+  grid.appendChild(ph);
+  droneCellsBuilt = 0;
+  dronePlaceholderMsg = msg || null;
+}
+
+// 把一台机的最新遥测填进它自己的卡片（与仪表盘 updateDrone 一一对应）
+function updateDroneCell(i, dr) {
+  const st = el('st', i);
+  if (st) {
+    st.textContent = dr.connected ? '已连接' : '未连接';
+    st.className = dr.connected ? 'ok' : 'bad';
+  }
+  const isSdk = (dr.source || '') === 'sdk';
+  const sdk = dr.sdk || {};
+  setTxt(el('src', i), isSdk ? 'SDK 链路' : (dr.source || '-'));
+  setTxt(el('src2', i), isSdk ? (sdk.serial ? '串口 ' + sdk.serial : '') : (dr.error || ''));
+  setTxt(el('att', i), f1(dr.roll) + ' / ' + f1(dr.pitch) + ' / ' + f1(dr.yaw));
+  setTxt(el('pos', i), dr.loc_x == null ? '-'
+    : f0(dr.loc_x) + ', ' + f0(dr.loc_y) + ', ' + f0(dr.loc_z) + ' cm');
+  setTxt(el('alt', i), '高度 ' + (dr.loc_z == null ? '-' : (Number(dr.loc_z) / 100).toFixed(1)) + ' m');
+  const hasErr = [dr.err_x, dr.err_y, dr.err_z].some(v => v != null && Number(v) !== 0);
+  setTxt(el('errVal', i), hasErr ? (dr.err_x + ', ' + dr.err_y + ', ' + dr.err_z) : '-');
+  setTxt(el('bat', i), dr.volt == null ? '-' : f2(dr.volt) + ' V');
+  setTxt(el('obs', i), dr.obs_f == null ? '-'
+    : dr.obs_f + ' / ' + dr.obs_b + ' / ' + dr.obs_l + ' / ' + dr.obs_r);
+  setTxt(el('key', i), dr.key_press ? '按下' : '-');
+  setTxt(el('timer', i), f1(dr.timer));
+  setTxt(el('news', i), dr.role_news || '-');
+  setTxt(el('newsId', i), dr.role_news ? ('消息序号 ' + dr.role_news_id) : '');
+}
+
+function renderDronePos(drones, message) {
+  if (!drones.length) {
+    if (droneCellsBuilt !== 0 || (message || null) !== dronePlaceholderMsg) {
+      showDronePlaceholder(message);
+    }
+    return;
+  }
+  if (droneCellsBuilt !== drones.length) {   // 台数变化才重建，避免闪烁
+    buildDroneCells(drones.length);
+    refreshDroneHistory();                   // 建好后立刻补画一次曲线
+  }
+  drones.forEach((dr, i) => updateDroneCell(i, dr));
+}
+
+async function refreshDrone() {
+  try {
+    const d = await (await fetch('/api/drone/status')).json();
+    setDroneStatus(d.online);
+    const on = document.getElementById('dOnline');
+    on.textContent = d.online ? '● 在线' : '● 离线';
+    on.className = 'chip ' + (d.online ? 'ok' : 'bad');
+    const drones = d.drones || [];
+    document.getElementById('dCount').textContent = drones.length || '-';
+    document.getElementById('dSrc').textContent =
+      d.source === 'sdk' ? 'SDK' : (d.source || '-');
+    document.getElementById('dNews').textContent = d.message || '-';
+    renderDronePos(drones, d.message);
+  } catch (e) {
+    setDroneStatus(false);
+    const on = document.getElementById('dOnline');
+    on.textContent = '● 接口错误';
+    on.className = 'chip bad';
+    document.getElementById('dNews').textContent = String(e);
+    renderDronePos([], '中枢接口异常：' + e);
+  }
+}
+
+// ---------------- 无人机曲线（中转上游 /api/history，画法与仪表盘一致） ----------------
+function drawChart(canvas, series, label) {
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const cw = canvas.clientWidth, ch = canvas.clientHeight;
+  if (!cw || !ch) return;  // 布局还没就绪：跳过本次，等下一次重画
+  const W = canvas.width = cw * dpr;
+  const H = canvas.height = ch * dpr;
+  ctx.clearRect(0, 0, W, H);
+  const pad = 8 * dpr;
+  const left = 30 * dpr;
+  const top = 22 * dpr;
+  const n = series[0].values.length;
+
+  let min = Infinity, max = -Infinity;
+  series.forEach(s => s.values.forEach(v => {
+    const x = Number(v);
+    if (!isNaN(x)) { min = Math.min(min, x); max = Math.max(max, x); }
+  }));
+  if (!isFinite(min)) { min = 0; max = 0; }
+  if (max === min) { min -= 1; max += 1; }
+
+  ctx.fillStyle = '#0b1220';
+  ctx.fillRect(0, 0, W, top);
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = (11 * dpr) + 'px sans-serif';
+  ctx.fillText(n === 0 ? (label + '：等待数据…')
+                       : (label + ' 范围 ' + min.toFixed(1) + ' ~ ' + max.toFixed(1)),
+               pad, 14 * dpr);
+  const plotTop = top + 6 * dpr;
+  const plotBottom = H - pad;
+  const plotH = plotBottom - plotTop;
+  const plotW = W - pad - left;
+
+  ctx.strokeStyle = '#1a2740';
+  ctx.lineWidth = 1 * dpr;
+  for (let gi = 0; gi <= 4; gi++) {
+    const gy = plotTop + (gi / 4) * plotH;
+    ctx.beginPath();
+    ctx.moveTo(left, gy);
+    ctx.lineTo(W - pad, gy);
+    ctx.stroke();
+    const gv = max - (max - min) * (gi / 4);
+    ctx.fillStyle = '#475569';
+    ctx.font = (9 * dpr) + 'px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(gv.toFixed(1), left - 4 * dpr, gy);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+  }
+  const zeroY = plotTop + (1 - (0 - min) / (max - min)) * plotH;
+  ctx.strokeStyle = '#334155';
+  ctx.lineWidth = 1 * dpr;
+  ctx.beginPath();
+  ctx.moveTo(left, zeroY);
+  ctx.lineTo(W - pad, zeroY);
+  ctx.stroke();
+
+  if (n === 0) return;
+  const yOf = v => plotTop + (1 - (v - min) / (max - min)) * plotH;
+  const xOf = i => n === 1 ? left + plotW / 2 : left + (i / (n - 1)) * plotW;
+  series.forEach(s => {
+    ctx.beginPath(); ctx.strokeStyle = s.color; ctx.lineWidth = 1.5 * dpr;
+    if (n === 1) {
+      const v = Number(s.values[0]);
+      if (!isNaN(v)) {
+        const y = yOf(v);
+        ctx.moveTo(left, y);
+        ctx.lineTo(left + plotW, y);
+        ctx.stroke();
+        ctx.fillStyle = s.color;
+        ctx.beginPath();
+        ctx.arc(left + plotW / 2, y, 2.5 * dpr, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+      return;
+    }
+    let started = false;
+    for (let i = 0; i < n; i++) {
+      const v = Number(s.values[i]);
+      if (isNaN(v)) continue;
+      const x = xOf(i), y = yOf(v);
+      if (!started) { ctx.moveTo(x, y); started = true; }
+      else ctx.lineTo(x, y);
+    }
+    if (started) ctx.stroke();
+  });
+}
+
+async function refreshDroneHistory() {
+  if (droneCellsBuilt <= 0) return;
+  try {
+    const h = await (await fetch('/api/drone/history')).json();
+    const drones = h.drones || [];
+    for (let i = 0; i < droneCellsBuilt; i++) {
+      const hist = drones[i] || {};
+      drawChart(el('attChart', i),
+        [{ name: 'roll', color: '#f87171', values: hist.roll || [] },
+         { name: 'pitch', color: '#4ade80', values: hist.pitch || [] },
+         { name: 'yaw', color: '#60a5fa', values: hist.yaw || [] }], '姿态(°)');
+      drawChart(el('altChart', i),
+        [{ name: 'alt', color: '#22d3ee', values: hist.alt || [] }], '高度(m)');
+    }
+  } catch (e) {}
+}
+
+
+// ---------------- 机器人 ----------------
 async function refreshRobot() {
   try {
     const d = await (await fetch('/api/robot/status')).json();
-    setStatus(d.online);
+    setRobotStatus(d.online);
     const on = document.getElementById('rOnline');
     on.textContent = d.online ? '● 在线' : '● 离线';
     on.className = 'chip ' + (d.online ? 'ok' : 'bad');
@@ -134,50 +855,20 @@ async function refreshRobot() {
       (d.last_result === 'failed' ? '#f87171' : '');
     document.getElementById('rMsg').textContent = d.message || '-';
   } catch (e) {
-    setStatus(false);
+    setRobotStatus(false);
   }
 }
 
-async function refreshDrone() {
-  try {
-    const d = await (await fetch('/api/drone/status')).json();
-    const on = document.getElementById('dOnline');
-    on.textContent = d.online ? '● 在线' : '● 离线';
-    on.className = 'chip ' + (d.online ? 'ok' : 'bad');
-    document.getElementById('dSrc').textContent =
-      d.source === 'sdk' ? 'SDK' : (d.source || '-');
-    document.getElementById('dPos').textContent =
-      d.pose ? (d.pose.x + ', ' + d.pose.y + ', ' + d.pose.z) : '-';
-    document.getElementById('dYaw').textContent =
-      d.pose && d.pose.yaw_deg != null ? d.pose.yaw_deg + '°' : '-';
-    const voltEl = document.getElementById('dVolt');
-    const volt = d.battery ? d.battery.voltage : null;
-    voltEl.textContent = volt == null ? '-' : volt + ' V';
-    voltEl.style.color = volt != null && volt < 3.3 ? '#f87171' : '';
-    const obs = d.obstacles || {};
-    const obsEl = document.getElementById('dObs');
-    obsEl.textContent =
-      obs.front == null ? '-' : obs.front + ' / ' + obs.back + ' / ' + obs.left + ' / ' + obs.right;
-    const near = [obs.front, obs.back, obs.left, obs.right].some(v => v != null && v < 100);
-    obsEl.style.color = near ? '#fbbf24' : '';
-    document.getElementById('dKey').textContent =
-      d.key_press ? '按下' : '-';
-    document.getElementById('dNews').textContent = (d.role_news || '-');
-  } catch (e) {
-    const on = document.getElementById('dOnline');
-    on.textContent = '● 接口错误';
-    on.className = 'chip bad';
-  }
-}
-
+// ---------------- YOLO 模型 ----------------
 async function refreshModel() {
   try {
     const m = await (await fetch('/api/model/status')).json();
+    setYoloStatus(m.loaded);
     document.getElementById('modelName').textContent = m.model || '-';
     const ld = document.getElementById('modelLoaded');
     ld.textContent = m.loaded ? '已加载' : '未加载';
-    ld.style.color = m.loaded ? '#4ade80' : '#f87171';
-    document.getElementById('modelMsg').textContent = m.loaded ? '' : (m.message || '');
+    ld.className = 'chip ' + (m.loaded ? 'ok' : 'bad');
+    document.getElementById('modelMsg').textContent = m.loaded ? '-' : (m.message || '-');
     document.getElementById('modelConf').textContent = m.conf != null ? m.conf : '-';
     document.getElementById('modelFps').textContent = m.fps != null ? m.fps : '-';
     document.getElementById('modelTotal').textContent =
@@ -187,12 +878,425 @@ async function refreshModel() {
     document.getElementById('modelLast').textContent =
       m.last_detections && m.last_detections.length
         ? m.last_detections.map(x => x.class + ' ' + x.conf).join(', ') : '-';
-  } catch (e) { document.getElementById('modelName').textContent = '接口错误'; }
+  } catch (e) {
+    setYoloStatus(false);
+    document.getElementById('modelName').textContent = '接口错误';
+  }
 }
 
-refreshRobot(); setInterval(refreshRobot, 1000);
+refreshServer(); setInterval(refreshServer, 2000);
 refreshDrone(); setInterval(refreshDrone, 2000);
+refreshDroneHistory(); setInterval(refreshDroneHistory, 2000);
+refreshRobot(); setInterval(refreshRobot, 1000);
 refreshModel(); setInterval(refreshModel, 2000);
+window.addEventListener('resize', () => { if (droneCellsBuilt > 0) refreshDroneHistory(); });
+
+// ---------------- 配置弹窗（读写 data/config.yaml） ----------------
+const configModal = document.getElementById('configModal');
+const configForm = document.getElementById('configForm');
+const configMsg = document.getElementById('configMsg');
+let configFlat = {};
+
+const CONFIG_LABELS = {
+  'server.mode': '服务器信息方式',
+  'server.url': '服务器监控地址',
+  'server.name': '服务器显示名称',
+  'server.enabled': '显示服务器信息面板',
+  'drone.url': '无人机地址',
+  'drone.video': '无人机画面开关',
+  'drone.video_port': '无人机视频端口',
+  'robot.url': '机器人地址',
+  'robot.video': '机器人画面开关',
+  'yolo.url': 'YOLO 地址',
+  'yolo.video': 'YOLO 画面开关',
+  'yolo.fps': '转发帧率',
+  'dashboard.hub_port': '中枢端口',
+  'dashboard.progress_port': '进度流程图端口',
+};
+
+// 有固定选项的配置项 → 用下拉选择（其余仍是输入框）
+const CONFIG_SELECTS = {
+  'server.mode': [
+    ['auto', 'auto（自动判断）'],
+    ['local', 'local（读本机）'],
+    ['http', 'http（拉服务器接口）'],
+  ],
+};
+
+function flatten(obj, prefix, out) {
+  for (const k in obj) {
+    const key = prefix ? prefix + '.' + k : k;
+    if (obj[k] && typeof obj[k] === 'object' && !Array.isArray(obj[k])) {
+      flatten(obj[k], key, out);
+    } else {
+      out[key] = obj[k];
+    }
+  }
+  return out;
+}
+// 配置分组（按 yaml 顶层段），每组渲染成一"列"，方便分辨；这里同时定义显示顺序
+const CONFIG_GROUPS = {
+  server: '服务器信息',
+  drone: '无人机',
+  robot: '机器人',
+  yolo: 'YOLO 模型',
+  dashboard: '中枢',
+};
+const CONFIG_GROUP_ORDER = ['server', 'drone', 'robot', 'yolo', 'dashboard'];
+
+// 单个字段：标签在上、控件在下（竖排列结构）
+function fieldRow(key, val) {
+  const row = document.createElement('div');
+  row.className = 'field';
+  const label = document.createElement('label');
+  label.textContent = CONFIG_LABELS[key] || key;
+  label.title = key;                 // 悬停显示 yaml 原始键，便于对照
+  row.appendChild(label);
+
+  if (CONFIG_SELECTS[key]) {
+    const sel = document.createElement('select');
+    sel.id = 'f_' + key;
+    CONFIG_SELECTS[key].forEach(([v, text]) => {
+      const opt = document.createElement('option');
+      opt.value = v;
+      opt.textContent = text;
+      if (String(v) === String(val)) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    row.appendChild(sel);
+  } else {
+    const input = document.createElement('input');
+    input.id = 'f_' + key;
+    if (typeof val === 'boolean') {
+      input.type = 'checkbox';
+      input.checked = val;
+      row.className = 'field check';   // 开关类：标签与勾选框同行
+    } else if (typeof val === 'number') {
+      input.type = 'number';
+      input.step = Number.isInteger(val) ? '1' : 'any';
+      input.value = val;
+    } else {
+      input.type = 'text';
+      input.value = val == null ? '' : val;
+    }
+    row.appendChild(input);
+  }
+  return row;
+}
+
+function renderForm(flat) {
+  configForm.innerHTML = '';
+  // 按顶层段归组
+  const groups = {};
+  for (const key in flat) {
+    const g = key.split('.')[0];
+    (groups[g] || (groups[g] = [])).push(key);
+  }
+  // 固定顺序显示（配置里没写到的段不会出现，不额外造空组）
+  const names = CONFIG_GROUP_ORDER.filter(g => groups[g])
+    .concat(Object.keys(groups).filter(g => CONFIG_GROUP_ORDER.indexOf(g) < 0));
+  names.forEach(g => {
+    const sec = document.createElement('section');
+    sec.className = 'cfg-group';
+    const h = document.createElement('h3');
+    h.textContent = CONFIG_GROUPS[g] || g;
+    const raw = document.createElement('span');
+    raw.textContent = g;             // 附带 yaml 段名，好对照
+    h.appendChild(raw);
+    sec.appendChild(h);
+    groups[g].forEach(key => sec.appendChild(fieldRow(key, flat[key])));
+    configForm.appendChild(sec);
+  });
+}
+function collectForm() {
+  const flat = {};
+  for (const key in configFlat) {
+    const el = document.getElementById('f_' + key);
+    if (!el) continue;
+    const orig = configFlat[key];
+    if (CONFIG_SELECTS[key]) flat[key] = el.value;
+    else if (typeof orig === 'boolean') flat[key] = el.checked;
+    else if (typeof orig === 'number') flat[key] = Number.isInteger(orig) ? parseInt(el.value, 10) : parseFloat(el.value);
+    else flat[key] = el.value;
+  }
+  return flat;
+}
+function unflatten(flat) {
+  const out = {};
+  for (const key in flat) {
+    const parts = key.split('.');
+    let cur = out;
+    for (let i = 0; i < parts.length - 1; i++) cur = cur[parts[i]] || (cur[parts[i]] = {});
+    cur[parts[parts.length - 1]] = flat[key];
+  }
+  return out;
+}
+document.getElementById('configBtn').onclick = async () => {
+  try {
+    const data = await (await fetch('/api/config')).json();
+    if (data.error) throw new Error(data.error);
+    configFlat = flatten(data, '', {});
+    renderForm(configFlat);
+    configMsg.textContent = '';
+    configMsg.style.color = '';
+  } catch (e) {
+    configFlat = {};
+    renderForm({});
+    configMsg.textContent = '读取配置失败：' + e;
+    configMsg.style.color = '#f87171';
+  }
+  configModal.classList.add('show');
+};
+document.getElementById('configClose').onclick = () => { configModal.classList.remove('show'); };
+configModal.addEventListener('click', (e) => { if (e.target === configModal) configModal.classList.remove('show'); });
+document.getElementById('configSave').onclick = async () => {
+  try {
+    const nested = unflatten(collectForm());
+    const resp = await fetch('/api/config', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(nested)
+    });
+    const data = await resp.json();
+    if (data.status === 'ok') {
+      configMsg.textContent = '已保存，已热重载';
+      configMsg.style.color = '#4ade80';
+      configModal.classList.remove('show');
+    } else {
+      configMsg.textContent = '保存失败：' + (data.reason || '');
+      configMsg.style.color = '#f87171';
+    }
+  } catch (e) {
+    configMsg.textContent = '保存失败：' + e;
+    configMsg.style.color = '#f87171';
+  }
+};
+
+// ---------------- 任务清单（勾选即推进进度） ----------------
+// 数据源：/api/progress/flow（步骤名 + 状态） + /api/checklist（已勾选编号）
+// 语义：勾选第 k 步 = 推进到第 k 步（其后自动清空）；取消第 k 步 = 退回第 k 步之前。
+const checkModal = document.getElementById('checkModal');
+const checkListEl = document.getElementById('checkList');
+const checkMsg = document.getElementById('checkMsg');
+const CHK_KEYS = ['phase1', 'drone', 'yolo', 'hub', 'robot'];
+const CHK_NAMES = {
+  phase1: '第一阶段验证可行性',
+  drone: '无人机自动巡检', yolo: '模型训练', hub: '中枢互通', robot: '机器人自动捕获',
+};
+// 左侧阶段筛选：全部 / 第一阶段 / 第二阶段
+let chkView = 'all';
+const CHK_VIEWS = {
+  all: CHK_KEYS,
+  phase1: ['phase1'],
+  phase2: ['drone', 'yolo', 'hub', 'robot'],
+};
+function chkApplyView() {
+  const show = CHK_VIEWS[chkView] || CHK_KEYS;
+  let vi = 0;
+  checkListEl.querySelectorAll('.chk-group').forEach(g => {
+    const on = show.indexOf(g.dataset.mod) >= 0;
+    g.classList.toggle('hide', !on);
+    if (on) g.style.setProperty('--i', vi++);   // 逐组错峰渐入
+  });
+  checkListEl.querySelectorAll('.chk-nav button').forEach(b => {
+    b.classList.toggle('on', b.dataset.view === chkView);
+  });
+}
+checkListEl.addEventListener('click', (e) => {
+  const b = e.target.closest('.chk-nav button');
+  if (!b) return;
+  chkView = b.dataset.view;
+  chkApplyView();
+});
+
+// 数字滚动：百分比/完成数从旧值平滑滚到新值（不再"啪"一下跳变）
+const chkNum = {};
+function chkTween(key, to, render, digits) {
+  const from = (chkNum[key] != null) ? chkNum[key] : 0;
+  chkNum[key] = to;
+  if (Math.abs(to - from) < 0.05) { render(to); return; }
+  const t0 = performance.now(), dur = 650;
+  if (chkNum[key + '#raf']) cancelAnimationFrame(chkNum[key + '#raf']);
+  const step = (t) => {
+    const k = Math.min(1, (t - t0) / dur);
+    const v = from + (to - from) * (1 - Math.pow(1 - k, 3));   // easeOutCubic
+    render(v);
+    if (k < 1) chkNum[key + '#raf'] = requestAnimationFrame(step);
+  };
+  chkNum[key + '#raf'] = requestAnimationFrame(step);
+}
+let chkSig = '', chkStructSig = '', chkBusy = false;
+
+function chkSetMsg(text, color) {
+  checkMsg.textContent = text || '';
+  checkMsg.style.color = color || '#94a3b8';
+}
+
+function chkByKey(flow) {
+  const byKey = {};
+  (flow.modules || []).forEach(m => { byKey[m.key] = m; });
+  return byKey;
+}
+
+// 结构签名：模块里的"步骤清单"（编号+名字）变了才需要重建 DOM
+function chkStructOf(flow) {
+  const byKey = chkByKey(flow);
+  return CHK_KEYS.map(k => k + ':' + ((byKey[k] || {}).steps || [])
+    .map(s => s.order + '#' + s.name).join(',')).join('|');
+}
+
+// 一次性搭好 DOM（之后只做原地更新，绝不整块重建 → 勾选时元素不会被换掉）
+function chkBuild(flow) {
+  const byKey = chkByKey(flow);
+  const nav = '<nav class="chk-nav">'
+    + '<button type="button" class="on" data-view="all">全部<span class="cnt" id="chkCntAll"></span></button>'
+    + '<button type="button" data-view="phase1">第一阶段<span class="cnt" id="chkCntP1"></span></button>'
+    + '<button type="button" data-view="phase2">第二阶段<span class="cnt" id="chkCntP2"></span></button>'
+    + '</nav>';
+  const grid = '<div class="chk-grid">' + CHK_KEYS.map(k => {
+    const m = byKey[k] || { steps: [] };
+    const rows = (m.steps || []).map(t =>
+      '<label class="chk-item" data-order="' + t.order + '">'
+      + '<input type="checkbox" data-mod="' + k + '" data-order="' + t.order + '">'
+      + '<span class="nm">' + t.name + '</span><span class="st"></span></label>').join('');
+    return '<section class="chk-group" data-mod="' + k + '">'
+      + '<div class="chk-head"><span class="gnm"></span><span class="pct"></span></div>'
+      + (rows || '<div class="chk-item"><span class="nm">暂无步骤</span></div>')
+      + '</section>';
+  }).join('') + '</div>';
+  checkListEl.innerHTML = '<div class="chk-body">' + nav + grid + '</div>';
+  for (const kk in chkPrev) delete chkPrev[kk];   // DOM 重建后重新记"刚完成"的弹跳
+  chkApplyView();
+}
+
+function chkSet(el, text) {           // 只在内容真的变了才写，避免多余重排
+  if (el && el.textContent !== text) el.textContent = text;
+}
+
+// 原地更新每一行/每个模块的显示状态
+const chkPrev = {};                      // mod:order -> 上次是否已完成（用来给"刚完成"加弹跳）
+function chkPatch(flow, active) {
+  const byKey = chkByKey(flow);
+  let total = 0, done = 0;
+  const cnt = { all: [0, 0], p1: [0, 0], p2: [0, 0] };
+  CHK_KEYS.forEach(k => {
+    const m = byKey[k] || { steps: [], percent: 0 };
+    const act = (active && active[k]) || [];
+    const sec = checkListEl.querySelector('.chk-group[data-mod="' + k + '"]');
+    if (!sec) return;
+    chkSet(sec.querySelector('.chk-head .gnm'), m.name || CHK_NAMES[k]);
+    chkTween('m_' + k, m.percent || 0,
+      v => chkSet(sec.querySelector('.chk-head .pct'), v.toFixed(1) + '%'), 1);
+    let mt = 0, md = 0;
+    (m.steps || []).forEach(t => {
+      const row = sec.querySelector('.chk-item[data-order="' + t.order + '"]');
+      if (!row) return;
+      const on = act.indexOf(t.order) >= 0 || t.state === 'done';
+      const cb = row.querySelector('input');
+      if (cb && cb.checked !== on) cb.checked = on;
+      const cls = 'chk-item' + (t.state === 'active' ? ' active' : (on ? ' done' : ''))
+        + (row.classList.contains('pop') ? ' pop' : '');
+      if (row.className !== cls) row.className = cls;
+      chkSet(row.querySelector('.st'), t.state === 'active'
+        ? '进行中' : (on ? '已完成' : '未开始'));
+      const pk = k + ':' + t.order;
+      if (on && !chkPrev[pk]) {                 // 刚勾上：勾选框弹一下
+        row.classList.add('pop');
+        row.querySelector('input').addEventListener('animationend',
+          () => row.classList.remove('pop'), { once: true });
+      }
+      chkPrev[pk] = on;
+      mt += 1;
+      if (on) md += 1;
+    });
+    const b = (k === 'phase1') ? 'p1' : 'p2';
+    cnt[b][0] += md; cnt[b][1] += mt;
+    total += mt; done += md;
+  });
+  chkTween('done', done,
+    v => chkSet(document.getElementById('checkSum'), Math.round(v) + ' / ' + total + ' 步'), 0);
+  const pct = flow.total_percent != null ? flow.total_percent : 0;
+  cnt.all[0] = done; cnt.all[1] = total;
+  chkTween('total', pct,
+    v => chkSet(document.getElementById('checkPct'), v.toFixed(1) + '%'), 1);
+  document.getElementById('checkBar').style.width = Math.max(0, Math.min(100, pct)) + '%';
+  chkSet(document.getElementById('chkCntAll'), cnt.all[0] + '/' + cnt.all[1]);
+  chkSet(document.getElementById('chkCntP1'), cnt.p1[0] + '/' + cnt.p1[1]);
+  chkSet(document.getElementById('chkCntP2'), cnt.p2[0] + '/' + cnt.p2[1]);
+}
+
+async function chkRefresh(force) {
+  let flow, active;
+  try {
+    flow = await (await fetch('/api/progress/flow')).json();
+    active = await (await fetch('/api/checklist')).json();
+  } catch (e) {
+    chkSetMsg('读取失败：' + e, '#f87171');
+    if (force) checkListEl.innerHTML = '<div class="chk-group">读取失败：' + e + '</div>';
+    return;
+  }
+  const sig = CHK_KEYS.map(k => {
+    const m = (flow.modules || []).filter(x => x.key === k)[0] || { steps: [] };
+    return k + ':' + m.percent + ':' + (m.steps || []).map(s => s.state.charAt(0)).join('');
+  }).join('|');
+  if (!force && sig === chkSig) return;   // 没变化就不动，避免多余重排
+  chkSig = sig;
+  const struct = chkStructOf(flow);
+  if (struct !== chkStructSig) {          // 步骤清单变了才重建，否则原地更新
+    chkStructSig = struct;
+    chkBuild(flow);
+  }
+  chkPatch(flow, active);
+  chkSetMsg('');
+}
+
+async function chkToggle(mod, order, checked) {
+  if (chkBusy) return;
+  chkBusy = true;
+  chkSetMsg('保存中…');
+  try {
+    const r = await fetch('/api/checklist/toggle', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ module: mod, order: order, checked: checked })
+    });
+    const d = await r.json();
+    if (d.status !== 'ok') throw new Error(d.reason || '保存失败');
+    chkSig = '';
+    await chkRefresh(true);
+    chkSetMsg(checked ? '已推进到该步' : '已退回该步之前', '#4ade80');
+  } catch (e) {
+    chkSig = '';
+    await chkRefresh(true);
+    chkSetMsg('保存失败：' + e, '#f87171');
+  }
+  chkBusy = false;
+}
+
+document.getElementById('checkBtn').onclick = async () => {
+  checkModal.classList.add('show');
+  chkSig = ''; chkStructSig = '';
+  await chkRefresh(true);
+};
+document.getElementById('checkClose').onclick = () => { checkModal.classList.remove('show'); };
+checkModal.addEventListener('click', (e) => { if (e.target === checkModal) checkModal.classList.remove('show'); });
+checkListEl.addEventListener('change', (e) => {
+  const cb = e.target;
+  if (!cb || cb.tagName !== 'INPUT') return;
+  chkToggle(cb.dataset.mod, Number(cb.dataset.order), cb.checked);
+});
+document.getElementById('checkReset').onclick = async () => {
+  if (!confirm('确定一键初始化？所有步骤将清空、进度全部归零。')) return;
+  chkBusy = true;
+  chkSetMsg('正在重置…');
+  try { await fetch('/api/checklist/reset', { method: 'POST' }); } catch (e) { /* 忽略 */ }
+  chkBusy = false;
+  chkSig = '';
+  await chkRefresh(true);
+  chkSetMsg('已初始化', '#4ade80');
+};
+// 弹窗打开期间每 2 秒同步一次（自动触发/计时完成也会反映到勾选状态）
+setInterval(() => { if (checkModal.classList.contains('show')) chkRefresh(false); }, 2000);
 </script>
 </body>
 </html>

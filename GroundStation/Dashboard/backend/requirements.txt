@@ -4,5 +4,4 @@ requests
 pymavlink
 opencv-python
 numpy
-# YOLO 检测需要（已有 YOLO 环境可跳过安装）：
-# ultralytics
+psutil
