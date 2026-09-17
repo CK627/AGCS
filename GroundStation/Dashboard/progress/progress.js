@@ -266,58 +266,50 @@ function buildFlowSvg() {
     s += flPipe(`M${sideR} ${mergeY} L${cx} ${mergeY}`, `p-mb${i}-br`, { delay: mergeDelay });
     s += flPipe(`M${cx} ${mergeY} L${cx} ${yR(0)}`, `p-d${i}`, { delay: dropDelay });
     if (g.rows.length > 1) {
-      // 多行（中枢互通）：上下两行都和单行模块一致——分水器 → 每列一根管进小目标框
-      // 上方一分二、贴框两侧流下、框底二合一；第一行底部的收集管同时充当第二行的
-      // 分水器（中间横管），第二行底部再收集、从右往左汇流回主管道。
-      const yr0 = yR(0);
-      const row1Top = rowsY + g.boxH + L.rowGap;
-      const yMid = rowsY + g.boxH + 8;          // 第一行收集管 / 第二行分水器
-      const yCol = row1Top + g.boxH + 8;        // 第二行底部收集管
-      const stOff = 84;
-      const halfLen = (g.lastCx - g.firstCx) / 2;
-      const halfDur = fillDur(halfLen);
-      const splitY0 = rowsY - 6;
-      const splitY1 = row1Top - 6;
-      // 第一行分水器（接模块落管）
-      s += flPipe(`M${cx} ${yr0} L${g.firstCx} ${yr0}`, 'p-hub-d0-l', { delay: distDelay });
-      s += flPipe(`M${cx} ${yr0} L${g.lastCx} ${yr0}`, 'p-hub-d0-r', { delay: distDelay });
-      // 每一列：滴管 → 顶部分流 → 两侧流下 → 底部二合一
+      // 多行（中枢互通）：水从中间落点往左走到最左端，沿竖管下行；
+      // 第一行、第二行都从左往右推进（与步骤先后一致），
+      // 两行最右列排入底部收集管，汇合后一起流回主管道。
+      const yTop = yR(0);
+      const leftX = g.rowX - 40;
+      const r1y = rowsY + g.boxH / 2;
+      const rNy = rowsY + (g.rows.length - 1) * (g.boxH + L.rowGap) + g.boxH / 2;
+      const topDur = fillDur(cx - leftX);
+      const legDur = fillDur(rNy - yTop);
+      const inDur = fillDur(g.rowX - leftX);
+      const segDur = fillDur(L.stGap);
+      const legDelay = distDelay + topDur * 0.85;
+      const r0InDelay = legDelay + legDur * 0.4;
+      const r1InDelay = legDelay + legDur * 0.9;
+      const r0Seg = r0InDelay + inDur * 0.8;
+      const r1Seg = r1InDelay + inDur * 0.8;
+      s += flPipe(`M${cx} ${yTop} L${leftX} ${yTop}`, 'p-hub-top', { delay: distDelay });
+      s += flPipe(`M${leftX} ${yTop} L${leftX} ${rNy}`, 'p-hub-leg', { delay: legDelay });
+      s += flPipe(`M${leftX} ${r1y} L${g.rowX} ${r1y}`, 'p-hub-r0-in', { delay: r0InDelay });
+      s += flPipe(`M${leftX} ${rNy} L${g.rowX} ${rNy}`, 'p-hub-r1-in', { delay: r1InDelay });
       g.rows.forEach((row, r) => {
-        const topY = r === 0 ? yr0 : yMid;
-        const splitY = r === 0 ? splitY0 : splitY1;
-        const botY = r === 0 ? yMid : yCol;
-        row.forEach((txt, j) => {
-          const ccx = colCx(j);
-          const frac = halfLen > 0 ? Math.abs(ccx - cx) / halfLen : 0;
-          const dripDelay = r === 0 ? distDelay + halfDur * frac
-                                    : distDelay + 2.6 + frac * 0.5;
-          const splitDelay = dripDelay + fillDur(8) * 0.8;
-          const sideDelay = splitDelay + 0.55;
-          const mergeDelay = sideDelay + 0.55;
-          const key = `p-hub-r${r}-${j}`;
-          s += flPipe(`M${ccx} ${topY} L${ccx} ${splitY}`, `${key}-drip`, { delay: dripDelay });
-          s += flPipe(`M${ccx} ${splitY} L${ccx - stOff} ${splitY}`, `${key}-tl`, { delay: splitDelay });
-          s += flPipe(`M${ccx} ${splitY} L${ccx + stOff} ${splitY}`, `${key}-tr`, { delay: splitDelay });
-          s += flPipe(`M${ccx - stOff} ${splitY} L${ccx - stOff} ${botY}`, `${key}-l`, { delay: sideDelay });
-          s += flPipe(`M${ccx + stOff} ${splitY} L${ccx + stOff} ${botY}`, `${key}-r`, { delay: sideDelay });
-          s += flPipe(`M${ccx - stOff} ${botY} L${ccx} ${botY}`, `${key}-bl`, { delay: mergeDelay });
-          s += flPipe(`M${ccx + stOff} ${botY} L${ccx} ${botY}`, `${key}-br`, { delay: mergeDelay });
-        });
+        const mid = r === 0 ? r1y : rNy;
+        const base = r === 0 ? r0Seg : r1Seg;
+        for (let j = 1; j < row.length; j++) {
+          s += flPipe(`M${colCx(j - 1) + L.stW / 2} ${mid} L${colCx(j) - L.stW / 2} ${mid}`,
+                      `p-hub-r${r}-${j}`, { delay: base + (j - 1) * 0.12 });
+        }
       });
-      // 中间横管：第一行收集（右→左），同时给第二行每列供水
-      for (let j = 1; j < g.cols; j++) {
-        const frac = halfLen > 0 ? Math.abs(colCx(j) - cx) / halfLen : 0;
-        s += flPipe(`M${colCx(j)} ${yMid} L${colCx(j - 1)} ${yMid}`, `p-hub-mid-${j}`,
-                    { delay: distDelay + halfDur * frac + 2.0 });
-      }
-      // 第二行底部收集（右→左）→ 回主管道
-      for (let j = 1; j < g.cols; j++) {
-        const frac = halfLen > 0 ? Math.abs(colCx(j) - cx) / halfLen : 0;
-        s += flPipe(`M${colCx(j)} ${yCol} L${colCx(j - 1)} ${yCol}`, `p-hub-col-${j}`,
-                    { delay: distDelay + 3.2 + frac * 0.5 });
-      }
-      s += flPipe(`M${colCx(0)} ${yCol} L${railX + 6.5} ${yCol}`, 'p-mg2',
-                  { delay: distDelay + 3.4 });
+      // 合并回路：架设平台（第一行最右列）从右侧出管、沿右侧向下、底部往左接上流出；
+      // 部署软件（第二行最右列）从列底排出，两路汇合后一起流回主管道。
+      const row0Bottom = rowsY + g.boxH;
+      const row1Top = row0Bottom + L.rowGap;
+      const row1Bottom = row1Top + g.boxH;
+      const yCol = row1Bottom + 8;                                   // 底部收集管高度
+      const gapX = colCx(1) + L.stW / 2 + L.stGap / 2;               // 第二行 col1/col2 之间的缝
+      const outRDelay = r0Seg + 0.12 + segDur * 0.8;
+      const outLDelay = r1Seg + 0.12 + segDur * 0.8;
+      const sideX = colCx(2) + L.stW / 2 + 14;                       // 右侧竖管（贴着两列右侧下行）
+      s += flPipe(`M${colCx(2) + L.stW / 2} ${r1y} L${sideX} ${r1y} L${sideX} ${yCol} L${colCx(2)} ${yCol}`,
+                  'p-hub-out-r', { delay: outRDelay });
+      s += flPipe(`M${colCx(2)} ${row1Bottom} L${colCx(2)} ${yCol} L${gapX} ${yCol}`,
+                  'p-hub-out-l', { delay: outLDelay });
+      s += flPipe(`M${gapX} ${yCol} L${railX + 6.5} ${yCol}`, 'p-mg2',
+                  { delay: outLDelay + fillDur(8) * 0.8 });
     } else {
       // 单行：顶部分水器向左右分流 → 每根滴管进小目标框上方再一分二，
       // 贴着小目标框两侧流下、框底二合一 → 底部收集管从右往左汇流回主管道。
@@ -373,6 +365,11 @@ function buildFlowSvg() {
            + `<rect class="fl-step" x="${bx}" y="${ry}" width="${L.stW}" height="${g.boxH}" rx="6"/>`
            + vText(txt, ccx, ty0, 'v-t', 13.6)
            + `</g>`;
+        // 小目标扫描提示条：该步到达时扫一遍（中枢从左到右，其余自上而下）
+        s += `<defs><clipPath id="scansClip${i}-${idx}"><rect x="${bx}" y="${ry}" width="${L.stW}" height="${g.boxH}"/></clipPath></defs>`;
+        s += (i === 2
+          ? `<rect class="scan-band sb x" data-scans="${i}:${idx}" clip-path="url(#scansClip${i}-${idx})" x="${bx}" y="${ry + 8}" width="36" height="${g.boxH - 16}" rx="6" style="--scanD:${L.stW + 50}px;--scanT:1.2s"/>`
+          : `<rect class="scan-band sb y" data-scans="${i}:${idx}" clip-path="url(#scansClip${i}-${idx})" x="${bx + 8}" y="${ry}" width="${L.stW - 16}" height="36" rx="6" style="--scanD:${g.boxH + 50}px;--scanT:1.2s"/>`);
         idx++;
       });
     });
@@ -381,31 +378,6 @@ function buildFlowSvg() {
   // ⑦ 综合展示（水由主管道从左侧送进来，见 ⑤）
   s += `<rect class="flow-box struct" data-box="bot" x="${cx - L.botW / 2}" y="${yBot}" width="${L.botW}" height="${L.botH}" rx="8"/>`;
   s += `<text class="flow-t title center" x="${cx}" y="${yBot + L.botH / 2}">综合展示：自动巡检与捕获</text>`;
-
-  // ⑧ 阶段/模块扫描提示条：上个阶段完成 → 下个阶段扫描；模块首次激活 → 该模块扫描
-  //    （触发逻辑见 applyFlowStates）
-  const scanH1 = yPh2 - yPh1;
-  const scanH2 = yBot + L.botH - yPh2;
-  let scanDefs = `<clipPath id="scanClip1"><rect x="0" y="${yPh1}" width="${W}" height="${scanH1}"/></clipPath>`
-    + `<clipPath id="scanClip2"><rect x="0" y="${yPh2}" width="${W}" height="${scanH2}"/></clipPath>`;
-  GEO.forEach((g, i) => {
-    scanDefs += `<clipPath id="scanmClip${i}"><rect x="${M}" y="${modY[i]}" width="${grpW}" height="${g.H}"/></clipPath>`;
-  });
-  s += `<defs>${scanDefs}</defs>`;
-  s += `<rect class="scan-band" data-scan="1" clip-path="url(#scanClip1)" x="0" y="0" width="${W}" height="90" rx="10"`
-     + ` style="--scanD:${scanH1 + 220}px;--scanT:2.2s"/>`;
-  s += `<rect class="scan-band" data-scan="2" clip-path="url(#scanClip2)" x="0" y="0" width="${W}" height="90" rx="10"`
-     + ` style="--scanD:${scanH2 + 220}px;--scanT:3.2s"/>`;
-  GEO.forEach((g, i) => {
-    if (i === 2) {
-      // 中枢互通：扫描方向改为从左到右（竖向光带横着扫过模块区）
-      s += `<rect class="scan-band x" data-scanm="${i}" clip-path="url(#scanmClip${i})" x="0" y="${modY[i]}" width="120" height="${g.H}" rx="8"`
-         + ` style="--scanD:1100px;--scanT:2.2s"/>`;
-    } else {
-      s += `<rect class="scan-band" data-scanm="${i}" clip-path="url(#scanmClip${i})" x="0" y="0" width="${W}" height="70" rx="8"`
-         + ` style="--scanD:${g.H + 220}px;--scanT:1.9s"/>`;
-    }
-  });
   s += `</svg>`;
   return s;
 }
@@ -436,10 +408,8 @@ function modState(steps) {
 
 const stepPipe = st => (st === 'done' ? 'done' : (st === 'active' ? 'live' : 'pending'));
 
-// 阶段扫描提示条是否已经放过（每个阶段只在解锁时扫一次）
-const scanned = { p1: false, p2: false };
-// 模块扫描提示条是否已经放过（模块首次有进度时扫一次）
-const scannedM = [false, false, false, false];
+// 小目标扫描提示条是否已经放过（每个小目标只在到达时扫一次）
+const scannedStep = {};
 
 function applyFlowStates(data) {
   const byKey = {};
@@ -502,17 +472,6 @@ function applyFlowStates(data) {
   mods.forEach((m, i) => {
     const steps = m.steps || [];
     const ms = modState(steps);
-    // 模块扫描：该模块首次有进度时自上而下扫一遍（回退清空后再激活会重扫）
-    const bandM = document.querySelector(`[data-scanm="${i}"]`);
-    if (ms.cls) {
-      if (!scannedM[i] && bandM) {
-        bandM.classList.add('on');
-        scannedM[i] = true;
-      }
-    } else if (scannedM[i]) {
-      scannedM[i] = false;
-      if (bandM) bandM.classList.remove('on');
-    }
     setCls(`[data-mgroup="${i}"]`, 'flow-group' + (ms.cls ? ' ' + ms.cls : ''));
     setCls(`[data-mbox="${i}"]`, 'flow-box mod' + (ms.cls ? ' ' + ms.cls : ''));
     const pct = document.querySelector(`[data-mpct="${i}"]`);
@@ -525,19 +484,17 @@ function applyFlowStates(data) {
     ['tl', 'tr', 'l', 'r', 'bl', 'br'].forEach(side => setP(`p-mb${i}-${side}`, msP));
     setP(`p-d${i}`, msP);
     if (i === 2) {
-      setP('p-hub-d0-l', msP);
-      setP('p-hub-d0-r', msP);
-      for (let r = 0; r < 2; r++) {
-        g.rows[r].forEach((txt, j) => {
-          const cp = gatedStep(sts[r * 3 + j]);
-          ['drip', 'tl', 'tr', 'l', 'r', 'bl', 'br'].forEach(side => setP(`p-hub-r${r}-${j}-${side}`, cp));
-        });
-      }
-      setP('p-hub-mid-1', gatedStep(sts[1]));
-      setP('p-hub-mid-2', gatedStep(sts[2]));
-      setP('p-hub-col-1', gatedStep(sts[4]));
-      setP('p-hub-col-2', gatedStep(sts[5]));
-      setP('p-mg2', gatedStep(sts[3]));
+      setP('p-hub-top', msP);
+      setP('p-hub-leg', msP);
+      setP('p-hub-r0-in', gatedStep(sts[0]));
+      setP('p-hub-r0-1', gatedStep(sts[1]));
+      setP('p-hub-r0-2', gatedStep(sts[2]));
+      setP('p-hub-r1-in', gatedStep(sts[3]));
+      setP('p-hub-r1-1', gatedStep(sts[4]));
+      setP('p-hub-r1-2', gatedStep(sts[5]));
+      setP('p-hub-out-r', gatedStep(sts[2]));
+      setP('p-hub-out-l', gatedStep(sts[5]));
+      setP('p-mg2', gatedStep(sts[5]));
     } else {
       setP(`p-dist${i}-l`, msP);
       setP(`p-dist${i}-r`, msP);
@@ -549,27 +506,22 @@ function applyFlowStates(data) {
       for (let j = 1; j < g.cols; j++) setP(`p-col${i}-${j}`, gatedStep(sts[j]));
       setP(`p-mg${i}`, gatedStep(sts[0]));
     }
-    sts.forEach((c, j) => setCls(`[data-stepg="${i}:${j}"]`, `stepg ${c}`));
+    sts.forEach((c, j) => {
+      setCls(`[data-stepg="${i}:${j}"]`, `stepg ${c}`);
+      // 小目标扫描：该步到达（进行中/已完成）时扫一遍，回退清空后再到达会重扫
+      const k = `${i}:${j}`;
+      const band = document.querySelector(`[data-scans="${k}"]`);
+      if (c === 'active' || c === 'done') {
+        if (!scannedStep[k] && band) {
+          band.classList.add('on');
+          scannedStep[k] = true;
+        }
+      } else if (scannedStep[k]) {
+        scannedStep[k] = false;
+        if (band) band.classList.remove('on');
+      }
+    });
   });
-
-  // 阶段扫描提示条：上个阶段完成 → 下个阶段自上而下扫一遍。
-  // 第一阶段的上个阶段是「大标题水源」（始终通水），所以页面加载即扫一次；
-  // 第二阶段在第一阶段全部完成时扫一次（回退后重新解锁会再扫）。
-  const s1 = document.querySelector('[data-scan="1"]');
-  const s2 = document.querySelector('[data-scan="2"]');
-  if (!scanned.p1 && s1) {
-    s1.classList.add('on');
-    scanned.p1 = true;
-  }
-  if (ph1Done) {
-    if (!scanned.p2 && s2) {
-      s2.classList.add('on');
-      scanned.p2 = true;
-    }
-  } else if (scanned.p2) {
-    scanned.p2 = false;
-    if (s2) s2.classList.remove('on');
-  }
 }
 
 // 竖版长图自适应：按可用宽高取较小缩放比 → 整张图一屏可见、比例不变形。

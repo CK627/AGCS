@@ -130,7 +130,7 @@ STEP_OVERRIDES = {
     },
     'robot': {
         0: {'duration_min': 0}, 1: {'duration_min': 0}, 2: {'duration_min': 0},   # 电路板/视觉追踪/自主寻路
-        3: {'trigger': 'CAPTURE', 'duration_min': 0, 'end_keyword': 'END'},       # 自动抓取：CAPTURE 触发、END 结束
+        3: {'trigger': 'CAPTURE', 'duration_min': 0},       # 自动抓取：CAPTURE 触发即完成（不等待 END，避免卡进度）
     },
 }
 PROGRESS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
