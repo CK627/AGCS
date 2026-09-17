@@ -311,29 +311,38 @@ function buildFlowSvg() {
       s += flPipe(`M${gapX} ${yCol} L${railX + 6.5} ${yCol}`, 'p-mg2',
                   { delay: outLDelay + fillDur(8) * 0.8 });
     } else {
-      // 单行：落点正好在横管中点，向左右分流 → 每列头顶滴入；
-      // 列底再滴出 → 底部收集管从右往左汇流 → 回到主管道（分流/合并闭环）
+      // 单行：顶部分水器向左右分流 → 每根滴管进小目标框上方再一分二，
+      // 贴着小目标框两侧流下、框底二合一 → 底部收集管从右往左汇流回主管道。
       const yr = yR(0);
       const halfLen = (g.lastCx - g.firstCx) / 2;
       const halfDur = fillDur(halfLen);
-      const dripDur = fillDur(14);
       const yCol = rowsY + g.boxH + 8;
+      const stOff = 84;                            // 小目标框两侧分流管偏移（列间距 200，不会碰相邻列）
       s += flPipe(`M${cx} ${yr} L${g.firstCx} ${yr}`, `p-dist${i}-l`, { delay: distDelay });
       s += flPipe(`M${cx} ${yr} L${g.lastCx} ${yr}`, `p-dist${i}-r`, { delay: distDelay });
       g.rows[0].forEach((txt, j) => {
+        const ccx = colCx(j);
         const frac = halfLen > 0 ? Math.abs(colCx(j) - cx) / halfLen : 0;
         const dripDelay = distDelay + halfDur * frac;
-        s += flPipe(`M${colCx(j)} ${yr} L${colCx(j)} ${rowsY}`, `p-drip${i}-${j}`, { delay: dripDelay });
-        s += flPipe(`M${colCx(j)} ${rowsY + g.boxH} L${colCx(j)} ${yCol}`, `p-out${i}-${j}`,
-                    { delay: dripDelay + dripDur * 0.85 });
+        const splitDelay = dripDelay + fillDur(8) * 0.8;
+        const sideDelay = splitDelay + 0.55;
+        const mergeDelay = sideDelay + 0.55;
+        const splitY = rowsY - 6;                  // 小目标框顶上方：一分二
+        s += flPipe(`M${ccx} ${yr} L${ccx} ${splitY}`, `p-drip${i}-${j}`, { delay: dripDelay });
+        s += flPipe(`M${ccx} ${splitY} L${ccx - stOff} ${splitY}`, `p-st${i}-${j}-tl`, { delay: splitDelay });
+        s += flPipe(`M${ccx} ${splitY} L${ccx + stOff} ${splitY}`, `p-st${i}-${j}-tr`, { delay: splitDelay });
+        s += flPipe(`M${ccx - stOff} ${splitY} L${ccx - stOff} ${yCol}`, `p-st${i}-${j}-l`, { delay: sideDelay });
+        s += flPipe(`M${ccx + stOff} ${splitY} L${ccx + stOff} ${yCol}`, `p-st${i}-${j}-r`, { delay: sideDelay });
+        s += flPipe(`M${ccx - stOff} ${yCol} L${ccx} ${yCol}`, `p-st${i}-${j}-bl`, { delay: mergeDelay });
+        s += flPipe(`M${ccx + stOff} ${yCol} L${ccx} ${yCol}`, `p-st${i}-${j}-br`, { delay: mergeDelay });
       });
       for (let j = 1; j < g.cols; j++) {
         const frac = halfLen > 0 ? Math.abs(colCx(j) - cx) / halfLen : 0;
         s += flPipe(`M${colCx(j)} ${yCol} L${colCx(j - 1)} ${yCol}`, `p-col${i}-${j}`,
-                    { delay: distDelay + halfDur * frac + dripDur * 1.7 });
+                    { delay: distDelay + halfDur * frac + 2.0 });
       }
       s += flPipe(`M${g.firstCx} ${yCol} L${railX + 6.5} ${yCol}`, `p-mg${i}`,
-                  { delay: distDelay + dripDur * 1.7 });
+                  { delay: distDelay + 2.0 });
     }
 
     // —— 再画框和文字（盖住上面的管子端点） ——
@@ -352,12 +361,9 @@ function buildFlowSvg() {
         const ccx = bx + L.stW / 2;
         const nCh = Array.from(txt).length;
         const ty0 = ry + g.boxH / 2 - (nCh - 1) * 13.6 / 2 + 4.6;
-        const barH = g.boxH - 16;
         s += `<g class="stepg pending" data-stepg="${i}:${idx}">`
            + `<rect class="fl-step" x="${bx}" y="${ry}" width="${L.stW}" height="${g.boxH}" rx="6"/>`
            + vText(txt, ccx, ty0, 'v-t', 13.6)
-           + `<rect class="fl-bar-bg" x="${bx + 6}" y="${ry + 8}" width="4" height="${barH}" rx="2"/>`
-           + `<rect class="fl-bar-fill" x="${bx + 6}" y="${ry + 8}" width="4" height="${barH}" rx="2"/>`
            + `</g>`;
         idx++;
       });
@@ -367,6 +373,14 @@ function buildFlowSvg() {
   // ⑦ 综合展示（水由主管道从左侧送进来，见 ⑤）
   s += `<rect class="flow-box struct" data-box="bot" x="${cx - L.botW / 2}" y="${yBot}" width="${L.botW}" height="${L.botH}" rx="8"/>`;
   s += `<text class="flow-t title center" x="${cx}" y="${yBot + L.botH / 2}">综合展示：自动巡检与捕获</text>`;
+
+  // ⑧ 阶段扫描提示条：上个阶段完成后，下个阶段从上到下扫一遍（触发见 applyFlowStates）
+  s += `<defs>`
+     + `<clipPath id="scanClip1"><rect x="0" y="${yPh1}" width="${W}" height="${yPh2 - yPh1}"/></clipPath>`
+     + `<clipPath id="scanClip2"><rect x="0" y="${yPh2}" width="${W}" height="${yBot + L.botH - yPh2}"/></clipPath>`
+     + `</defs>`;
+  s += `<rect class="scan-band" data-scan="1" clip-path="url(#scanClip1)" x="0" y="0" width="${W}" height="90" rx="10"/>`;
+  s += `<rect class="scan-band" data-scan="2" clip-path="url(#scanClip2)" x="0" y="0" width="${W}" height="90" rx="10"/>`;
   s += `</svg>`;
   return s;
 }
@@ -396,6 +410,9 @@ function modState(steps) {
 }
 
 const stepPipe = st => (st === 'done' ? 'done' : (st === 'active' ? 'live' : 'pending'));
+
+// 阶段扫描提示条是否已经放过（每个阶段只在解锁时扫一次）
+const scanned = { p1: false, p2: false };
 
 function applyFlowStates(data) {
   const byKey = {};
@@ -487,13 +504,32 @@ function applyFlowStates(data) {
       sts.forEach((c, j) => {
         const cp = gatedStep(c);
         setP(`p-drip${i}-${j}`, cp);
-        setP(`p-out${i}-${j}`, cp);
+        ['tl', 'tr', 'l', 'r', 'bl', 'br'].forEach(side => setP(`p-st${i}-${j}-${side}`, cp));
       });
       for (let j = 1; j < g.cols; j++) setP(`p-col${i}-${j}`, gatedStep(sts[j]));
       setP(`p-mg${i}`, gatedStep(sts[0]));
     }
     sts.forEach((c, j) => setCls(`[data-stepg="${i}:${j}"]`, `stepg ${c}`));
   });
+
+  // 阶段扫描提示条：上个阶段完成 → 下个阶段自上而下扫一遍。
+  // 第一阶段的上个阶段是「大标题水源」（始终通水），所以页面加载即扫一次；
+  // 第二阶段在第一阶段全部完成时扫一次（回退后重新解锁会再扫）。
+  const s1 = document.querySelector('[data-scan="1"]');
+  const s2 = document.querySelector('[data-scan="2"]');
+  if (!scanned.p1 && s1) {
+    s1.classList.add('on');
+    scanned.p1 = true;
+  }
+  if (ph1Done) {
+    if (!scanned.p2 && s2) {
+      s2.classList.add('on');
+      scanned.p2 = true;
+    }
+  } else if (scanned.p2) {
+    scanned.p2 = false;
+    if (s2) s2.classList.remove('on');
+  }
 }
 
 // 竖版长图自适应：按可用宽高取较小缩放比 → 整张图一屏可见、比例不变形。

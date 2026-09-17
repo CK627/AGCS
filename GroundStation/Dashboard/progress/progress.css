@@ -84,24 +84,15 @@ body {
 /* ==================== 步骤节点（方框左侧竖条就是它的进度条） ====================
    文字一律竖排（一个汉字一行），和原《研发工单》图里一样。
    每个步骤列包在一个 .stepg 里，状态改在组上，内部元素跟着变。 */
-.stepg .fl-step { fill: #111c30; stroke: #334155; stroke-width: 1.2; }
-.stepg.done .fl-step { fill: #0f2e1d; stroke: #22c55e; }
-.stepg.active .fl-step {
-  fill: #0b2f3d; stroke: #22d3ee; stroke-width: 2;
-  animation: flPulse 1.8s ease-in-out infinite;
+.stepg .fl-step {
+  fill: #111c30; stroke: #334155; stroke-width: 1.2;
+  transition: fill 0.7s ease, stroke 0.7s ease;
 }
+.stepg.done .fl-step { fill: #0f2e1d; stroke: #22c55e; }
+.stepg.active .fl-step { fill: #0b2f3d; stroke: #22d3ee; stroke-width: 2; }
 .stepg .v-t { font-size: 14px; fill: #94a3b8; text-anchor: middle; }
 .stepg.done .v-t { fill: #86efac; }
 .stepg.active .v-t { fill: #a5f3fc; font-weight: 600; }
-.stepg .fl-bar-bg { fill: #1e293b; }
-.stepg .fl-bar-fill { display: none; }
-.stepg.done .fl-bar-fill { display: block; fill: #22c55e; }
-.stepg.active .fl-bar-fill {
-  display: block; fill: #22d3ee;
-  transform-box: fill-box; transform-origin: 50% 100%; transform: scaleY(0.6);
-  animation: flShim 1.4s ease-in-out infinite;
-}
-@keyframes flShim { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 @keyframes flPulse { 0%, 100% { opacity: 0.75; } 50% { opacity: 1; } }
 
 /* ==================== 连线 = 管道（管壁 + 管腔 + 管内水流） ====================
@@ -144,6 +135,24 @@ body {
   animation: pipeCore var(--lap) linear var(--start) infinite;
 }
 @keyframes pipeCore { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -1; } }
+
+/* ==================== 阶段扫描提示条 ====================
+   上个阶段完成后，下个阶段用一条青色光带从上到下扫一遍；
+   .on 由 applyFlowStates 在解锁时加上（每个阶段只扫一次）。 */
+.scan-band {
+  fill: rgba(34, 211, 238, 0.10);
+  stroke: rgba(34, 211, 238, 0.45);
+  stroke-width: 1.5;
+  opacity: 0;
+  pointer-events: none;
+}
+.scan-band.on { animation: scanSweep 2.8s cubic-bezier(0.4, 0, 0.2, 1) 1 both; }
+@keyframes scanSweep {
+  0% { transform: translateY(-110px); opacity: 0; }
+  10% { opacity: 1; }
+  85% { opacity: 1; }
+  100% { transform: translateY(1600px); opacity: 0; }
+}
 
 /* ==================== 阶段条 ====================
    发光在「框」上（彩色背景 + 彩色描边），文字保持正常白字；
