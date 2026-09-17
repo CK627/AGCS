@@ -82,7 +82,7 @@ function pipeDir(d) {
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 // 灌水时长 / 光带循环时长都按管长算：长管灌得久、走一圈也久，流速整体一致
-const fillDur = len => clamp(len * 0.0018, 0.45, 1.8);
+const fillDur = len => clamp(len * 0.0024, 0.8, 2.4);
 const lapDur = len => clamp(len / 130, 1.0, 4.5);
 
 // 每个模块「步骤组」的几何（只跟 FLOW_STEPS 常量有关，与进度数据无关）
