@@ -82,7 +82,7 @@ function pipeDir(d) {
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 // 灌水时长 / 光带循环时长都按管长算：长管灌得久、走一圈也久，流速整体一致
-const fillDur = len => clamp(len * 0.0022, 0.75, 3.0);
+const fillDur = len => clamp(len * 0.0012, 0.22, 1.4);
 const lapDur = len => clamp(len / 130, 1.0, 4.5);
 
 // 每个模块「步骤组」的几何（只跟 FLOW_STEPS 常量有关，与进度数据无关）
@@ -196,14 +196,14 @@ function buildFlowSvg() {
       s += flPipe(`M${cx} ${yPh1 + L.phH} L${cx} ${splitY}`, 'p-man-in0');
     } else {
       s += flPipe(`M${cx} ${manBy(i - 1) + L.manH + 8} L${cx} ${splitY}`, `p-man-out${i - 1}`,
-                  { delay: 1.7 });
+                  { delay: 0.36 });
     }
     s += flPipe(`M${cx} ${splitY} L${manSideL} ${splitY}`, `p-man${i}-tl`);
     s += flPipe(`M${cx} ${splitY} L${manSide} ${splitY}`, `p-man${i}-tr`);
-    s += flPipe(`M${manSideL} ${splitY} L${manSideL} ${mergeY}`, `p-man${i}-l`, { delay: 0.55 });
-    s += flPipe(`M${manSide} ${splitY} L${manSide} ${mergeY}`, `p-man${i}-r`, { delay: 0.55 });
-    s += flPipe(`M${manSideL} ${mergeY} L${cx} ${mergeY}`, `p-man${i}-bl`, { delay: 1.1 });
-    s += flPipe(`M${manSide} ${mergeY} L${cx} ${mergeY}`, `p-man${i}-br`, { delay: 1.1 });
+    s += flPipe(`M${manSideL} ${splitY} L${manSideL} ${mergeY}`, `p-man${i}-l`, { delay: 0.12 });
+    s += flPipe(`M${manSide} ${splitY} L${manSide} ${mergeY}`, `p-man${i}-r`, { delay: 0.12 });
+    s += flPipe(`M${manSideL} ${mergeY} L${cx} ${mergeY}`, `p-man${i}-bl`, { delay: 0.24 });
+    s += flPipe(`M${manSide} ${mergeY} L${cx} ${mergeY}`, `p-man${i}-br`, { delay: 0.24 });
     s += `<rect class="flow-box mod" data-man="${i}" x="${cx - L.manW / 2}" y="${by}" width="${L.manW}" height="${L.manH}" rx="6"/>`;
     lines.forEach((t, k) => {
       s += `<text class="flow-t center" x="${cx}" y="${by + L.manH / 2 - (lines.length - 1) * 8.5 + k * 17}">${t}</text>`;
@@ -215,14 +215,14 @@ function buildFlowSvg() {
   const railX = L.RAIL;
   const railY0 = yPh2 + L.phH / 2;                 // 主管道起点：第二阶段的左侧
   const railY1 = yBot + L.botH / 2;                // 主管道终点：综合展示的左侧
-  s += flPipe(`M${cx} ${manBy(2) + L.manH + 8} L${cx} ${yPh2}`, 'p-man2-ph2', { delay: 1.7 });
+  s += flPipe(`M${cx} ${manBy(2) + L.manH + 8} L${cx} ${yPh2}`, 'p-man2-ph2', { delay: 0.36 });
   s += flPipe(`M${cx - L.phW / 2} ${railY0} L${railX} ${railY0}`, 'p-ph2-rail');
   s += phaseBox(cx - L.phW / 2, yPh2, L.phW, L.phH, '第二阶段研发自动化系统', 'pt2', '#a78bfa', 'ph2');
 
   // ⑤ 主管道贴着左侧一路往下，最后汇进综合展示。
   //    先等出水管把水送到主管道顶部，再让主管道自上而下灌水。
   const stubLen = (cx - L.phW / 2) - railX;
-  const railBase = fillDur(stubLen) * 0.85;
+  const railBase = fillDur(stubLen) * 0.5;
   const railFillT = fillDur(railY1 - railY0);
   s += flPipe(`M${railX} ${railY0} L${railX} ${railY1}`, 'p-rail', { delay: railBase, mult: 1.3 });
   s += flPipe(`M${railX} ${railY1} L${cx - L.botW / 2} ${railY1}`, 'p-rail-fin', { mult: 1.3 });
@@ -244,14 +244,14 @@ function buildFlowSvg() {
     const sideL = cx - L.modW / 2 - 14;
     const sideR = cx + L.modW / 2 + 14;
     const branchDelay = railBase
-      + railFillT * clamp((splitY - railY0) / (railY1 - railY0), 0, 1) * 0.9;
+      + railFillT * clamp((splitY - railY0) / (railY1 - railY0), 0, 1) * 0.25;
     const branchDur = fillDur(cx - (railX + 6.5));
-    const splitDelay = branchDelay + branchDur * 0.8;
-    const sideDelay = splitDelay + 0.55;
-    const mergeDelay = sideDelay + 0.55;
-    const dropDelay = mergeDelay + 0.6;
+    const splitDelay = branchDelay + branchDur * 0.5;
+    const sideDelay = splitDelay + 0.1;
+    const mergeDelay = sideDelay + 0.1;
+    const dropDelay = mergeDelay + 0.1;
     const dropDur = fillDur(yR(0) - mergeY);
-    const distDelay = dropDelay + dropDur * 0.8;
+    const distDelay = dropDelay + dropDur * 0.5;
 
     // 组虚线框（先画）
     s += `<rect class="flow-group" data-mgroup="${i}" x="${M}" y="${gy}" width="${grpW}" height="${g.H}" rx="12"/>`;
@@ -277,11 +277,11 @@ function buildFlowSvg() {
       const legDur = fillDur(rNy - yTop);
       const inDur = fillDur(g.rowX - leftX);
       const segDur = fillDur(L.stGap);
-      const legDelay = distDelay + topDur * 0.85;
-      const r0InDelay = legDelay + legDur * 0.4;
-      const r1InDelay = legDelay + legDur * 0.9;
-      const r0Seg = r0InDelay + inDur * 0.8;
-      const r1Seg = r1InDelay + inDur * 0.8;
+      const legDelay = distDelay + topDur * 0.5;
+      const r0InDelay = legDelay + legDur * 0.25;
+      const r1InDelay = legDelay + legDur * 0.5;
+      const r0Seg = r0InDelay + inDur * 0.5;
+      const r1Seg = r1InDelay + inDur * 0.5;
       s += flPipe(`M${cx} ${yTop} L${leftX} ${yTop}`, 'p-hub-top', { delay: distDelay });
       s += flPipe(`M${leftX} ${yTop} L${leftX} ${rNy}`, 'p-hub-leg', { delay: legDelay });
       s += flPipe(`M${leftX} ${r1y} L${g.rowX} ${r1y}`, 'p-hub-r0-in', { delay: r0InDelay });
@@ -291,7 +291,7 @@ function buildFlowSvg() {
         const base = r === 0 ? r0Seg : r1Seg;
         for (let j = 1; j < row.length; j++) {
           s += flPipe(`M${colCx(j - 1) + L.stW / 2} ${mid} L${colCx(j) - L.stW / 2} ${mid}`,
-                      `p-hub-r${r}-${j}`, { delay: base + (j - 1) * 0.12 });
+                      `p-hub-r${r}-${j}`, { delay: base + (j - 1) * 0.06 });
         }
       });
       // 每列左进右出：从左缘中缝一分二，一路贴框顶、一路贴框底绕过，右缘中缝二合一
@@ -303,7 +303,7 @@ function buildFlowSvg() {
           const ry = rowsY + r * (g.boxH + L.rowGap);
           const topY = ry - 6;
           const botY = ry + g.boxH + 6;
-          const dly = base + (j === 0 ? 0 : (j - 1) * 0.12) + 0.15;
+          const dly = base + (j === 0 ? 0 : (j - 1) * 0.06) + 0.08;
           s += flPipe(`M${bx} ${mid} L${bx} ${topY} L${bx + L.stW} ${topY} L${bx + L.stW} ${mid}`,
                       `p-hub-r${r}-${j}-t`, { delay: dly });
           s += flPipe(`M${bx} ${mid} L${bx} ${botY} L${bx + L.stW} ${botY} L${bx + L.stW} ${mid}`,
@@ -316,8 +316,8 @@ function buildFlowSvg() {
       const row1Bottom = row1Top + g.boxH;
       const yCol = row1Bottom + 8;                                   // 底部收集管高度
       const gapX = colCx(1) + L.stW / 2 + L.stGap / 2;               // 第二行 col1/col2 之间的缝
-      const outRDelay = r0Seg + 0.3 + segDur * 0.8;
-      const outLDelay = r1Seg + 0.3 + segDur * 0.8;
+      const outRDelay = r0Seg + 0.12 + segDur * 0.4;
+      const outLDelay = r1Seg + 0.12 + segDur * 0.4;
       const sideX = colCx(2) + L.stW / 2 + 14;                       // 右侧竖管（贴着两列右侧下行）
       const sideX2 = colCx(2) + L.stW / 2 + 28;                      // 第二行右侧竖管（错开一行）
       s += flPipe(`M${colCx(2) + L.stW / 2} ${r1y} L${sideX} ${r1y} L${sideX} ${yCol} L${gapX} ${yCol}`,
@@ -325,7 +325,7 @@ function buildFlowSvg() {
       s += flPipe(`M${colCx(2) + L.stW / 2} ${rNy} L${sideX2} ${rNy} L${sideX2} ${yCol} L${sideX} ${yCol}`,
                   'p-hub-out-l', { delay: outLDelay });
       s += flPipe(`M${gapX} ${yCol} L${railX + 6.5} ${yCol}`, 'p-mg2',
-                  { delay: outLDelay + fillDur(8) * 0.8 });
+                  { delay: outLDelay + fillDur(8) * 0.4 });
     } else {
       // 单行：顶部分水器向左右分流 → 每根滴管进小目标框上方再一分二，
       // 贴着小目标框两侧流下、框底二合一 → 底部收集管从右往左汇流回主管道。
@@ -340,9 +340,9 @@ function buildFlowSvg() {
         const ccx = colCx(j);
         const frac = halfLen > 0 ? Math.abs(colCx(j) - cx) / halfLen : 0;
         const dripDelay = distDelay + halfDur * frac;
-        const splitDelay = dripDelay + fillDur(8) * 0.8;
-        const sideDelay = splitDelay + 0.55;
-        const mergeDelay = sideDelay + 0.55;
+        const splitDelay = dripDelay + 0.08;
+        const sideDelay = splitDelay + 0.08;
+        const mergeDelay = sideDelay + 0.08;
         const splitY = rowsY - 6;                  // 小目标框顶上方：一分二
         s += flPipe(`M${ccx} ${yr} L${ccx} ${splitY}`, `p-drip${i}-${j}`, { delay: dripDelay });
         s += flPipe(`M${ccx} ${splitY} L${ccx - stOff} ${splitY}`, `p-st${i}-${j}-tl`, { delay: splitDelay });
@@ -355,10 +355,10 @@ function buildFlowSvg() {
       for (let j = 1; j < g.cols; j++) {
         const frac = halfLen > 0 ? Math.abs(colCx(j) - cx) / halfLen : 0;
         s += flPipe(`M${colCx(j)} ${yCol} L${colCx(j - 1)} ${yCol}`, `p-col${i}-${j}`,
-                    { delay: distDelay + halfDur * frac + 2.0 });
+                    { delay: distDelay + halfDur * frac + 0.36 });
       }
       s += flPipe(`M${g.firstCx} ${yCol} L${railX + 6.5} ${yCol}`, `p-mg${i}`,
-                  { delay: distDelay + 2.0 });
+                  { delay: distDelay + 0.36 });
     }
 
     // —— 再画框和文字（盖住上面的管子端点） ——
