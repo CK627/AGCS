@@ -192,16 +192,6 @@ do_status() {
         echo "进度流程图: 运行中 (PID: $ppid)"
         echo "           访问 http://localhost:$pport"
     fi
-    echo ""
-
-    if [ -f "$PROJECT_DIR/logs/nohup.log" ]; then
-        echo "── 中枢最近日志 ──"
-        tail -8 "$PROJECT_DIR/logs/nohup.log"
-    fi
-    if [ -f "$PROJECT_DIR/logs/progress.log" ]; then
-        echo "── 进度流程图最近日志 ──"
-        tail -6 "$PROJECT_DIR/logs/progress.log"
-    fi
 }
 
 # ============================================
