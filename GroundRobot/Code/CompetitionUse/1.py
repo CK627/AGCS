@@ -61,7 +61,8 @@ GRIPPER_OPEN = 400   # 放下时 25 号夹爪打开的脉宽，越小张得越�
 # 所以「往上抬」= 把 22 调到比夹取位大。现场实测 785 抬得太高（395→785，+390），
 # 450 是小幅抬（395→450，+55）。命令行传 --pull-up N 试值，不用改代码。
 PULL_UP_22 = 450
-PICK1_RESTORE_24 = 160  # 第一次夹取结束后恢复时 24 号腕俯仰的脉宽（不是复位位 330，现场改的）
+PICK1_RESTORE_24 = 260  # 第一次夹取结束后恢复时 24 号腕俯仰的脉宽（不是复位位 330）；
+                        # 160 太低（相机朝下看不到目标、还可能照到夹爪里的方块），现场改 260。
 MOVE_SPEED = 50      # 六足直线前进/后退的速度，越大走得越快
 TURN_SPEED = 30      # 六足左转/右转的速度，越大转得越快
 STRIDE_SCALE = 0.946  # 前进/后退名义步幅的缩放系数；实际步幅偏大就 <1（实测多走 5.7% → 0.946）
@@ -650,12 +651,20 @@ def main():
             picked_count += 1
             report(picked_count=picked_count,
                    message='第 %d 次夹取完成' % picked_count)
+            # 夹取时手臂大幅摆动会带动机身，IMU 会积出假转角；重设基准丢掉这段，
+            # 否则下一段直线的 e 会被灌进几十度假误差（现场 e 跳到 35° 就是这里）。
+            imu_state['tracker'].since_last()
+            if isinstance(fusion, ReferenceFusion):
+                fusion.reset()   # 方块被抓走，参照失效，等下一个方块重新初始化
         elif name == 'place':
             place_count += 1
             print('%d/%d place%d' % (i, len(actions), place_count), flush=True)
             pulses = {int(k): int(v) for k, v in act.get('pulses', {}).items()} if act.get('pulses') else None
             do_place(board, place_count, pulses)
             report(message='第 %d 次放下完成' % place_count)
+            imu_state['tracker'].since_last()
+            if isinstance(fusion, ReferenceFusion):
+                fusion.reset()   # 方块已放下，参照失效，等下一个方块重新初始化
         elif name == 'stand':
             ik.stand(ik.initial_pos, t=500)
 

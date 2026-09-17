@@ -438,6 +438,20 @@ class ReferenceFusion(object):
         """与 LaneFusion.update_bearing 同名的观测入口，方便 1.py 无差别调用。"""
         return self.update(cx_px, range_mm)
 
+    def reset(self):
+        """夹取/放下后调用：方块已被抓走/放下，参照失效，复位等下一个方块重新初始化。
+
+        不 reset 的话，旧方块位置 (bx,by) 还留在状态里，下一段直线若再检测到（夹爪里
+        的方块 / 别的红目标），会把「实测方位 − 旧参照方位」当成巨大漂移 → e 又飙。
+        """
+        self.initialized = False
+        self.e = 0.0
+        self.cross = 0.0
+        self.p00, self.p01, self.p10, self.p11 = 4.0, 0.0, 0.0, 400.0
+        self.bx = 0.0
+        self.by = 0.0
+        self.updates = 0
+
     def __repr__(self):
         return ('ReferenceFusion(e=%+.2fdeg cross=%+.1fmm block=(%+.0f,%+.0f) n=%d)'
                 % (self.e, self.cross, self.bx, self.by, self.updates))
