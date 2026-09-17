@@ -61,6 +61,7 @@ GRIPPER_OPEN = 400   # 放下时 25 号夹爪打开的脉宽，越小张得越�
 PULL_UP_22 = 450
 MOVE_SPEED = 50      # 六足直线前进/后退的速度，越大走得越快
 TURN_SPEED = 30      # 六足左转/右转的速度，越大转得越快
+STRIDE_SCALE = 1.0   # 前进/后退名义步幅的缩放系数；实际步幅偏大就 <1（实测多走 5.7% → 0.946）
 GYRO_SCALE_LEFT = 1.177   # IMU 左转时陀螺仪积分修正比例
 GYRO_SCALE_RIGHT = 1.199  # IMU 右转时陀螺仪积分修正比例
 # 重标零漂前先等机身晃动静下来再采样。这个方法基本都在刚转完弯之后调用，六足转身时
@@ -319,11 +320,12 @@ def angle_error(current, target):
 
 
 def move_one_chunk(ik, move, forward):
-    """只走一小段前进或后退。"""
+    """只走一小段前进或后退（按 STRIDE_SCALE 缩放实际步幅）。"""
+    m = int(round(move * STRIDE_SCALE))
     if forward:
-        ik.go_forward(ik.initial_pos, 2, move, MOVE_SPEED, 1)
+        ik.go_forward(ik.initial_pos, 2, m, MOVE_SPEED, 1)
     else:
-        ik.back(ik.initial_pos, 2, move, MOVE_SPEED, 1)
+        ik.back(ik.initial_pos, 2, m, MOVE_SPEED, 1)
 
 
 def move_straight_fusion(ik, board, detector, imu_state, tracker, distance_mm,
@@ -507,6 +509,7 @@ def start_run_log():
 
 def main():
     """主流程：按 JSON 调用移动、转弯、夹取和放下。"""
+    global STRIDE_SCALE
     parser = argparse.ArgumentParser(description='融合导航 + JSON 路线运行')
     parser.add_argument('--color', default='red',
                         choices=['red', 'green', 'blue', 'yellow', 'cz1'])
@@ -514,6 +517,8 @@ def main():
     parser.add_argument('--pull-up', type=int, default=None,
                         help='第一次夹取后拔起的脉宽（22 号肩，默认 %d）；'
                              '幅度不合适现场试值' % PULL_UP_22)
+    parser.add_argument('--stride-scale', type=float, default=STRIDE_SCALE,
+                        help='前进/后退步幅缩放（实际步幅偏大就 <1，如 0.946 抵消多走的 5.7%%）')
     parser.add_argument('--f-px', type=float, default=FUSION_F_PX,
                         help='320 坐标系下的等效焦距像素（需标定）')
     parser.add_argument('--cx0', type=float, default=FUSION_CX0,
@@ -528,6 +533,8 @@ def main():
     parser.add_argument('--fusion-head-gain', type=float, default=FUSION_HEAD_GAIN)
     parser.add_argument('--fusion-cross-gain', type=float, default=FUSION_CROSS_GAIN)
     args = parser.parse_args()
+
+    STRIDE_SCALE = args.stride_scale
 
     log_file = start_run_log()
 
