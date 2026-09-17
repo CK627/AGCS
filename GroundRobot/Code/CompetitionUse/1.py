@@ -2,9 +2,9 @@
 # coding=utf8
 """1.py —— 融合导航 + JSON 路线（独立脚本，不依赖 NO6/NO7）。
 
-直线段走融合导航（LaneFusion + LaneController：相机写状态、IMU 管执行、
-先航向后横向），夹取/放下/路线读 fixed_route.json 的固定脉宽，不碰 YOLO。
-YOLO 夹取那套在 2.py。
+直线段走融合导航（ReferenceFusion + LaneController：跟踪方块相对位置、预测它随
+机器人前进的变化、把「实测-预测」的差值当漂移，先航向后横向），夹取/放下/路线读
+json1.json 的固定脉宽，不碰 YOLO。YOLO 夹取那套在 2.py。
 """
 
 import argparse
@@ -38,6 +38,7 @@ from agcs_lib import (
 from agcs_lib.heading_fusion import (
     LaneFusion,
     LaneController,
+    ReferenceFusion,
     range_from_radius_px,
 )
 
@@ -354,12 +355,9 @@ def move_straight_fusion(ik, board, detector, imu_state, tracker, distance_mm,
                 if r is not None:
                     marker_range_mm = max(80.0, r)
         if cx is not None:
-            # 第一次看到色块时，把它此刻的像素当成基准 cx0（保持初始方位，不怼画面中心）。
-            # 之前 cx0 写死 160（画面中心），等于「朝色块走」；色块放在路线旁边时会把路线带偏。
-            if fusion.updates == 0:
-                fusion.cx0 = cx
-                print('融合基准 cx0 → %.1f（色块初始像素）' % cx, flush=True)
-            fusion.update_bearing(cx, marker_range_mm)
+            # ReferenceFusion：跟踪方块相对位置，预测它随机器人前进的变化，
+            # 只把「实测 - 预测」的差值当漂移——不再「朝色块走」。
+            fusion.update(cx, marker_range_mm)
 
         turn, lateral = ctrl.decide(fusion.heading_error, fusion.cross_error)
         if turn != 0.0:
@@ -402,11 +400,12 @@ def feed_turn_to_fusion(imu_state, tracker, fusion, yaw_before, cmd_right_deg):
     """
     d_yaw_left = imu_state['yaw'] - yaw_before
     residual = -d_yaw_left - cmd_right_deg      # 右正：实际 − 命令
-    fusion.predict(residual, ds_mm=0.0)
+    # ReferenceFusion：按「命令转角」旋转方块位置，残差（实际-命令）由下次 update 的方位观测吸收
+    fusion.predict(cmd_right_deg, ds_mm=0.0)
     # 把 since_last 的基准挪到「此刻」，否则直线段第一次取值会把转弯尾巴再积一遍
     tracker.since_last()
-    print('转弯残差 %+.2f°（IMU 实测 %+.2f° / 命令 %+.1f°）-> e=%+.2f°'
-          % (residual, -d_yaw_left, cmd_right_deg, fusion.heading_error), flush=True)
+    print('转弯命令 %+.1f°（IMU 实测 %+.2f° / 残差 %+.2f°）'
+          % (cmd_right_deg, -d_yaw_left, residual), flush=True)
     return residual
 
 
@@ -565,7 +564,9 @@ def main():
            last_result=None,
            message='自动捕获，颜色=%s' % args.color)
 
-    fusion = LaneFusion(f_px=args.f_px, cx0=args.cx0)
+    fusion = ReferenceFusion(f_px=args.f_px, cx0=args.cx0,
+                             f_px_full=FUSION_F_PX_FULL,
+                             marker_size_mm=args.marker_size_mm)
     ctrl = LaneController(head_gain=args.fusion_head_gain,
                           cross_gain=args.fusion_cross_gain)
     marker_range = args.marker_range

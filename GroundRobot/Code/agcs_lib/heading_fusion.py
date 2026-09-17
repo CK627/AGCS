@@ -263,3 +263,87 @@ class LaneController(object):
 
         self.last_action = 'none'
         return 0.0, 0.0
+
+
+class ReferenceFusion(object):
+    """按路线走、方块当固定参照的融合（跟踪方块位置 + 估计漂移）。
+
+    与 LaneFusion 的区别：
+    - LaneFusion 假设机器人朝方块走（保持方块方位不变），方块放在路线外侧时会把
+      机器人带偏（现场「一路往外走」的根因）；
+    - 本类把方块当固定参照物，跟踪它相对机器人的位置 (bx, by)，随机器人前进/转弯
+      预测它的应有变化，把「实测 - 预测」的差值当漂移，用来纠正航向/横向。
+
+    同时用方块视半径动态估距离（marker_size_mm > 0 时），解决「越近面积越大」导致
+    marker_range 固定值失效的问题。
+
+    坐标约定：
+    - bx / by：方块相对机器人的位置，mm；bx 右正、by 前正。
+    - 方位角 β = atan2(bx, by)，右正。
+    - e：航向误差，度，右正；cross：横向偏差，mm，右正。
+    """
+
+    def __init__(self, f_px=419.0, cx0=160.0, f_px_full=838.0, marker_size_mm=0.0):
+        self.f_px = float(f_px)
+        self.cx0 = float(cx0)
+        self.f_px_full = float(f_px_full)
+        self.marker_size_mm = float(marker_size_mm)
+        self.bx = 0.0        # 方块横向位置（mm，右正）
+        self.by = 0.0        # 方块前向位置（mm，前正）
+        self.e = 0.0         # 航向误差（度，右正）
+        self.cross = 0.0     # 横向偏差（mm，右正）
+        self.initialized = False
+
+    @property
+    def heading_error(self):
+        return self.e
+
+    @property
+    def cross_error(self):
+        return self.cross
+
+    def init(self, cx_px, range_mm):
+        """第一次看到方块：由方位角 + 距离定出方块相对位置。"""
+        beta = math.atan((cx_px - self.cx0) / self.f_px)
+        self.bx = range_mm * math.sin(beta)
+        self.by = range_mm * math.cos(beta)
+        self.initialized = True
+
+    def predict(self, d_theta_deg, ds_mm=0.0, lateral_mm=0.0):
+        """机器人转 d_theta(右正)、前进 ds、右横移 lateral 后，更新方块相对位置。
+
+        d_theta_deg 用「命令值」；转弯残差（实际 - 命令）不进这里，而是被下一次
+        update 的方位观测残差吸收——这样 e/cross 才表示「相对理想路线的漂移」。
+        """
+        if not self.initialized:
+            return
+        # 转弯：机器人转 d_theta（右正），方块在机器人系里反向转 +d_theta
+        # （机器人顺时针转，方块相对逆时针转同样角度）
+        if d_theta_deg:
+            th = math.radians(d_theta_deg)
+            bx = self.bx * math.cos(th) - self.by * math.sin(th)
+            by = self.bx * math.sin(th) + self.by * math.cos(th)
+            self.bx, self.by = bx, by
+        # 前进：方块相对后移
+        self.by -= ds_mm
+        # 横移（右正）：方块相对左移
+        self.bx -= lateral_mm
+
+    def update(self, cx_px, range_mm):
+        """用方块实测方位/距离更新漂移估计，返回 (heading_error_deg, cross_mm)。
+
+        注意：(bx, by) 只由 predict 用「命令运动」推进，这里**不改** (bx, by)。
+        漂移 = 预测位置 - 实测位置，一旦把实测写回 (bx, by)，预测就会被「带偏」，
+        漂移就估不出来了。
+        """
+        if not self.initialized:
+            self.init(cx_px, range_mm)
+            return 0.0, 0.0
+        beta_meas = math.atan((cx_px - self.cx0) / self.f_px)
+        bx_m = range_mm * math.sin(beta_meas)
+        # 漂移（右正）：机器人右偏 cross → 方块相对左偏 → cross = 预测bx - 实测bx
+        self.cross = self.bx - bx_m
+        # 航向误差（右正）：机器人右偏 e → 方块方位左偏 e → e = 预测β - 实测β
+        beta_pred = math.atan2(self.bx, self.by)
+        self.e = math.degrees(beta_pred - beta_meas)
+        return self.e, self.cross
