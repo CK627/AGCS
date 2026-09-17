@@ -61,7 +61,7 @@ GRIPPER_OPEN = 400   # 放下时 25 号夹爪打开的脉宽，越小张得越�
 PULL_UP_22 = 450
 MOVE_SPEED = 50      # 六足直线前进/后退的速度，越大走得越快
 TURN_SPEED = 30      # 六足左转/右转的速度，越大转得越快
-STRIDE_SCALE = 1.0   # 前进/后退名义步幅的缩放系数；实际步幅偏大就 <1（实测多走 5.7% → 0.946）
+STRIDE_SCALE = 0.946  # 前进/后退名义步幅的缩放系数；实际步幅偏大就 <1（实测多走 5.7% → 0.946）
 GYRO_SCALE_LEFT = 1.177   # IMU 左转时陀螺仪积分修正比例
 GYRO_SCALE_RIGHT = 1.199  # IMU 右转时陀螺仪积分修正比例
 # 重标零漂前先等机身晃动静下来再采样。这个方法基本都在刚转完弯之后调用，六足转身时
@@ -567,6 +567,7 @@ def main():
     marker_range = args.marker_range
     print('融合导航已开启：相机写状态 / IMU 管执行 / 状态不归零 '
           '(f_px=%.0f cx0=%.0f)' % (args.f_px, args.cx0), flush=True)
+    print('步幅缩放 stride_scale=%.3f' % STRIDE_SCALE, flush=True)
 
     restore_travel(board, GRIPPER_OPEN)
     print('自动捕获启动，颜色目标=%s' % args.color, flush=True)
