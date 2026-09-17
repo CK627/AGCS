@@ -291,13 +291,19 @@ class ReferenceFusion(object):
     """
 
     def __init__(self, f_px=419.0, cx0=160.0,
-                 q_head=0.05, q_cross=1.5, r_beta=0.03, cross_limit=800.0):
+                 q_head=0.05, q_cross=1.5, r_beta=0.03, cross_limit=800.0,
+                 min_ahead_mm=200.0, max_innov_deg=30.0):
         self.f_px = float(f_px)
         self.cx0 = float(cx0)
         self.q_head = float(q_head)
         self.q_cross = float(q_cross)
         self.r_beta = float(r_beta)
         self.cross_limit = abs(float(cross_limit))
+        # 方块前向距离小于这个值（太近/已到身侧）时，方位基准 atan2(bx,by) 对误差极敏感，
+        # 观测不可靠，跳过本次更新，冻结状态靠 IMU 短期精度继续走。
+        self.min_ahead_mm = float(min_ahead_mm)
+        # 创新门限（度）：单次观测残差超过它多半是野值/模型失配，直接丢弃，防止发散。
+        self.max_innov_deg = float(max_innov_deg)
 
         self.e = 0.0         # 航向误差（度，右正）
         self.cross = 0.0     # 横向偏差（mm，右正）
@@ -379,13 +385,23 @@ class ReferenceFusion(object):
             self.init(cx_px, range_mm)
             return self.e, self.cross
 
+        # 方块太近（即将到达身侧/身后）时，方位基准失效：atan2(bx, by) 对 by→0 极敏感，
+        # 会把小误差放大成几十度的假残差（现场 e 从 3° 跳到 149° 就是这里）。跳过。
+        if self.by < self.min_ahead_mm:
+            return self.e, self.cross
+
         beta_meas = math.atan((cx_px - self.cx0) / self.f_px) * _RAD   # 度
         beta_ref = math.atan2(self.bx, self.by) * _RAD                 # 度
         beta_rel = (beta_meas - beta_ref + 180.0) % 360.0 - 180.0
 
-        r = float(range_mm)
+        # 用跟踪到的前向距离 by（与 beta_ref 一致），不再用冻结的 marker_range，
+        # 否则越接近方块，模型 h 和基准 beta_ref 越对不上。
+        r = self.by
         h = math.atan2(-self.cross, r) * _RAD - self.e                 # 度
         y = (beta_rel - h + 180.0) % 360.0 - 180.0
+        # 创新门限：单次观测残差超阈值当野值丢掉，别让它把状态抽爆
+        if abs(y) > self.max_innov_deg:
+            return self.e, self.cross
 
         h0 = -1.0
         h1 = -r / (self.cross * self.cross + r * r) * _RAD
