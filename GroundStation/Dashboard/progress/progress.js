@@ -266,50 +266,58 @@ function buildFlowSvg() {
     s += flPipe(`M${sideR} ${mergeY} L${cx} ${mergeY}`, `p-mb${i}-br`, { delay: mergeDelay });
     s += flPipe(`M${cx} ${mergeY} L${cx} ${yR(0)}`, `p-d${i}`, { delay: dropDelay });
     if (g.rows.length > 1) {
-      // 多行（中枢互通）：水从中间落点往左走到最左端，沿竖管下行；
-      // 第一行、第二行都从左往右推进（与步骤先后一致），
-      // 两行最右列排入底部收集管，汇合后一起流回主管道。
-      const yTop = yR(0);
-      const leftX = g.rowX - 40;
-      const r1y = rowsY + g.boxH / 2;
-      const rNy = rowsY + (g.rows.length - 1) * (g.boxH + L.rowGap) + g.boxH / 2;
-      const topDur = fillDur(cx - leftX);
-      const legDur = fillDur(rNy - yTop);
-      const inDur = fillDur(g.rowX - leftX);
-      const segDur = fillDur(L.stGap);
-      const legDelay = distDelay + topDur * 0.85;
-      const r0InDelay = legDelay + legDur * 0.4;
-      const r1InDelay = legDelay + legDur * 0.9;
-      const r0Seg = r0InDelay + inDur * 0.8;
-      const r1Seg = r1InDelay + inDur * 0.8;
-      s += flPipe(`M${cx} ${yTop} L${leftX} ${yTop}`, 'p-hub-top', { delay: distDelay });
-      s += flPipe(`M${leftX} ${yTop} L${leftX} ${rNy}`, 'p-hub-leg', { delay: legDelay });
-      s += flPipe(`M${leftX} ${r1y} L${g.rowX} ${r1y}`, 'p-hub-r0-in', { delay: r0InDelay });
-      s += flPipe(`M${leftX} ${rNy} L${g.rowX} ${rNy}`, 'p-hub-r1-in', { delay: r1InDelay });
+      // 多行（中枢互通）：上下两行都和单行模块一致——分水器 → 每列一根管进小目标框
+      // 上方一分二、贴框两侧流下、框底二合一；第一行底部的收集管同时充当第二行的
+      // 分水器（中间横管），第二行底部再收集、从右往左汇流回主管道。
+      const yr0 = yR(0);
+      const row1Top = rowsY + g.boxH + L.rowGap;
+      const yMid = rowsY + g.boxH + 8;          // 第一行收集管 / 第二行分水器
+      const yCol = row1Top + g.boxH + 8;        // 第二行底部收集管
+      const stOff = 84;
+      const halfLen = (g.lastCx - g.firstCx) / 2;
+      const halfDur = fillDur(halfLen);
+      const splitY0 = rowsY - 6;
+      const splitY1 = row1Top - 6;
+      // 第一行分水器（接模块落管）
+      s += flPipe(`M${cx} ${yr0} L${g.firstCx} ${yr0}`, 'p-hub-d0-l', { delay: distDelay });
+      s += flPipe(`M${cx} ${yr0} L${g.lastCx} ${yr0}`, 'p-hub-d0-r', { delay: distDelay });
+      // 每一列：滴管 → 顶部分流 → 两侧流下 → 底部二合一
       g.rows.forEach((row, r) => {
-        const mid = r === 0 ? r1y : rNy;
-        const base = r === 0 ? r0Seg : r1Seg;
-        for (let j = 1; j < row.length; j++) {
-          s += flPipe(`M${colCx(j - 1) + L.stW / 2} ${mid} L${colCx(j) - L.stW / 2} ${mid}`,
-                      `p-hub-r${r}-${j}`, { delay: base + (j - 1) * 0.12 });
-        }
+        const topY = r === 0 ? yr0 : yMid;
+        const splitY = r === 0 ? splitY0 : splitY1;
+        const botY = r === 0 ? yMid : yCol;
+        row.forEach((txt, j) => {
+          const ccx = colCx(j);
+          const frac = halfLen > 0 ? Math.abs(ccx - cx) / halfLen : 0;
+          const dripDelay = r === 0 ? distDelay + halfDur * frac
+                                    : distDelay + 2.6 + frac * 0.5;
+          const splitDelay = dripDelay + fillDur(8) * 0.8;
+          const sideDelay = splitDelay + 0.55;
+          const mergeDelay = sideDelay + 0.55;
+          const key = `p-hub-r${r}-${j}`;
+          s += flPipe(`M${ccx} ${topY} L${ccx} ${splitY}`, `${key}-drip`, { delay: dripDelay });
+          s += flPipe(`M${ccx} ${splitY} L${ccx - stOff} ${splitY}`, `${key}-tl`, { delay: splitDelay });
+          s += flPipe(`M${ccx} ${splitY} L${ccx + stOff} ${splitY}`, `${key}-tr`, { delay: splitDelay });
+          s += flPipe(`M${ccx - stOff} ${splitY} L${ccx - stOff} ${botY}`, `${key}-l`, { delay: sideDelay });
+          s += flPipe(`M${ccx + stOff} ${splitY} L${ccx + stOff} ${botY}`, `${key}-r`, { delay: sideDelay });
+          s += flPipe(`M${ccx - stOff} ${botY} L${ccx} ${botY}`, `${key}-bl`, { delay: mergeDelay });
+          s += flPipe(`M${ccx + stOff} ${botY} L${ccx} ${botY}`, `${key}-br`, { delay: mergeDelay });
+        });
       });
-      // 合并回路：架设平台（第一行最右列）从右侧出管、沿右侧向下、底部往左接上流出；
-      // 部署软件（第二行最右列）从列底排出，两路汇合后一起流回主管道。
-      const row0Bottom = rowsY + g.boxH;
-      const row1Top = row0Bottom + L.rowGap;
-      const row1Bottom = row1Top + g.boxH;
-      const yCol = row1Bottom + 8;                                   // 底部收集管高度
-      const gapX = colCx(1) + L.stW / 2 + L.stGap / 2;               // 第二行 col1/col2 之间的缝
-      const outRDelay = r0Seg + 0.12 + segDur * 0.8;
-      const outLDelay = r1Seg + 0.12 + segDur * 0.8;
-      const sideX = colCx(2) + L.stW / 2 + 14;                       // 右侧竖管（贴着两列右侧下行）
-      s += flPipe(`M${colCx(2) + L.stW / 2} ${r1y} L${sideX} ${r1y} L${sideX} ${yCol} L${colCx(2)} ${yCol}`,
-                  'p-hub-out-r', { delay: outRDelay });
-      s += flPipe(`M${colCx(2)} ${row1Bottom} L${colCx(2)} ${yCol} L${gapX} ${yCol}`,
-                  'p-hub-out-l', { delay: outLDelay });
-      s += flPipe(`M${gapX} ${yCol} L${railX + 6.5} ${yCol}`, 'p-mg2',
-                  { delay: outLDelay + fillDur(8) * 0.8 });
+      // 中间横管：第一行收集（右→左），同时给第二行每列供水
+      for (let j = 1; j < g.cols; j++) {
+        const frac = halfLen > 0 ? Math.abs(colCx(j) - cx) / halfLen : 0;
+        s += flPipe(`M${colCx(j)} ${yMid} L${colCx(j - 1)} ${yMid}`, `p-hub-mid-${j}`,
+                    { delay: distDelay + halfDur * frac + 2.0 });
+      }
+      // 第二行底部收集（右→左）→ 回主管道
+      for (let j = 1; j < g.cols; j++) {
+        const frac = halfLen > 0 ? Math.abs(colCx(j) - cx) / halfLen : 0;
+        s += flPipe(`M${colCx(j)} ${yCol} L${colCx(j - 1)} ${yCol}`, `p-hub-col-${j}`,
+                    { delay: distDelay + 3.2 + frac * 0.5 });
+      }
+      s += flPipe(`M${colCx(0)} ${yCol} L${railX + 6.5} ${yCol}`, 'p-mg2',
+                  { delay: distDelay + 3.4 });
     } else {
       // 单行：顶部分水器向左右分流 → 每根滴管进小目标框上方再一分二，
       // 贴着小目标框两侧流下、框底二合一 → 底部收集管从右往左汇流回主管道。
@@ -374,13 +382,24 @@ function buildFlowSvg() {
   s += `<rect class="flow-box struct" data-box="bot" x="${cx - L.botW / 2}" y="${yBot}" width="${L.botW}" height="${L.botH}" rx="8"/>`;
   s += `<text class="flow-t title center" x="${cx}" y="${yBot + L.botH / 2}">综合展示：自动巡检与捕获</text>`;
 
-  // ⑧ 阶段扫描提示条：上个阶段完成后，下个阶段从上到下扫一遍（触发见 applyFlowStates）
-  s += `<defs>`
-     + `<clipPath id="scanClip1"><rect x="0" y="${yPh1}" width="${W}" height="${yPh2 - yPh1}"/></clipPath>`
-     + `<clipPath id="scanClip2"><rect x="0" y="${yPh2}" width="${W}" height="${yBot + L.botH - yPh2}"/></clipPath>`
-     + `</defs>`;
-  s += `<rect class="scan-band" data-scan="1" clip-path="url(#scanClip1)" x="0" y="0" width="${W}" height="90" rx="10"/>`;
-  s += `<rect class="scan-band" data-scan="2" clip-path="url(#scanClip2)" x="0" y="0" width="${W}" height="90" rx="10"/>`;
+  // ⑧ 阶段/模块扫描提示条：上个阶段完成 → 下个阶段扫描；模块首次激活 → 该模块扫描
+  //    （触发逻辑见 applyFlowStates）
+  const scanH1 = yPh2 - yPh1;
+  const scanH2 = yBot + L.botH - yPh2;
+  let scanDefs = `<clipPath id="scanClip1"><rect x="0" y="${yPh1}" width="${W}" height="${scanH1}"/></clipPath>`
+    + `<clipPath id="scanClip2"><rect x="0" y="${yPh2}" width="${W}" height="${scanH2}"/></clipPath>`;
+  GEO.forEach((g, i) => {
+    scanDefs += `<clipPath id="scanmClip${i}"><rect x="${M}" y="${modY[i]}" width="${grpW}" height="${g.H}"/></clipPath>`;
+  });
+  s += `<defs>${scanDefs}</defs>`;
+  s += `<rect class="scan-band" data-scan="1" clip-path="url(#scanClip1)" x="0" y="0" width="${W}" height="90" rx="10"`
+     + ` style="--scanD:${scanH1 + 220}px;--scanT:2.2s"/>`;
+  s += `<rect class="scan-band" data-scan="2" clip-path="url(#scanClip2)" x="0" y="0" width="${W}" height="90" rx="10"`
+     + ` style="--scanD:${scanH2 + 220}px;--scanT:3.2s"/>`;
+  GEO.forEach((g, i) => {
+    s += `<rect class="scan-band" data-scanm="${i}" clip-path="url(#scanmClip${i})" x="0" y="0" width="${W}" height="70" rx="8"`
+       + ` style="--scanD:${g.H + 220}px;--scanT:1.9s"/>`;
+  });
   s += `</svg>`;
   return s;
 }
@@ -413,6 +432,8 @@ const stepPipe = st => (st === 'done' ? 'done' : (st === 'active' ? 'live' : 'pe
 
 // 阶段扫描提示条是否已经放过（每个阶段只在解锁时扫一次）
 const scanned = { p1: false, p2: false };
+// 模块扫描提示条是否已经放过（模块首次有进度时扫一次）
+const scannedM = [false, false, false, false];
 
 function applyFlowStates(data) {
   const byKey = {};
@@ -475,6 +496,17 @@ function applyFlowStates(data) {
   mods.forEach((m, i) => {
     const steps = m.steps || [];
     const ms = modState(steps);
+    // 模块扫描：该模块首次有进度时自上而下扫一遍（回退清空后再激活会重扫）
+    const bandM = document.querySelector(`[data-scanm="${i}"]`);
+    if (ms.cls) {
+      if (!scannedM[i] && bandM) {
+        bandM.classList.add('on');
+        scannedM[i] = true;
+      }
+    } else if (scannedM[i]) {
+      scannedM[i] = false;
+      if (bandM) bandM.classList.remove('on');
+    }
     setCls(`[data-mgroup="${i}"]`, 'flow-group' + (ms.cls ? ' ' + ms.cls : ''));
     setCls(`[data-mbox="${i}"]`, 'flow-box mod' + (ms.cls ? ' ' + ms.cls : ''));
     const pct = document.querySelector(`[data-mpct="${i}"]`);
@@ -487,17 +519,19 @@ function applyFlowStates(data) {
     ['tl', 'tr', 'l', 'r', 'bl', 'br'].forEach(side => setP(`p-mb${i}-${side}`, msP));
     setP(`p-d${i}`, msP);
     if (i === 2) {
-      setP('p-hub-top', msP);
-      setP('p-hub-leg', msP);
-      setP('p-hub-r0-in', gatedStep(sts[0]));
-      setP('p-hub-r0-1', gatedStep(sts[1]));
-      setP('p-hub-r0-2', gatedStep(sts[2]));
-      setP('p-hub-r1-in', gatedStep(sts[3]));
-      setP('p-hub-r1-1', gatedStep(sts[4]));
-      setP('p-hub-r1-2', gatedStep(sts[5]));
-      setP('p-hub-out-r', gatedStep(sts[2]));
-      setP('p-hub-out-l', gatedStep(sts[5]));
-      setP('p-mg2', gatedStep(sts[5]));
+      setP('p-hub-d0-l', msP);
+      setP('p-hub-d0-r', msP);
+      for (let r = 0; r < 2; r++) {
+        g.rows[r].forEach((txt, j) => {
+          const cp = gatedStep(sts[r * 3 + j]);
+          ['drip', 'tl', 'tr', 'l', 'r', 'bl', 'br'].forEach(side => setP(`p-hub-r${r}-${j}-${side}`, cp));
+        });
+      }
+      setP('p-hub-mid-1', gatedStep(sts[1]));
+      setP('p-hub-mid-2', gatedStep(sts[2]));
+      setP('p-hub-col-1', gatedStep(sts[4]));
+      setP('p-hub-col-2', gatedStep(sts[5]));
+      setP('p-mg2', gatedStep(sts[3]));
     } else {
       setP(`p-dist${i}-l`, msP);
       setP(`p-dist${i}-r`, msP);

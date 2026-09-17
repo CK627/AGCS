@@ -140,18 +140,20 @@ body {
    上个阶段完成后，下个阶段用一条青色光带从上到下扫一遍；
    .on 由 applyFlowStates 在解锁时加上（每个阶段只扫一次）。 */
 .scan-band {
-  fill: rgba(34, 211, 238, 0.10);
-  stroke: rgba(34, 211, 238, 0.45);
-  stroke-width: 1.5;
+  fill: rgba(34, 211, 238, 0.16);
+  stroke: rgba(165, 243, 252, 0.85);
+  stroke-width: 2;
   opacity: 0;
   pointer-events: none;
 }
-.scan-band.on { animation: scanSweep 2.8s cubic-bezier(0.4, 0, 0.2, 1) 1 both; }
+.scan-band.on {
+  animation: scanSweep var(--scanT, 2.8s) cubic-bezier(0.4, 0, 0.2, 1) 1 both;
+}
 @keyframes scanSweep {
-  0% { transform: translateY(-110px); opacity: 0; }
-  10% { opacity: 1; }
-  85% { opacity: 1; }
-  100% { transform: translateY(1600px); opacity: 0; }
+  0% { transform: translateY(-140px); opacity: 0; }
+  8% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { transform: translateY(var(--scanD, 1600px)); opacity: 0; }
 }
 
 /* ==================== 阶段条 ====================
