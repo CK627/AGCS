@@ -544,6 +544,10 @@ def main():
                         help='到色块的前向距离（mm），--marker-size-mm=0 时生效')
     parser.add_argument('--fusion-head-gain', type=float, default=FUSION_HEAD_GAIN)
     parser.add_argument('--fusion-cross-gain', type=float, default=FUSION_CROSS_GAIN)
+    parser.add_argument('--fusion-head-deadzone', type=float, default=1.0,
+                        help='航向死区（度）：|e| 小于它就不转。横移会踢航向，调大到 2 可避免「修航向修出外偏」')
+    parser.add_argument('--fusion-cross-deadzone', type=float, default=8.0,
+                        help='横向死区（mm）：|cross| 小于它就不横移。调大到 20 可少发横移、少踢航向')
     parser.add_argument('--fusion', default='reference', choices=['lane', 'reference'],
                         help='直线段融合算法：lane=旧的「朝方块走」(cx0 hack)，'
                              'reference=按路线走、方块当参照（B 方案，默认）')
@@ -581,7 +585,9 @@ def main():
     else:
         fusion = LaneFusion(f_px=args.f_px, cx0=args.cx0)
     ctrl = LaneController(head_gain=args.fusion_head_gain,
-                          cross_gain=args.fusion_cross_gain)
+                          cross_gain=args.fusion_cross_gain,
+                          head_deadzone=args.fusion_head_deadzone,
+                          cross_deadzone=args.fusion_cross_deadzone)
     marker_range = args.marker_range
     print('融合导航已开启（%s）：相机写状态 / IMU 管执行 / 状态不归零 '
           '(f_px=%.0f cx0=%.0f)' % (args.fusion, args.f_px, args.cx0), flush=True)
