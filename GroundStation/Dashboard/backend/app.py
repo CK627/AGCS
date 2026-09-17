@@ -106,18 +106,17 @@ STEP_NAMES = {
     'hub': ['网络连线', '网络配置', '架设平台', '安装系统', '配置环境', '部署软件'],
     'robot': ['开发稳压电路板', '视觉追踪', '自主寻路', '自动抓取'],
 }
-DEFAULT_DURATION_MIN = 10  # 每步默认时长（分钟），可在 progress.json 里逐步改
-# 各模块步骤的触发方式与时长覆盖（默认 manual 触发、10 分钟）
-#   除 2.5 外全部手动勾选（时长 0 = 立即完成）；2.5 保留自动触发（状态关键字 / 脚本）
+DEFAULT_DURATION_MIN = 0  # 每步默认时长（分钟）——已取消倒计时：全部即时完成
+# 各模块步骤的触发方式覆盖（无倒计时：手动勾选 / 触发关键字到达即完成）
 STEP_OVERRIDES = {
-    # 没写覆盖的步骤默认 10 分钟 → 手动步必须显式给 duration_min: 0（勾选即完成）
+    # 全部无倒计时：勾选 / 触发关键字到达即完成
     'phase1': {
         0: {'duration_min': 0}, 1: {'duration_min': 0}, 2: {'duration_min': 0},
     },
     'drone': {
         0: {'duration_min': 0},                            # 自动直线飞行
         1: {'duration_min': 0},                            # S型提高巡检效率
-        2: {'trigger': 'flight', 'duration_min': 2.05},    # 多机共检：修理飞机：位置变动触发，用时2:03
+        2: {'trigger': 'flight', 'duration_min': 0},       # 多机共检：修理飞机：位置变动触发即完成
     },
     'yolo': {
         0: {'duration_min': 0}, 1: {'duration_min': 0},    # 拍照采样、数据标注 / 欠拟合模型训练
@@ -127,11 +126,11 @@ STEP_OVERRIDES = {
     'hub': {
         0: {'duration_min': 0}, 1: {'duration_min': 0}, 2: {'duration_min': 0},   # 连线/配置/架设平台
         3: {'duration_min': 0}, 4: {'duration_min': 0},                           # 安装系统/配置环境
-        5: {'trigger': 'all_connected', 'duration_min': 2.42},                    # 部署软件：三端全连接
+        5: {'trigger': 'all_connected', 'duration_min': 0},                       # 部署软件：三端全连接即完成
     },
     'robot': {
         0: {'duration_min': 0}, 1: {'duration_min': 0}, 2: {'duration_min': 0},   # 电路板/视觉追踪/自主寻路
-        3: {'trigger': 'CAPTURE', 'duration_min': 4, 'end_keyword': 'END'},       # 自动抓取
+        3: {'trigger': 'CAPTURE', 'duration_min': 0, 'end_keyword': 'END'},       # 自动抓取：CAPTURE 触发、END 结束
     },
 }
 PROGRESS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),

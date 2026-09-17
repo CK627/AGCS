@@ -232,25 +232,39 @@ function buildFlowSvg() {
     const gy = modY[i];
     const modTop = gy + L.grpPadY;
     const modBottom = modTop + L.modH;
-    const modCy = modTop + L.modH / 2;
     const rowsY = modBottom + L.DROP;
     const yR = r => rowsY + r * (g.boxH + L.rowGap) - 14;
     const colCx = j => g.rowX + j * (L.stW + L.stGap) + L.stW / 2;
 
-    // 支管在主管道上的接点越靠下，灌水开始得越晚（顺着水流一路往下递进）
+    // 支管在主管道上的接点越靠下，灌水开始得越晚（顺着水流一路往下递进）。
+    // 和手动链路一样：一根管到模块框上方 → 一分二贴着框两侧流下 → 框底二合一
+    // → 落管继续下到分水器（模块框在分流时按状态过渡亮起）。
+    const splitY = modTop - 8;                       // 模块框顶上方：一分二
+    const mergeY = modBottom + 8;                    // 模块框底下方：二合一
+    const sideL = cx - L.modW / 2 - 14;
+    const sideR = cx + L.modW / 2 + 14;
     const branchDelay = railBase
-      + railFillT * clamp((modCy - railY0) / (railY1 - railY0), 0, 1) * 0.9;
-    const branchDur = fillDur((cx - L.modW / 2) - (railX + 6.5));
-    const dropDelay = branchDelay + branchDur * 0.8;
-    const dropDur = fillDur(L.DROP);
+      + railFillT * clamp((splitY - railY0) / (railY1 - railY0), 0, 1) * 0.9;
+    const branchDur = fillDur(cx - (railX + 6.5));
+    const splitDelay = branchDelay + branchDur * 0.8;
+    const sideDelay = splitDelay + 0.55;
+    const mergeDelay = sideDelay + 0.55;
+    const dropDelay = mergeDelay + 0.6;
+    const dropDur = fillDur(yR(0) - mergeY);
     const distDelay = dropDelay + dropDur * 0.8;
 
     // 组虚线框（先画）
     s += `<rect class="flow-group" data-mgroup="${i}" x="${M}" y="${gy}" width="${grpW}" height="${g.H}" rx="12"/>`;
 
     // —— 先画所有管子（端点随后被框盖住，不露头、不凸出） ——
-    s += flPipe(`M${railX + 6.5} ${modCy} L${cx - L.modW / 2} ${modCy}`, `p-b${i}`, { delay: branchDelay });
-    s += flPipe(`M${cx} ${modBottom} L${cx} ${yR(0)}`, `p-d${i}`, { delay: dropDelay });
+    s += flPipe(`M${railX + 6.5} ${splitY} L${cx} ${splitY}`, `p-b${i}`, { delay: branchDelay });
+    s += flPipe(`M${cx} ${splitY} L${sideL} ${splitY}`, `p-mb${i}-tl`, { delay: splitDelay });
+    s += flPipe(`M${cx} ${splitY} L${sideR} ${splitY}`, `p-mb${i}-tr`, { delay: splitDelay });
+    s += flPipe(`M${sideL} ${splitY} L${sideL} ${mergeY}`, `p-mb${i}-l`, { delay: sideDelay });
+    s += flPipe(`M${sideR} ${splitY} L${sideR} ${mergeY}`, `p-mb${i}-r`, { delay: sideDelay });
+    s += flPipe(`M${sideL} ${mergeY} L${cx} ${mergeY}`, `p-mb${i}-bl`, { delay: mergeDelay });
+    s += flPipe(`M${sideR} ${mergeY} L${cx} ${mergeY}`, `p-mb${i}-br`, { delay: mergeDelay });
+    s += flPipe(`M${cx} ${mergeY} L${cx} ${yR(0)}`, `p-d${i}`, { delay: dropDelay });
     if (g.rows.length > 1) {
       // 多行（中枢互通）：水从中间落点往左走到最左端，沿竖管下行；
       // 第一行、第二行都从左往右推进（与步骤先后一致），
@@ -453,6 +467,7 @@ function applyFlowStates(data) {
     const sts = colStates(steps, g.nCol);
     const msP = gate(ms.st);
     setP(`p-b${i}`, msP);
+    ['tl', 'tr', 'l', 'r', 'bl', 'br'].forEach(side => setP(`p-mb${i}-${side}`, msP));
     setP(`p-d${i}`, msP);
     if (i === 2) {
       setP('p-hub-top', msP);

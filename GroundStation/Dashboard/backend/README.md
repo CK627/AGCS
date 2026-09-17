@@ -118,7 +118,7 @@ python -m pip install flask waitress requests pymavlink
 - **取消第 k 步** = 退回第 k 步之前
 - **↺ 一键初始化** = 所有步骤清空、进度归零（等价于 `POST /api/checklist/reset`）
 
-弹窗打开期间每 2 秒同步一次，所以**自动触发/计时完成**的步骤也会自动打勾。
+弹窗打开期间每 2 秒同步一次，所以**自动触发完成**的步骤也会自动打勾（已取消倒计时）。
 
 ## 无人机面板
 
