@@ -40,7 +40,20 @@ app = Flask(__name__, static_folder=None)
 # ---------------- 页面 ----------------
 @app.route('/')
 def index():
-    return send_from_directory(HERE, INDEX)
+    # max_age=0：页面/样式/脚本每次刷新都向服务器重新校验，避免浏览器用旧缓存
+    return send_from_directory(HERE, INDEX, max_age=0)
+
+
+@app.route('/progress.css')
+def progress_css():
+    """页面样式（动画规则也在这里，和 HTML/JS 分离维护）。"""
+    return send_from_directory(HERE, 'progress.css', max_age=0)
+
+
+@app.route('/progress.js')
+def progress_js():
+    """页面脚本（版面绘制 + 进度状态映射 + 管道流动动画）。"""
+    return send_from_directory(HERE, 'progress.js', max_age=0)
 
 
 @app.route('/images/<path:filename>')

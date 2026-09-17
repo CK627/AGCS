@@ -1,0 +1,152 @@
+/* 研发进度流程图：整体样式 + 管道/步骤动画
+   与 index.html（页面骨架）、progress.js（版面和状态逻辑）分离维护。 */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+  background: #0f172a; color: #e2e8f0;
+  padding: 10px 14px 14px; font-size: 16px;
+}
+
+.header { position: relative; text-align: center; margin-bottom: 4px; }
+.header .brand {
+  position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+  display: flex; align-items: center; gap: 10px; white-space: nowrap;
+}
+.header .brand .logo { height: 34px; }
+.header .brand .comp { font-size: 14px; color: #e2e8f0; }
+.header h1 { margin: 0; font-size: 20px; }
+.header .acts {
+  position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+  display: flex; gap: 8px;
+}
+.header .acts a {
+  background: #334155; color: #e2e8f0; border: 0; border-radius: 6px;
+  padding: 6px 12px; font-size: 14px; text-decoration: none;
+}
+.header .acts a:hover { background: #475569; }
+.hint { color: #64748b; font-size: 13px; margin: 2px 0 8px; text-align: center; }
+
+.box { background: #1e293b; border-radius: 10px; padding: 8px 10px; }
+.titlebar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 6px; }
+.titlebar h2 { margin-bottom: 0; font-size: 15px; color: #94a3b8; font-weight: 400; }
+.chip {
+  display: inline-block; font-size: 12px; line-height: 1;
+  background: #334155; color: #cbd5e1; border-radius: 999px; padding: 4px 9px;
+}
+.chip b { color: #e2e8f0; font-weight: 600; }
+.chip.ok { background: #14532d; color: #86efac; }
+.chip.bad { background: #7f1d1d; color: #fecaca; }
+.chip.msg { max-width: 520px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fsbtn {
+  margin-left: auto; background: #2563eb; color: #fff;
+  border: 0; border-radius: 6px; padding: 4px 12px; font-size: 13px; cursor: pointer;
+}
+
+/* ==================== 流程图（竖版：从上往下读，为竖屏副显示器排版） ==================== */
+/* 整张图是竖版长图：宽 960 固定，高度由内容累加；fitFlow() 按可用空间整体缩放 */
+.flow-wrap {
+  background: #0b1220; border-radius: 8px; padding: 8px; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+}
+.flow-wrap.scroll { overflow-y: auto; align-items: flex-start; }
+.flow-wrap svg.flow { display: block; font-family: "Microsoft YaHei", "PingFang SC", sans-serif; }
+#flowPanel:fullscreen {
+  background: #0f172a; width: 100vw; height: 100vh; overflow: auto;
+  padding: 14px; display: flex; flex-direction: column;
+}
+#flowPanel:fullscreen .flow-wrap {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+}
+
+/* 结构节点 */
+.flow-box { fill: #16233b; stroke: #334155; stroke-width: 1.5; }
+.flow-box.struct { fill: #172554; stroke: #3b82f6; }
+.flow-box.struct.live { fill: #0e3145; stroke: #22d3ee; stroke-width: 2; }
+.flow-box.struct.done { fill: #0f2e1d; stroke: #22c55e; stroke-width: 2; }
+.flow-box.mod { fill: #16233b; }
+.flow-box.mod.active { fill: #0b2f3d; stroke: #22d3ee; stroke-width: 2; }
+.flow-box.mod.done { fill: #0f2e1d; stroke: #22c55e; }
+.flow-group { fill: rgba(30, 41, 59, 0.35); stroke: #334155; stroke-width: 1.2; stroke-dasharray: 5 4; }
+.flow-group.done { fill: rgba(15, 46, 29, 0.35); stroke: #22c55e; stroke-width: 1.5; }
+.flow-group.active { fill: rgba(11, 47, 61, 0.5); stroke: #22d3ee; stroke-width: 1.8; }
+.flow-t { fill: #cbd5e1; font-size: 15px; }
+.flow-t.small { font-size: 12px; fill: #94a3b8; }
+.flow-t.title { font-size: 18px; fill: #e2e8f0; }
+.flow-t.center { text-anchor: middle; dominant-baseline: middle; }
+
+/* ==================== 步骤节点（方框左侧竖条就是它的进度条） ====================
+   文字一律竖排（一个汉字一行），和原《研发工单》图里一样。
+   每个步骤列包在一个 .stepg 里，状态改在组上，内部元素跟着变。 */
+.stepg .fl-step { fill: #111c30; stroke: #334155; stroke-width: 1.2; }
+.stepg.done .fl-step { fill: #0f2e1d; stroke: #22c55e; }
+.stepg.active .fl-step {
+  fill: #0b2f3d; stroke: #22d3ee; stroke-width: 2;
+  animation: flPulse 1.8s ease-in-out infinite;
+}
+.stepg .v-t { font-size: 14px; fill: #94a3b8; text-anchor: middle; }
+.stepg.done .v-t { fill: #86efac; }
+.stepg.active .v-t { fill: #a5f3fc; font-weight: 600; }
+.stepg .fl-bar-bg { fill: #1e293b; }
+.stepg .fl-bar-fill { display: none; }
+.stepg.done .fl-bar-fill { display: block; fill: #22c55e; }
+.stepg.active .fl-bar-fill {
+  display: block; fill: #22d3ee;
+  transform-box: fill-box; transform-origin: 50% 100%; transform: scaleY(0.6);
+  animation: flShim 1.4s ease-in-out infinite;
+}
+@keyframes flShim { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+@keyframes flPulse { 0%, 100% { opacity: 0.75; } 50% { opacity: 1; } }
+
+/* ==================== 连线 = 管道（管壁 + 管腔 + 管内水流） ====================
+   一层层叠出"管子"的质感（不是虚线跑马灯）：
+     ① 管壁（外圈） ② 深色管腔（空心管子） ③ 水体 ④ 流动光带 ⑤ 亮边/暗边（圆柱感）
+
+   关键行为：
+   - 没走到的管子是干管（pending）：水体 offset=1.01 完全藏起来，也不跑动画；
+   - 进度到达时才从源头往末端「慢慢灌水」（offset 1.01 → 0 的过渡，时长/延迟由
+     每根管子自己的 --fill / --delay 控制，主管道先满、支管跟着满）；
+   - 灌满后光带淡入并沿管子循环扫过（pathLength=1，长短管流速一致）；
+   - 每根管子只有 1 层循环动画（光带），不是三层虚线叠加 → 流动连续、不卡顿。 */
+.pipe-wall { fill: none; stroke: #40659a; stroke-width: 9.5; stroke-linejoin: round; }
+.pipe-bore { fill: none; stroke: #172a45; stroke-width: 6.4; stroke-linejoin: round; }
+.pipe-rim { fill: none; stroke: #8fbdf2; stroke-width: 1.2; opacity: 0.95; stroke-linejoin: round; }
+.pipe-shade { fill: none; stroke: #04080e; stroke-width: 2; opacity: 0.5; stroke-linejoin: round; }
+
+.pipe-water {
+  fill: none; stroke: #22d3ee; stroke-width: 4; stroke-linecap: butt;
+  stroke-opacity: 0.55; stroke-dasharray: 1 1; stroke-dashoffset: 1.01;
+  transition:
+    stroke-dashoffset var(--fill) cubic-bezier(0.45, 0.05, 0.35, 1) var(--delay),
+    stroke 0.5s linear,
+    stroke-opacity 0.4s linear;
+}
+.pipe.live .pipe-water { stroke: #22d3ee; stroke-dashoffset: 0; }
+.pipe.done .pipe-water { stroke: #22c55e; stroke-dashoffset: 0; }
+
+.pipe-core {
+  fill: none; stroke: #a5f3fc; stroke-width: 3.2; stroke-linecap: round;
+  stroke-dasharray: 0.16 0.84; stroke-dashoffset: 0; opacity: 0;
+  transition: opacity 0.35s linear var(--startm), stroke 0.5s linear;
+}
+.pipe.live .pipe-core {
+  stroke: #a5f3fc; opacity: 0.95;
+  animation: pipeCore var(--lap) linear var(--start) infinite;
+}
+.pipe.done .pipe-core {
+  stroke: #86efac; opacity: 0.9;
+  animation: pipeCore var(--lap) linear var(--start) infinite;
+}
+@keyframes pipeCore { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -1; } }
+
+/* ==================== 阶段条 ====================
+   发光在「框」上（彩色背景 + 彩色描边），文字保持正常白字；
+   两个阶段颜色不同（一蓝一紫），全做完变绿。 */
+.phaseg .flow-box.phase { fill: #1e293b; }
+.phaseg.pt1 .flow-box.phase { fill: #122542; stroke: #7fb2ff; stroke-width: 2; }
+.phaseg.pt2 .flow-box.phase { fill: #201a40; stroke: #a78bfa; stroke-width: 2; }
+.phaseg.done .flow-box.phase { fill: #0f2e1d; stroke: #22c55e; stroke-width: 2; }
+.phaseg .phase-spine { fill: #16304d; }
+.phaseg .spine-core { animation: spineBreath 2.2s ease-in-out infinite; }
+.phaseg.done .spine-core, .phaseg.done .ptint { fill: #22c55e; }
+@keyframes spineBreath { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
