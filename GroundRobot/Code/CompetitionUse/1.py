@@ -71,10 +71,10 @@ IMU_STRAIGHT_STEP = 1    # 转弯后一次性修正的角度（imu_turn 用）
 # --- 融合导航（默认启用）---
 # 内参单位是 detect_color 缩放后的像素（内部 resize 到 320×240，
 # 而 result['contour'] 也来自这张 320 图，所以 bbox_center_x 同属 320 坐标系）。
-# f_px / cx0 / f_px_full 都要实测标定，下面只是「320 宽、约 60° 水平视场」的占位值。
-FUSION_F_PX = 277.0
+# f_px 已现场标定（probe_f_px.py，2026-09-17）；cx0 运行时自动抓色块初始像素，不用填。
+FUSION_F_PX = 419.0
 FUSION_CX0 = 160.0
-FUSION_F_PX_FULL = 554.0   # 原始分辨率下的焦距，用于从色块视半径反推距离
+FUSION_F_PX_FULL = 838.0   # 原始 640 分辨率焦距 = 2×FUSION_F_PX，色块视半径反推距离用
 FUSION_HEAD_GAIN = 0.9     # 航向 P 增益：转「误差 × 该比例」度
 FUSION_CROSS_GAIN = 0.35   # 横向 P 增益：横移「偏差 × 该比例」mm
 camera_lock = threading.Lock()
@@ -523,7 +523,7 @@ def main():
     parser.add_argument('--marker-size-mm', type=float, default=0.0,
                         help='色块真实半径（mm）；>0 时按视半径自动估距离，'
                              '否则用 --marker-range 的定值')
-    parser.add_argument('--marker-range', type=float, default=1000.0,
+    parser.add_argument('--marker-range', type=float, default=610.0,
                         help='到色块的前向距离（mm），--marker-size-mm=0 时生效')
     parser.add_argument('--fusion-head-gain', type=float, default=FUSION_HEAD_GAIN)
     parser.add_argument('--fusion-cross-gain', type=float, default=FUSION_CROSS_GAIN)
