@@ -66,11 +66,12 @@ body {
 .flow-box.struct.done { fill: #0f2e1d; stroke: #22c55e; stroke-width: 2; }
 .flow-box.mod {
   fill: #16233b;
-  transition: fill 0.7s ease, stroke 0.7s ease, stroke-width 0.7s ease;
+  /* 变色延迟 0.3s：等支管水到模块框上方再开始变，与水流同步 */
+  transition: fill 0.7s ease 0.3s, stroke 0.7s ease 0.3s, stroke-width 0.7s ease 0.3s;
 }
 .flow-box.mod.active {
   fill: #0b2f3d; stroke: #22d3ee; stroke-width: 2;
-  animation: flPulse 1.8s ease-in-out infinite;
+  animation: flPulse 1.8s ease-in-out 0.3s infinite;
 }
 .flow-box.mod.done { fill: #0f2e1d; stroke: #22c55e; }
 .flow-group { fill: rgba(30, 41, 59, 0.35); stroke: #334155; stroke-width: 1.2; stroke-dasharray: 5 4; }
@@ -86,11 +87,15 @@ body {
    每个步骤列包在一个 .stepg 里，状态改在组上，内部元素跟着变。 */
 .stepg .fl-step {
   fill: #111c30; stroke: #334155; stroke-width: 1.2;
-  transition: fill 0.7s ease, stroke 0.7s ease;
+  /* 变色延迟 0.5s：等滴管水到小目标上方再开始变，与水流同步 */
+  transition: fill 0.7s ease 0.5s, stroke 0.7s ease 0.5s;
 }
 .stepg.done .fl-step { fill: #0f2e1d; stroke: #22c55e; }
 .stepg.active .fl-step { fill: #0b2f3d; stroke: #22d3ee; stroke-width: 2; }
-.stepg .v-t { font-size: 14px; fill: #94a3b8; text-anchor: middle; }
+.stepg .v-t {
+  font-size: 14px; fill: #94a3b8; text-anchor: middle;
+  transition: fill 0.7s ease 0.5s;
+}
 .stepg.done .v-t { fill: #86efac; }
 .stepg.active .v-t { fill: #a5f3fc; font-weight: 600; }
 @keyframes flPulse { 0%, 100% { opacity: 0.75; } 50% { opacity: 1; } }
