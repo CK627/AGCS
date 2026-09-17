@@ -64,8 +64,14 @@ body {
 .flow-box.struct { fill: #172554; stroke: #3b82f6; }
 .flow-box.struct.live { fill: #0e3145; stroke: #22d3ee; stroke-width: 2; }
 .flow-box.struct.done { fill: #0f2e1d; stroke: #22c55e; stroke-width: 2; }
-.flow-box.mod { fill: #16233b; }
-.flow-box.mod.active { fill: #0b2f3d; stroke: #22d3ee; stroke-width: 2; }
+.flow-box.mod {
+  fill: #16233b;
+  transition: fill 0.7s ease, stroke 0.7s ease, stroke-width 0.7s ease;
+}
+.flow-box.mod.active {
+  fill: #0b2f3d; stroke: #22d3ee; stroke-width: 2;
+  animation: flPulse 1.8s ease-in-out infinite;
+}
 .flow-box.mod.done { fill: #0f2e1d; stroke: #22c55e; }
 .flow-group { fill: rgba(30, 41, 59, 0.35); stroke: #334155; stroke-width: 1.2; stroke-dasharray: 5 4; }
 .flow-group.done { fill: rgba(15, 46, 29, 0.35); stroke: #22c55e; stroke-width: 1.5; }

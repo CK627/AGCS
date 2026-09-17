@@ -181,13 +181,29 @@ function buildFlowSvg() {
   s += flPipe(`M${cx} ${yTitle + L.pillH} L${cx} ${yPh1}`, 'p-title-ph1');
   s += phaseBox(cx - L.phW / 2, yPh1, L.phW, L.phH, '第一阶段验证可行性', 'pt1', '#7fb2ff', 'ph1');
 
-  // ③ 手动链路（第一阶段）：三个框串联
-  s += flPipe(`M${cx} ${yPh1 + L.phH} L${cx} ${yMan}`, 'p-ph1-man0');
+  // ③ 手动链路（第一阶段）：一根管下来，到每个目标框上方分流向左右两侧，
+  //    两路贴着目标框两侧流下，框底再汇合成一根，继续去下一个目标。
+  //    目标框在分流时按状态过渡亮起（填充/描边过渡动画见 progress.css）。
   s += `<rect class="flow-group" x="${cx - L.manW / 2 - 20}" y="${yMan}" width="${L.manW + 40}" height="${manH2}" rx="10"/>`;
   const manBy = i => yMan + L.manPadY + i * (L.manH + L.manGapV);
+  const manSide = cx + L.manW / 2 + 14;            // 两侧分流管与目标框的距离
+  const manSideL = cx - L.manW / 2 - 14;
   MANUAL.forEach((lines, i) => {
     const by = manBy(i);
-    if (i) s += flPipe(`M${cx} ${manBy(i - 1) + L.manH} L${cx} ${by}`, `p-man${i - 1}-man${i}`);
+    const splitY = by - 8;                          // 框顶上方 8px：一分二
+    const mergeY = by + L.manH + 8;                 // 框底下方 8px：二合一
+    if (i === 0) {
+      s += flPipe(`M${cx} ${yPh1 + L.phH} L${cx} ${splitY}`, 'p-man-in0');
+    } else {
+      s += flPipe(`M${cx} ${manBy(i - 1) + L.manH + 8} L${cx} ${splitY}`, `p-man-out${i - 1}`,
+                  { delay: 1.7 });
+    }
+    s += flPipe(`M${cx} ${splitY} L${manSideL} ${splitY}`, `p-man${i}-tl`);
+    s += flPipe(`M${cx} ${splitY} L${manSide} ${splitY}`, `p-man${i}-tr`);
+    s += flPipe(`M${manSideL} ${splitY} L${manSideL} ${mergeY}`, `p-man${i}-l`, { delay: 0.55 });
+    s += flPipe(`M${manSide} ${splitY} L${manSide} ${mergeY}`, `p-man${i}-r`, { delay: 0.55 });
+    s += flPipe(`M${manSideL} ${mergeY} L${cx} ${mergeY}`, `p-man${i}-bl`, { delay: 1.1 });
+    s += flPipe(`M${manSide} ${mergeY} L${cx} ${mergeY}`, `p-man${i}-br`, { delay: 1.1 });
     s += `<rect class="flow-box mod" data-man="${i}" x="${cx - L.manW / 2}" y="${by}" width="${L.manW}" height="${L.manH}" rx="6"/>`;
     lines.forEach((t, k) => {
       s += `<text class="flow-t center" x="${cx}" y="${by + L.manH / 2 - (lines.length - 1) * 8.5 + k * 17}">${t}</text>`;
@@ -199,7 +215,7 @@ function buildFlowSvg() {
   const railX = L.RAIL;
   const railY0 = yPh2 + L.phH / 2;                 // 主管道起点：第二阶段的左侧
   const railY1 = yBot + L.botH / 2;                // 主管道终点：综合展示的左侧
-  s += flPipe(`M${cx} ${yMan + manH2} L${cx} ${yPh2}`, 'p-man2-ph2');
+  s += flPipe(`M${cx} ${manBy(2) + L.manH + 8} L${cx} ${yPh2}`, 'p-man2-ph2', { delay: 1.7 });
   s += flPipe(`M${cx - L.phW / 2} ${railY0} L${railX} ${railY0}`, 'p-ph2-rail');
   s += phaseBox(cx - L.phW / 2, yPh2, L.phW, L.phH, '第二阶段研发自动化系统', 'pt2', '#a78bfa', 'ph2');
 
@@ -399,9 +415,13 @@ function applyFlowStates(data) {
   // 大标题是整条水路的水源：标题 → 第一阶段的这段水管**从一开始就通水**，
   // 不随进度干涸（第一阶段全部完成后，随源头一起变绿）。
   setP('p-title-ph1', ph1st === 'done' ? 'done' : 'live');
-  setP('p-ph1-man0', stepPipe(phSt(0)));
-  setP('p-man0-man1', stepPipe(phSt(0)));
-  setP('p-man1-man2', stepPipe(phSt(1)));
+  // 手动链路：一根管进目标框上方 → 左右分流贴着框两侧流下 → 框底汇合 → 去下一个目标
+  setP('p-man-in0', stepPipe(phSt(0)));
+  for (let i = 0; i < 3; i++) {
+    const st = stepPipe(phSt(i));
+    ['tl', 'tr', 'l', 'r', 'bl', 'br'].forEach(side => setP(`p-man${i}-${side}`, st));
+    if (i < 2) setP(`p-man-out${i}`, st);
+  }
   setP('p-man2-ph2', stepPipe(phSt(2)));
   setP('p-ph2-rail', p2);
   setP('p-rail', p2);
