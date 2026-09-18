@@ -212,9 +212,9 @@ function buildFlowSvg() {
   });
 
   // ④ 第二阶段：整个第二阶段用虚线大框框起来；标题左侧竖排（带小框）。
-  //    进水：手动链路底部 → 下行 → 左折进主管道 → 接进标题顶部 →
+  //    进水：手动链路底部 → 下行 → 左折进主管道 → 竖直落进标题顶部 →
   //          标题右侧分出四根进管（上两个向上、下两个向下，再右拐）；
-  //    出水：各模块汇入右侧一根汇流管，一路下行，最后进综合展示。
+  //    出水：各模块汇入右侧一根汇流管，一路下行，最后竖直落进综合展示顶部。
   const railX = L.RAIL;
   const railY0 = yP2 + 15;                         // 主管道起点：过桥水平管
 
@@ -236,25 +236,26 @@ function buildFlowSvg() {
      + `<rect class="flow-box phase" x="8" y="${p2y0 - 16}" width="34" height="${p2H}" rx="8"/>`
      + vText(p2Title, 20, p2y0, 'vp2-t', p2Gap)
      + `</g>`;
-  // 第一阶段的水经左侧主管道接到标题顶部，标题再向右分出四根进管。
-  const p2TopY = p2y0;
+  // 从上面下来的水直接落进标题顶部（不再从标题右侧接进来）。
+  const p2TopEdge = p2y0 - 16;              // 标题小框上缘
   const p2LinkX = 42;                       // 标题小框右缘
-  s += flPipe(`M${railX} ${p2TopY} L${p2LinkX} ${p2TopY}`, 'p-p2-in');
+  s += flPipe(`M${railX} ${p2TopEdge - 8} L25 ${p2TopEdge - 8} L25 ${p2TopEdge}`, 'p-p2-in');
   // 标题右侧分出四根进管：从不同高度出水，先竖直走到各自模块的高度，再右拐。
   // 上面两个模块在标题上方 → 管子向上走（向上的长度不同）；
   // 下面两个模块在标题下方 → 管子向下延伸。
   const p2OutY = [p2y0 + 17.5, p2y0 + 62.5, p2y0 + 107.5, p2y0 + 257.5];
   const p2OutX = [74, 90, 106, 122];        // 四根竖管横坐标错开，不挤在一起
 
-  // ⑤ 主管道（进水管）贴着左侧一路往下，接到第二阶段标题顶部。
-  s += flPipe(`M${railX} ${railY0} L${railX} ${p2TopY}`, 'p-rail', { mult: 1.3 });
+  // ⑤ 主管道（进水管）贴着左侧一路往下，接到第二阶段标题顶部上方。
+  s += flPipe(`M${railX} ${railY0} L${railX} ${p2TopEdge - 8}`, 'p-rail', { mult: 1.3 });
 
-  // 右侧汇流管：各模块出水横向接进来，一路下行，最后从右侧进综合展示。
+  // 右侧汇流管：各模块出水横向接进来，一路下行，最后竖直落进综合展示顶部。
   const retX = 916;                                      // 右侧汇流管横坐标（大框内侧右缘）
-  const finY = yBot + L.botH / 2;                        // 综合展示的垂直中心
+  const finY = yBot - 8;                                 // 综合展示顶部上方 8px
   const firstYCol = modY[0] + L.grpPadY + L.modH + L.DROP + GEO[0].boxH + 8;
   s += flPipe(`M${retX} ${firstYCol} L${retX} ${finY}`, 'p-return', { mult: 1.1 });
-  s += flPipe(`M${retX} ${finY} L${cx + L.botW / 2} ${finY}`, 'p-fin', { mult: 1.1 });
+  // 汇流后走到综合展示正上方，直接竖直落进顶部。
+  s += flPipe(`M${retX} ${finY} L${cx} ${finY} L${cx} ${yBot}`, 'p-fin', { mult: 1.1 });
 
   // ⑥ 每个模块：从第二阶段标题右侧分出的进管进来 → 模块框 → 分水器 → 它的步骤列
   //    第二阶段整体右移（P2M）：循环内用局部 cx = 右移后的模块中轴，盖住外层的画布中轴
