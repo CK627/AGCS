@@ -17,11 +17,15 @@ REPO="$(cd "$(dirname "$0")" && pwd)"
 cd "$REPO"
 
 echo "从 ground-station 分支恢复最终版（四个文件）..."
-git restore --source=ground-station -- \
+for f in \
   GroundStation/Dashboard/progress/index.html \
   GroundStation/Dashboard/progress/progress.css \
   GroundStation/Dashboard/progress/progress.js \
   GroundStation/Dashboard/progress/README.md
+do
+  git show "ground-station:$f" > "$f"
+  echo "  已恢复 $f"
+done
 
 echo "完成。目标布局（ASCII 示意）："
 cat <<'EOF'
