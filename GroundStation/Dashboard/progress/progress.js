@@ -42,7 +42,8 @@ const MANUAL = [['手动操控', '无人机巡检'], ['人工传输', '巡检信
 // 左右留白必须对称（M = RM）：这样「列的中心」才会正好落在画布中轴上。
 const LV = {
   W: 960, M: 56, RM: 56,
-  RAIL: 26,                 // 左侧主管道的横坐标
+  RAIL: 60,                 // 左侧主管道的横坐标（最左让给「第二阶段」竖排标题）
+  P2M: 130,                 // 第二阶段四个模块组的左边界（整体右移，给竖排标题让位）
   stW: 150, stGap: 50,
   rowGap: 22, grpPadY: 12,
   modW: 210, modH: 60,
@@ -93,7 +94,7 @@ const GEO = FLOW_KEYS.map(k => {
   const boxH = Math.max(96, Math.round(44 + maxChars * 13.6));
   const cols = Math.max(...rows.map(r => r.length));
   const rowW = cols * LV.stW + (cols - 1) * LV.stGap;
-  const rowX = LV.M + ((LV.W - LV.M - LV.RM) - rowW) / 2;
+  const rowX = LV.P2M + ((LV.W - LV.P2M - LV.RM) - rowW) / 2;
   const firstCx = rowX + LV.stW / 2;
   const lastCx = rowX + (cols - 1) * (LV.stW + LV.stGap) + LV.stW / 2;
   const nCol = rows.reduce((a, r) => a + r.length, 0);
@@ -164,7 +165,7 @@ function buildFlowSvg() {
   const yPh1 = y; y += L.phH + L.GAP;
   const manH2 = L.manPadY * 2 + 3 * L.manH + 2 * L.manGapV;
   const yMan = y; y += manH2 + L.GAP;
-  const yPh2 = y; y += L.phH + L.GAP;
+  const yP2 = y; y += 30;          // 第二阶段横条标题已改到左侧竖排，这里只留主管道过桥的高度
   const modY = [];
   let yy = y;
   GEO.forEach(g => { modY.push(yy); yy += g.H + L.GAP; });
@@ -210,21 +211,40 @@ function buildFlowSvg() {
     });
   });
 
-  // ④ 第二阶段研发自动化系统：上方垂直管进框，左侧接出主管道
-  //    出水管从框的左缘画到主管道顶部 → 水从框里流出来（方向：框 → 主管道）
+  // ④ 第二阶段：标题改到最左侧竖排（横条标题取消）。
+  //    水路：手动链路底部 → 下行 → 左折进主管道（主管道起点即过桥高度的中点）
   const railX = L.RAIL;
-  const railY0 = yPh2 + L.phH / 2;                 // 主管道起点：第二阶段的左侧
+  const railY0 = yP2 + 15;                         // 主管道起点：过桥水平管
   const railY1 = yBot + L.botH / 2;                // 主管道终点：综合展示的左侧
-  s += flPipe(`M${cx} ${manBy(2) + L.manH + 8} L${cx} ${yPh2}`, 'p-man2-ph2', { delay: 0.2 });
-  s += flPipe(`M${cx - L.phW / 2} ${railY0} L${railX} ${railY0}`, 'p-ph2-rail');
-  s += phaseBox(cx - L.phW / 2, yPh2, L.phW, L.phH, '第二阶段研发自动化系统', 'pt2', '#a78bfa', 'ph2');
+  s += flPipe(`M${cx} ${manBy(2) + L.manH + 8} L${cx} ${railY0}`, 'p-man2-ph2', { delay: 0.2 });
+  s += flPipe(`M${cx} ${railY0} L${railX} ${railY0}`, 'p-ph2-rail');
+
+  // 「第二阶段研发自动化系统」竖排标题：贴最左侧，垂直居中于四个模块组；
+  // data-phase="ph2" 让 applyFlowStates 照常切换颜色（紫色 → 全做完变绿）
+  const p2Title = '第二阶段研发自动化系统';
+  const p2MidY = (modY[0] + modY[3] + GEO[3].H) / 2;
+  const p2Gap = 26;
+  const p2y0 = p2MidY - ((p2Title.length - 1) * p2Gap) / 2;
+  s += `<g class="phaseg pt2" data-phase="ph2">`
+     + vText(p2Title, 20, p2y0, 'vp2-t', p2Gap)
+     + `</g>`;
+  // 第二阶段是流程中的一个节点：
+  //   第一阶段的水经主管道从标题顶部接进来，再从标题底部接回主管道（接着流给四个模块）。
+  const p2TopY = p2y0;
+  const p2BotY = p2y0 + (p2Title.length - 1) * p2Gap;
+  const p2LinkX = 33;                       // 标题右侧接点（贴着竖排文字右缘）
+  s += flPipe(`M${railX} ${p2TopY} L${p2LinkX} ${p2TopY}`, 'p-p2-in');
+  s += flPipe(`M${p2LinkX} ${p2BotY} L${railX} ${p2BotY}`, 'p-p2-out');
 
   // ⑤ 主管道贴着左侧一路往下，最后汇进综合展示。
   s += flPipe(`M${railX} ${railY0} L${railX} ${railY1}`, 'p-rail', { mult: 1.3 });
   s += flPipe(`M${railX} ${railY1} L${cx - L.botW / 2} ${railY1}`, 'p-rail-fin', { mult: 1.3 });
 
   // ⑥ 每个模块：从主管道分一路支管进来 → 模块框 → 分水器 → 它的步骤列
+  //    第二阶段整体右移（P2M）：循环内用局部 cx = 右移后的模块中轴，盖住外层的画布中轴
+  const g2w = W - L.P2M - L.RM;
   GEO.forEach((g, i) => {
+    const cx = L.P2M + g2w / 2;
     const gy = modY[i];
     const modTop = gy + L.grpPadY;
     const modBottom = modTop + L.modH;
@@ -247,7 +267,7 @@ function buildFlowSvg() {
     const distDelay = dropDelay + dropDur * 0.4;
 
     // 组虚线框（先画）
-    s += `<rect class="flow-group" data-mgroup="${i}" x="${M}" y="${gy}" width="${grpW}" height="${g.H}" rx="12"/>`;
+    s += `<rect class="flow-group" data-mgroup="${i}" x="${L.P2M}" y="${gy}" width="${g2w}" height="${g.H}" rx="12"/>`;
 
     // —— 先画所有管子（端点随后被框盖住，不露头、不凸出） ——
     s += flPipe(`M${railX + 6.5} ${splitY} L${cx} ${splitY}`, `p-b${i}`, { delay: branchDelay });
@@ -360,7 +380,7 @@ function buildFlowSvg() {
     lines.forEach((t, k) => {
       s += `<text class="flow-t center" x="${cx}" y="${modTop + (lines.length > 1 ? 24 + k * 18 : L.modH / 2)}">${t}</text>`;
     });
-    s += `<text class="flow-t small" data-mpct="${i}" text-anchor="end" x="${M + grpW - 16}" y="${modTop + 20}">进度 0%</text>`;
+    s += `<text class="flow-t small" data-mpct="${i}" text-anchor="end" x="${L.P2M + g2w - 16}" y="${modTop + 20}">进度 0%</text>`;
 
     let idx = 0;
     g.rows.forEach((row, r) => {
@@ -454,6 +474,8 @@ function applyFlowStates(data) {
   setP('p-man2-ph2', stepPipe(phSt(2)));
   setP('p-ph2-rail', p2);
   setP('p-rail', p2);
+  setP('p-p2-in', p2);
+  setP('p-p2-out', p2);
   setP('p-rail-fin', gate(allDone ? 'done' : 'pending'));
 
   // 源头（大标题）与终点（综合展示）水池跟着水流状态发光
