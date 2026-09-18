@@ -564,9 +564,9 @@ def main():
                         help='航向死区（度）：|e| 小于它就不转。横移会踢航向，调大到 2 可避免「修航向修出外偏」')
     parser.add_argument('--fusion-cross-deadzone', type=float, default=8.0,
                         help='横向死区（mm）：|cross| 小于它就不横移。调大到 20 可少发横移、少踢航向')
-    parser.add_argument('--fusion', default='reference', choices=['lane', 'reference'],
-                        help='直线段融合算法：lane=旧的「朝方块走」(cx0 hack)，'
-                             'reference=按路线走、方块当参照（B 方案，默认）')
+    parser.add_argument('--fusion', default='lane', choices=['lane', 'reference'],
+                        help='直线段融合算法：lane=旧的 LaneFusion（默认，稳定），'
+                             'reference=按路线走、方块当参照（B 方案，试验中）')
     args = parser.parse_args()
 
     STRIDE_SCALE = args.stride_scale
