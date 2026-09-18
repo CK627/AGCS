@@ -464,14 +464,19 @@ def imu_turn(ik, board, imu_state, delta_deg):
     print('转弯完成 yaw=%.1f target=%.1f error=%+.1f'
           % (imu_state['yaw'], target, err), flush=True)
 
-    if abs(err) > HEADING_TOL_DEG:
+    # 反复用 IMU 修正，直到误差进死区（最多 5 次）。现场每次转弯都往外多转 1~3°，
+    # 单次 1° 修正不够，残差会累加到十几度把机器人带出弯道。
+    for _ in range(5):
+        err = angle_error(imu_state['yaw'], target)
+        if abs(err) <= HEADING_TOL_DEG:
+            break
         step = IMU_STRAIGHT_STEP if err > 0 else -IMU_STRAIGHT_STEP
         if step > 0:
             ik.turn_left(ik.initial_pos, 2, abs(step), TURN_SPEED, 1)
         else:
             ik.turn_right(ik.initial_pos, 2, abs(step), TURN_SPEED, 1)
-        time.sleep(0.08)
-        print('转弯后修正一次 %d°' % abs(step), flush=True)
+        time.sleep(0.2)
+        print('转弯后修正 %+d°（当前误差 %+.1f°）' % (step, err), flush=True)
 
 
 def do_pick(board, pick_count, pulses=None, pull_up_pulse=None):
