@@ -84,6 +84,8 @@ FUSION_HEAD_GAIN = 0.9     # 航向 P 增益：转「误差 × 该比例」度
 FUSION_CROSS_GAIN = 0.35   # 横向 P 增益：横移「偏差 × 该比例」mm
 MARKER_SIZE_MM = 62.5      # 红色方块真实半径（mm，现场量直径 12.5cm → 半径 6.25cm=62.5mm）；
                            # >0 时按视半径动态估距离，不用再管 marker_range 那个固定值（距离随接近一直变）
+STRAIGHT_MIN_MM = 400      # 直行段长度 >= 它才算「真直线」（重新开启颜色识别）；
+                           # 弯道里那些 80/150mm 的小直行不算，颜色识别保持关闭
 # --- 相机俯仰跟踪（接近时把 24 往下压，保证方块一直留在画面里不丢）---
 CAM_TRACK_MIN_24 = 160     # 24 号往下压的下限（太小=太朝下）
 CAM_TRACK_MAX_24 = 360     # 24 号往上抬的上限
@@ -343,7 +345,8 @@ def move_one_chunk(ik, move, forward):
 
 
 def move_straight_fusion(ik, board, detector, imu_state, tracker, distance_mm,
-                         fusion, ctrl, marker_range_mm, marker_size_mm, cam_state):
+                         fusion, ctrl, marker_range_mm, marker_size_mm, cam_state,
+                         color_enabled=True):
     """融合模式的直线段：相机写状态、IMU 管执行，单一控制器先航向后横向。
 
     与 `move_straight_imu_color` 的本质区别：
@@ -353,11 +356,12 @@ def move_straight_fusion(ik, board, detector, imu_state, tracker, distance_mm,
 
     cam_state：相机 24 号俯仰跟踪状态 {'pulse': 当前脉宽}。接近时方块往下掉出画面，
     就往把 24 往下压，保证方块一直留在画面里，融合才不会丢参照。
+    color_enabled：False 时跳过颜色检测（弯道里用），整段只靠 IMU 走。
     """
     remaining = abs(int(distance_mm))
     forward = distance_mm >= 0
     while remaining > 0:
-        det = detector()
+        det = detector() if color_enabled else None
         cx = None
         if det is not None:
             cx = det.get('bbox_center_x', det['center'][0])
@@ -625,6 +629,7 @@ def main():
     place_count = 0
     picked_count = 0
     pose = {'x': 0.0, 'y': 0.0}
+    color_enabled = True   # 颜色识别开关：弯道里关掉，过了弯道再开
 
     for i, act in enumerate(actions, 1):
         name = act.get('action')
@@ -639,11 +644,14 @@ def main():
             print('%d/%d 直行 %dmm' % (i, len(actions), pending_forward), flush=True)
             target_yaw = imu_state['yaw']
             dist_mm = pending_forward
+            # 长直行才算「真直线」，重新开启颜色识别；弯道里的小直行保持关闭
+            if abs(pending_forward) >= STRAIGHT_MIN_MM:
+                color_enabled = True
             # 融合导航：相机写状态、IMU 管执行，状态不归零；丢帧卡尔曼自己扛得住
             marker_range = move_straight_fusion(
                 ik, board, detector, imu_state, imu_state['tracker'],
                 pending_forward, fusion, ctrl, marker_range, args.marker_size_mm,
-                cam_state)
+                cam_state, color_enabled)
             pending_forward = 0
             advance_pose(pose, imu_state['yaw'], dist_mm)
             report(position_m=pose_dict(pose),
@@ -659,6 +667,7 @@ def main():
                                 fusion, yaw_before, -angle)
             reset_imu(board, imu_state, reset_yaw=False)
             target_yaw = imu_state['yaw']
+            color_enabled = False   # 进入弯道，关闭颜色识别
             report(heading_deg=norm_heading(imu_state['yaw']),
                    message='左转 %d°' % angle)
         elif name == 'turn_right':
@@ -670,6 +679,7 @@ def main():
                                 fusion, yaw_before, angle)
             reset_imu(board, imu_state, reset_yaw=False)
             target_yaw = imu_state['yaw']
+            color_enabled = False   # 进入弯道，关闭颜色识别
             report(heading_deg=norm_heading(imu_state['yaw']),
                    message='右转 %d°' % angle)
         elif name == 'pick':
@@ -702,10 +712,12 @@ def main():
     if pending_forward:
         target_yaw = imu_state['yaw']
         dist_mm = pending_forward
+        if abs(pending_forward) >= STRAIGHT_MIN_MM:
+            color_enabled = True
         move_straight_fusion(
             ik, board, detector, imu_state, imu_state['tracker'],
             pending_forward, fusion, ctrl, marker_range, args.marker_size_mm,
-            cam_state)
+            cam_state, color_enabled)
         advance_pose(pose, imu_state['yaw'], dist_mm)
 
     video_stop.set()
