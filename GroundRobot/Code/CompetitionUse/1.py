@@ -83,6 +83,8 @@ FUSION_CX0 = 160.0
 FUSION_F_PX_FULL = 838.0   # 原始 640 分辨率焦距 = 2×FUSION_F_PX，色块视半径反推距离用
 FUSION_HEAD_GAIN = 0.9     # 航向 P 增益：转「误差 × 该比例」度
 FUSION_CROSS_GAIN = 0.35   # 横向 P 增益：横移「偏差 × 该比例」mm
+MARKER_SIZE_MM = 125.0     # 红色方块真实半径（mm，现场量 12.5cm=125mm）；>0 时按视半径动态估距离，
+                           # 不用再管 marker_range 那个固定值（距离随接近一直变，固定值必错）
 # --- 相机俯仰跟踪（接近时把 24 往下压，保证方块一直留在画面里不丢）---
 CAM_TRACK_MIN_24 = 160     # 24 号往下压的下限（太小=太朝下）
 CAM_TRACK_MAX_24 = 360     # 24 号往上抬的上限
@@ -553,9 +555,9 @@ def main():
                         help='画面主点横坐标，即「色块正对机身」时的像素（需标定）')
     parser.add_argument('--f-px-full', type=float, default=FUSION_F_PX_FULL,
                         help='原始分辨率下的焦距像素，用色块视半径反推距离')
-    parser.add_argument('--marker-size-mm', type=float, default=0.0,
-                        help='色块真实半径（mm）；>0 时按视半径自动估距离，'
-                             '否则用 --marker-range 的定值')
+    parser.add_argument('--marker-size-mm', type=float, default=MARKER_SIZE_MM,
+                        help='色块真实半径（mm）；>0 时按视半径动态估距离，'
+                             '否则用 --marker-range 的定值（固定值不推荐）')
     parser.add_argument('--marker-range', type=float, default=610.0,
                         help='到色块的前向距离（mm），--marker-size-mm=0 时生效')
     parser.add_argument('--fusion-head-gain', type=float, default=FUSION_HEAD_GAIN)
