@@ -211,12 +211,12 @@ function buildFlowSvg() {
     });
   });
 
-  // ④ 第二阶段：整个第二阶段用虚线大框框起来；标题左侧竖排（带小框）。
-  //    进水：手动链路底部 → 下行 → 左折进主管道 → 竖直落进标题顶部 →
-  //          标题右侧分出四根进管（上两个向上、下两个向下，再右拐）；
-  //    出水：各模块汇入右侧一根汇流管，一路下行，最后竖直落进综合展示顶部。
+  // ④ 第二阶段：整块虚线大框；左侧竖排标题（带小框）。
+  //    水路：手动链路底部 → 下行 → 左折进左侧主管道 → 四模块各自分支；
+  //    模块出水回主管道，主管道一路向下，最后竖直落进综合展示顶部。
   const railX = L.RAIL;
-  const railY0 = yP2 + 15;                         // 主管道起点：过桥水平管
+  const railY0 = yP2 + 15;                         // 主管道起点（头）：过桥水平管
+  const railTailY = yBot - 8;                      // 主管道终点（尾）：综合展示顶部上方
 
   // 第二阶段大框（先画，标题 / 管子 / 模块都画在框内）
   s += `<rect class="flow-group" data-p2box x="4" y="${yP2 - 6}" width="${W - 8}"`
@@ -232,32 +232,21 @@ function buildFlowSvg() {
   const p2Gap = 26;
   const p2y0 = p2MidY - ((p2Title.length - 1) * p2Gap) / 2;
   const p2H = (p2Title.length - 1) * p2Gap + 32;
+  const p2TopEdge = p2y0 - 16;
+  const p2BotEdge = p2y0 + (p2Title.length - 1) * p2Gap + 16;
   s += `<g class="phaseg pt2" data-phase="ph2">`
-     + `<rect class="flow-box phase" x="8" y="${p2y0 - 16}" width="34" height="${p2H}" rx="8"/>`
+     + `<rect class="flow-box phase" x="8" y="${p2TopEdge}" width="34" height="${p2H}" rx="8"/>`
      + vText(p2Title, 20, p2y0, 'vp2-t', p2Gap)
      + `</g>`;
-  // 从上面下来的水直接落进标题顶部（不再从标题右侧接进来）。
-  const p2TopEdge = p2y0 - 16;              // 标题小框上缘
-  const p2LinkX = 42;                       // 标题小框右缘
+  // 标题作为节点：水从顶部竖直落进、底部竖直流出（回主管道）。
   s += flPipe(`M${railX} ${p2TopEdge - 8} L25 ${p2TopEdge - 8} L25 ${p2TopEdge}`, 'p-p2-in');
-  // 标题右侧分出四根进管：从不同高度出水，先竖直走到各自模块的高度，再右拐。
-  // 上面两个模块在标题上方 → 管子向上走（向上的长度不同）；
-  // 下面两个模块在标题下方 → 管子向下延伸。
-  const p2OutY = [p2y0 + 17.5, p2y0 + 62.5, p2y0 + 107.5, p2y0 + 257.5];
-  const p2OutX = [74, 90, 106, 122];        // 四根竖管横坐标错开，不挤在一起
+  s += flPipe(`M25 ${p2BotEdge} L25 ${p2BotEdge + 8} L${railX} ${p2BotEdge + 8}`, 'p-p2-out');
 
-  // ⑤ 主管道（进水管）贴着左侧一路往下，接到第二阶段标题顶部上方。
-  s += flPipe(`M${railX} ${railY0} L${railX} ${p2TopEdge - 8}`, 'p-rail', { mult: 1.3 });
+  // ⑤ 主管道贴着左侧一路往下，最后竖直落进综合展示顶部。
+  s += flPipe(`M${railX} ${railY0} L${railX} ${railTailY}`, 'p-rail', { mult: 1.3 });
+  s += flPipe(`M${railX} ${railTailY} L${cx} ${railTailY} L${cx} ${yBot}`, 'p-rail-fin', { mult: 1.3 });
 
-  // 右侧汇流管：各模块出水横向接进来，一路下行，最后竖直落进综合展示顶部。
-  const retX = 916;                                      // 右侧汇流管横坐标（大框内侧右缘）
-  const finY = yBot - 8;                                 // 综合展示顶部上方 8px
-  const firstYCol = modY[0] + L.grpPadY + L.modH + L.DROP + GEO[0].boxH + 8;
-  s += flPipe(`M${retX} ${firstYCol} L${retX} ${finY}`, 'p-return', { mult: 1.1 });
-  // 汇流后走到综合展示正上方，直接竖直落进顶部。
-  s += flPipe(`M${retX} ${finY} L${cx} ${finY} L${cx} ${yBot}`, 'p-fin', { mult: 1.1 });
-
-  // ⑥ 每个模块：从第二阶段标题右侧分出的进管进来 → 模块框 → 分水器 → 它的步骤列
+  // ⑥ 每个模块：从主管道分一路支管进来 → 模块框 → 分水器 → 它的步骤列
   //    第二阶段整体右移（P2M）：循环内用局部 cx = 右移后的模块中轴，盖住外层的画布中轴
   const g2w = W - L.P2M - L.RM;
   GEO.forEach((g, i) => {
@@ -287,8 +276,7 @@ function buildFlowSvg() {
     s += `<rect class="flow-group" data-mgroup="${i}" x="${L.P2M}" y="${gy}" width="${g2w}" height="${g.H}" rx="12"/>`;
 
     // —— 先画所有管子（端点随后被框盖住，不露头、不凸出） ——
-    s += flPipe(`M${p2LinkX} ${p2OutY[i]} L${p2OutX[i]} ${p2OutY[i]} L${p2OutX[i]} ${splitY} L${cx} ${splitY}`,
-                `p-b${i}`, { delay: branchDelay });
+    s += flPipe(`M${railX + 6.5} ${splitY} L${cx} ${splitY}`, `p-b${i}`, { delay: branchDelay });
     s += flPipe(`M${cx} ${splitY} L${sideL} ${splitY}`, `p-mb${i}-tl`, { delay: splitDelay });
     s += flPipe(`M${cx} ${splitY} L${sideR} ${splitY}`, `p-mb${i}-tr`, { delay: splitDelay });
     s += flPipe(`M${sideL} ${splitY} L${sideL} ${mergeY}`, `p-mb${i}-l`, { delay: sideDelay });
@@ -299,7 +287,7 @@ function buildFlowSvg() {
     if (g.rows.length > 1) {
       // 多行（中枢互通）：水从中间落点往左走到最左端，沿竖管下行；
       // 第一行、第二行都从左往右推进（与步骤先后一致），
-      // 两行最右列出管下行，分别汇入右侧汇流管。
+      // 两行最右列排入底部收集管，汇合后一起流回主管道。
       const yTop = yR(0);
       const leftX = g.rowX - 40;
       const r1y = rowsY + g.boxH / 2;
@@ -341,22 +329,25 @@ function buildFlowSvg() {
                       `p-hub-r${r}-${j}-b`, { delay: dly });
         });
       });
-      // 合并回路：两行都从最右列出管，右侧竖管下行，分别横向接入右侧汇流管（错开高度）。
+      // 合并回路：架设平台（第一行最右列）从右侧出管、沿右侧向下、底部往左接上流出；
+      // 部署软件（第二行最右列）同样从右侧出管下行，两路汇合后一起流回主管道。
       const row1Top = rowsY + g.boxH + L.rowGap;
       const row1Bottom = row1Top + g.boxH;
-      const yColA = rowsY + g.boxH + 8;                              // 第一行出水高度
-      const yCol = row1Bottom + 8;                                   // 第二行出水高度
+      const yCol = row1Bottom + 8;                                   // 底部收集管高度
+      const gapX = colCx(1) + L.stW / 2 + L.stGap / 2;               // 第二行 col1/col2 之间的缝
       const outRDelay = r0Seg + 0.08 + segDur * 0.25;
       const outLDelay = r1Seg + 0.08 + segDur * 0.25;
-      const sideX = colCx(2) + L.stW / 2 + 14;                       // 第一行右侧竖管
-      const sideX2 = colCx(2) + L.stW / 2 + 28;                      // 第二行右侧竖管（错开）
-      s += flPipe(`M${colCx(2) + L.stW / 2} ${r1y} L${sideX} ${r1y} L${sideX} ${yColA} L${retX} ${yColA}`,
+      const sideX = colCx(2) + L.stW / 2 + 14;                       // 右侧竖管（贴着两列右侧下行）
+      const sideX2 = colCx(2) + L.stW / 2 + 28;                      // 第二行右侧竖管（错开一行）
+      s += flPipe(`M${colCx(2) + L.stW / 2} ${r1y} L${sideX} ${r1y} L${sideX} ${yCol} L${gapX} ${yCol}`,
                   'p-hub-out-r', { delay: outRDelay });
-      s += flPipe(`M${colCx(2) + L.stW / 2} ${rNy} L${sideX2} ${rNy} L${sideX2} ${yCol} L${retX} ${yCol}`,
+      s += flPipe(`M${colCx(2) + L.stW / 2} ${rNy} L${sideX2} ${rNy} L${sideX2} ${yCol} L${sideX} ${yCol}`,
                   'p-hub-out-l', { delay: outLDelay });
+      s += flPipe(`M${gapX} ${yCol} L${railX + 6.5} ${yCol}`, 'p-mg2',
+                  { delay: outLDelay + fillDur(8) * 0.25 });
     } else {
       // 单行：顶部分水器向左右分流 → 每根滴管进小目标框上方再一分二，
-      // 贴着小目标框两侧流下、框底二合一 → 底部收集管从左往右汇入右侧汇流管。
+      // 贴着小目标框两侧流下、框底二合一 → 底部收集管从右往左汇流回主管道。
       const yr = yR(0);
       const halfLen = (g.lastCx - g.firstCx) / 2;
       const halfDur = fillDur(halfLen);
@@ -382,10 +373,10 @@ function buildFlowSvg() {
       });
       for (let j = 1; j < g.cols; j++) {
         const frac = halfLen > 0 ? Math.abs(colCx(j) - cx) / halfLen : 0;
-        s += flPipe(`M${colCx(j - 1)} ${yCol} L${colCx(j)} ${yCol}`, `p-col${i}-${j}`,
+        s += flPipe(`M${colCx(j)} ${yCol} L${colCx(j - 1)} ${yCol}`, `p-col${i}-${j}`,
                     { delay: distDelay + halfDur * frac * 0.2 + 0.2 });
       }
-      s += flPipe(`M${g.lastCx} ${yCol} L${retX} ${yCol}`, `p-mg${i}`,
+      s += flPipe(`M${g.firstCx} ${yCol} L${railX + 6.5} ${yCol}`, `p-mg${i}`,
                   { delay: distDelay + 0.2 });
     }
 
@@ -414,7 +405,7 @@ function buildFlowSvg() {
     });
   });
 
-  // ⑦ 综合展示（水由右侧汇流管从右侧送进来，见 ⑤）
+  // ⑦ 综合展示（水由主管道从左侧送进来，见 ⑤）
   s += `<rect class="flow-box struct" data-box="bot" x="${cx - L.botW / 2}" y="${yBot}" width="${L.botW}" height="${L.botH}" rx="8"/>`;
   s += `<text class="flow-t title center" x="${cx}" y="${yBot + L.botH / 2}">综合展示：自动巡检与捕获</text>`;
   s += `</svg>`;
@@ -490,8 +481,8 @@ function applyFlowStates(data) {
   setP('p-ph2-rail', p2);
   setP('p-rail', p2);
   setP('p-p2-in', p2);
-  setP('p-return', p2);
-  setP('p-fin', gate(allDone ? 'done' : 'pending'));
+  setP('p-p2-out', p2);
+  setP('p-rail-fin', gate(allDone ? 'done' : 'pending'));
 
   // 源头（大标题）与终点（综合展示）水池跟着水流状态发光
   setCls('[data-box="title"]', 'flow-box struct' + (ph1st === 'done' ? ' done' : ' live'));
@@ -540,6 +531,7 @@ function applyFlowStates(data) {
       }
       setP('p-hub-out-r', gatedStep(sts[2]));
       setP('p-hub-out-l', gatedStep(sts[5]));
+      setP('p-mg2', gatedStep(sts[5]));
     } else {
       setP(`p-dist${i}-l`, msP);
       setP(`p-dist${i}-r`, msP);
@@ -549,7 +541,7 @@ function applyFlowStates(data) {
         ['tl', 'tr', 'l', 'r', 'bl', 'br'].forEach(side => setP(`p-st${i}-${j}-${side}`, cp));
       });
       for (let j = 1; j < g.cols; j++) setP(`p-col${i}-${j}`, gatedStep(sts[j]));
-      setP(`p-mg${i}`, gatedStep(sts[g.cols - 1]));
+      setP(`p-mg${i}`, gatedStep(sts[0]));
     }
     sts.forEach((c, j) => setCls(`[data-stepg="${i}:${j}"]`, `stepg ${c}`));
   });
