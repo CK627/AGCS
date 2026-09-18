@@ -211,26 +211,35 @@ function buildFlowSvg() {
     });
   });
 
-  // ④ 第二阶段：标题改到最左侧竖排（横条标题取消）。第一阶段的水折进标题顶部，
-  //    再从标题右侧分出四根独立水管，分别接四个模块（不再用共用主管道）。
-  const p2LinkX = 33;                              // 标题右侧接点
-  const p2TopY = yP2 + 20;                         // 过桥 / 标题顶部高度
-  s += flPipe(`M${cx} ${manBy(2) + L.manH + 8} L${cx} ${p2TopY}`, 'p-man2-ph2', { delay: 0.2 });
-  s += flPipe(`M${cx} ${p2TopY} L${p2LinkX} ${p2TopY}`, 'p-ph2-rail');
-
-  // 「第二阶段研发自动化系统」竖排标题：贴最左侧、顶部对齐；
-  // data-phase="ph2" 让 applyFlowStates 照常切换颜色（紫色 → 全做完变绿）
+  // ④ 第二阶段：竖排标题贴在最左侧、垂直居中于四个模块组（保持用户位置不动）。
+  //    整个第二阶段用一个虚线大框框起来，内部水路清晰排布：
+  //    第一阶段 → 左折 → 沿标题左侧下行接到标题顶部 → 标题右侧分出四根独立进管
+  //    → 分别接四个模块 → 各模块出水接右侧汇流管下行 → 底部进综合展示。
   const p2Title = '第二阶段研发自动化系统';
   const p2Gap = 26;
-  const p2y0 = p2TopY;
+  const p2MidY = (modY[0] + modY[3] + GEO[3].H) / 2;
+  const p2y0 = p2MidY - ((p2Title.length - 1) * p2Gap) / 2;
+  const p2LinkX = 33;                              // 标题右侧接点
+  const bridgeY = yP2 + 15;                        // 过桥高度（框内顶部）
+
+  // 第二阶段大框（先画，标题 / 管子 / 模块都画在框内）
+  s += `<rect class="flow-group" data-p2box x="6" y="${yP2 - 4}" width="${W - 12}"`
+     + ` height="${yBot - yP2 + 20}" rx="14"/>`;
+
+  s += flPipe(`M${cx} ${manBy(2) + L.manH + 8} L${cx} ${bridgeY}`, 'p-man2-ph2', { delay: 0.2 });
+  s += flPipe(`M${cx} ${bridgeY} L${p2LinkX} ${bridgeY}`, 'p-ph2-rail');
+  s += flPipe(`M${p2LinkX} ${bridgeY} L${p2LinkX} ${p2y0}`, 'p-p2-in');
+
   s += `<g class="phaseg pt2" data-phase="ph2">`
      + vText(p2Title, 20, p2y0, 'vp2-t', p2Gap)
      + `</g>`;
 
-  // ⑤ 底部汇流管：四个模块的出水从右侧各自下行，在底部汇合进综合展示（右侧进）。
+  // ⑤ 右侧汇流管：各模块出水横向接进来，一路下行，底部进综合展示（右侧进）。
   const finY = yBot + L.botH / 2;
-  const finX0 = 934;                               // 最右一根出管的横坐标
-  s += flPipe(`M${finX0} ${finY} L${cx + L.botW / 2} ${finY}`, 'p-fin');
+  const retX = 916;                                // 右侧汇流管横坐标（框内右侧）
+  const firstYCol = modY[0] + L.grpPadY + L.modH + L.DROP + GEO[0].boxH + 8;
+  s += flPipe(`M${retX} ${firstYCol} L${retX} ${finY}`, 'p-return', { mult: 1.1 });
+  s += flPipe(`M${retX} ${finY} L${cx + L.botW / 2} ${finY}`, 'p-fin');
 
   // ⑥ 每个模块：从主管道分一路支管进来 → 模块框 → 分水器 → 它的步骤列
   //    第二阶段整体右移（P2M）：循环内用局部 cx = 右移后的模块中轴，盖住外层的画布中轴
@@ -263,9 +272,9 @@ function buildFlowSvg() {
 
     // —— 先画所有管子（端点随后被框盖住，不露头、不凸出） ——
     // 每个模块单独从第二阶段接一根进管（四根竖管错开，不共用主管道）
-    const inXs = [37, 45, 53, 61];
-    const inYs = [514, 545, 570, 595];
-    if (i === 0) {
+    const inXs = [40, 62, 84, 106];
+    const inYs = [1065, 1120, 1182, 1230];
+    if (splitY === inYs[i]) {
       s += flPipe(`M${inXs[i]} ${splitY} L${cx} ${splitY}`, `p-in${i}`, { delay: branchDelay });
     } else {
       s += flPipe(`M${inXs[i]} ${inYs[i]} L${inXs[i]} ${splitY} L${cx} ${splitY}`, `p-in${i}`,
@@ -336,7 +345,7 @@ function buildFlowSvg() {
                   'p-hub-out-r', { delay: outRDelay });
       s += flPipe(`M${colCx(2) + L.stW / 2} ${rNy} L${sideX2} ${rNy} L${sideX2} ${yCol}`,
                   'p-hub-out-l', { delay: outLDelay });
-      s += flPipe(`M${sideX2} ${yCol} L926 ${yCol} L926 ${finY}`, 'p-out2',
+      s += flPipe(`M${sideX2} ${yCol} L${retX} ${yCol}`, 'p-out2',
                   { delay: outLDelay + fillDur(8) * 0.25 });
     } else {
       // 单行：顶部分水器向左右分流 → 每根滴管进小目标框上方再一分二，
@@ -364,14 +373,12 @@ function buildFlowSvg() {
         s += flPipe(`M${ccx - stOff} ${yCol} L${ccx} ${yCol}`, `p-st${i}-${j}-bl`, { delay: mergeDelay });
         s += flPipe(`M${ccx + stOff} ${yCol} L${ccx} ${yCol}`, `p-st${i}-${j}-br`, { delay: mergeDelay });
       });
-      const outXs = [910, 918, 926, 934];
       for (let j = 1; j < g.cols; j++) {
         const frac = halfLen > 0 ? Math.abs(colCx(j - 1) - cx) / halfLen : 0;
         s += flPipe(`M${colCx(j - 1)} ${yCol} L${colCx(j)} ${yCol}`, `p-col${i}-${j}`,
                     { delay: distDelay + halfDur * frac * 0.2 + 0.2 });
       }
-      s += flPipe(`M${g.lastCx} ${yCol} L${outXs[i]} ${yCol} L${outXs[i]} ${finY}`, `p-out${i}`,
-                  { delay: distDelay + 0.24 });
+      s += flPipe(`M${g.lastCx} ${yCol} L${retX} ${yCol}`, `p-out${i}`, { delay: distDelay + 0.24 });
     }
 
     // —— 再画框和文字（盖住上面的管子端点） ——
@@ -473,6 +480,8 @@ function applyFlowStates(data) {
   }
   setP('p-man2-ph2', stepPipe(phSt(2)));
   setP('p-ph2-rail', p2);
+  setP('p-p2-in', p2);
+  setP('p-return', p2);
   setP('p-fin', gate(allDone ? 'done' : 'pending'));
 
   // 源头（大标题）与终点（综合展示）水池跟着水流状态发光
@@ -483,6 +492,7 @@ function applyFlowStates(data) {
   // 阶段框 / 手动链路框
   setCls('[data-phase="ph1"]', 'phaseg pt1' + (ph1st === 'done' ? ' done' : ''));
   setCls('[data-phase="ph2"]', 'phaseg pt2' + (ph2st === 'done' ? ' done' : ''));
+  setCls('[data-p2box]', 'flow-group' + (allDone ? ' done' : (anyProg ? ' active' : '')));
   MANUAL.forEach((_, i) => {
     const st = phSt(i);
     setCls(`[data-man="${i}"]`, 'flow-box mod' + (st === 'done' ? ' done' : (st === 'active' ? ' active' : '')));
