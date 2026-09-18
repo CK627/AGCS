@@ -428,6 +428,9 @@ def feed_turn_to_fusion(imu_state, tracker, fusion, yaw_before, cmd_right_deg):
         fusion.predict(residual, ds_mm=0.0, d_theta_cmd_deg=cmd_right_deg)
     else:
         fusion.predict(residual, ds_mm=0.0)
+        # LaneFusion 用冻结的 cx0 当基准，转弯后方块相对机身的方位变了，把 cx0 按
+        # 「反方向转角」转过去，否则融合会把转弯当成漂移、又把机器人转回直线。
+        fusion.rotate_reference(-cmd_right_deg)
     # 把 since_last 的基准挪到「此刻」，否则直线段第一次取值会把转弯尾巴再积一遍
     tracker.since_last()
     print('转弯残差 %+.2f°（IMU 实测 %+.2f° / 命令 %+.1f°）-> e=%+.2f°'

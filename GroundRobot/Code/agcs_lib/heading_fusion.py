@@ -215,6 +215,16 @@ class LaneFusion(object):
         """给定当前航向估计，把方位角反解成横向偏差（mm）。用于对照/调试。"""
         return -float(range_mm) * math.tan((float(beta_deg) + self.e) * _DEG)
 
+    def rotate_reference(self, delta_bearing_deg):
+        """转弯后把基准像素 cx0 转 delta_bearing_deg 度。
+
+        LaneFusion 用冻结的 cx0 当「方块正对机身」的基准像素。转弯后机身朝向变了，
+        方块相对机身的方位跟着变，必须把 cx0 一起转，否则融合会把「转弯」当成漂移，
+        又把机器人转回直线（弯道被掰直）。delta_bearing_deg 是方块相对机身的方位
+        变化，右正，等于 -命令转角。
+        """
+        self.cx0 += self.f_px * math.tan(math.radians(delta_bearing_deg))
+
     def __repr__(self):
         return ('LaneFusion(e=%+.2fdeg cross=%+.1fmm P=[%.2f,%.1f] n=%d)'
                 % (self.e, self.cross, self.p00, self.p11, self.updates))
