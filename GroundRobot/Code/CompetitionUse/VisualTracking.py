@@ -32,6 +32,9 @@ LAB = {
     'blue':   {'min': (97, 122, 50), 'max': (255, 153, 104)},
 }
 
+# 亮度均衡器（CLAHE）：把 L 通道的明暗拉平，抵消环境光变亮/变暗对检测的影响
+_clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+
 # ---- 云台追踪参数（P + D 控制，带平滑和限流，抑制晃动又保持灵敏）----
 P_GAIN = 0.12          # P 增益（伺服单位/像素），调大更灵敏但更容易晃
 D_GAIN = 0.05          # D 增益（阻尼，抑制来回晃）
@@ -53,6 +56,9 @@ def detect_color(frame, color, min_area=50):
     img = cv2.resize(img, (320, 240), interpolation=cv2.INTER_NEAREST)
     img = cv2.GaussianBlur(img, (3, 3), 1)
     lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    l = _clahe.apply(l)   # 亮度均衡，抵消环境光明暗
+    lab = cv2.merge((l, a, b))
     lo, hi = LAB[color]['min'], LAB[color]['max']
     mask = cv2.inRange(lab, lo, hi)
     mask = cv2.erode(mask, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
@@ -77,6 +83,9 @@ def detect_color(frame, color, min_area=50):
 def lab_view(frame, color):
     """生成 LAB 阈值图：只显示被 LAB 阈值命中的颜色区域，其余黑色。用于可视化调阈值。"""
     lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    l = _clahe.apply(l)   # 亮度均衡，与 detect_color 保持一致
+    lab = cv2.merge((l, a, b))
     lo, hi = LAB[color]['min'], LAB[color]['max']
     mask = cv2.inRange(lab, lo, hi)
     return cv2.bitwise_and(frame, frame, mask=mask)
@@ -291,6 +300,7 @@ def main():
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     cap.set(cv2.CAP_PROP_SATURATION, 128)
     cap.set(cv2.CAP_PROP_AUTO_WB, 1)
+    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.75)   # 自动曝光，抵消环境光明暗变化
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)   # 摄像头内部只留 1 帧，减少画面延迟
     cap.set(cv2.CAP_PROP_FPS, 30)
     for _ in range(5):
