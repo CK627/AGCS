@@ -313,6 +313,7 @@ def main():
     heading = 0.0
     last_depth_t = 0.0
     last_cmd_t = 0.0
+    last_x_dis, last_y_dis = None, None   # 上次已发送的伺服位置（只在变化时发）
     # 平滑 + PID 状态（压抖动、加阻尼）
     sx, sy = float(FRAME_CX), float(FRAME_CY)
     prev_ex, prev_ey = 0.0, 0.0
@@ -341,10 +342,12 @@ def main():
                     y_dis += int(P_GAIN * ey + D_GAIN * (ey - prev_ey))
                     y_dis = max(TILT_MIN, min(TILT_MAX, y_dis))
                 prev_ex, prev_ey = ex, ey
-                # 限流：间隔够长才发伺服命令，减少 churn / 晃动
+                # 只有目标位置真正变了才发伺服命令：静止目标不再反复下同样的命令，消除抖动
                 now = time.time()
                 if now - last_cmd_t >= MIN_CMD_INTERVAL:
-                    board.bus_servo_set_position(SERVO_TIME, [[24, y_dis], [21, x_dis]])
+                    if x_dis != last_x_dis or y_dis != last_y_dis:
+                        board.bus_servo_set_position(SERVO_TIME, [[24, y_dis], [21, x_dis]])
+                        last_x_dis, last_y_dis = x_dis, y_dis
                     last_cmd_t = now
 
                 if depth is not None and now - last_depth_t >= 0.3:
