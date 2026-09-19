@@ -113,6 +113,33 @@ def report(**kw):
         task_server.set_status(**kw)
 
 
+def read_battery_v(board, samples=20):
+    """读电池电压（V），连续采样取中位数。只用于记录分析，不参与控制。失败返回 None。"""
+    try:
+        vs = []
+        for _ in range(samples):
+            v = board.get_battery()
+            if v is not None:
+                vs.append(float(v))
+            time.sleep(0.03)
+        if not vs:
+            return None
+        vs.sort()
+        return vs[len(vs) // 2] / 1000.0
+    except Exception:
+        return None
+
+
+def log_battery(board, tag=''):
+    """把电池电压写进日志（print 会被 start_run_log 的 _Tee 抄进日志文件）。"""
+    v = read_battery_v(board)
+    if v is None:
+        print('电池电压%s读取失败' % (' ' + tag if tag else ''), flush=True)
+    else:
+        print('电池电压%s %.2f V' % (' ' + tag if tag else '', v), flush=True)
+    return v
+
+
 def norm_heading(deg):
     """把累计 yaw 归一化到 [0, 360) 度。"""
     return round(deg % 360.0, 1)
@@ -593,6 +620,7 @@ def main():
     ik = make_ik(board)
     imu_state = init_imu(board)
     cam, detector = open_vision(args.color, args.min_area)
+    log_battery(board, tag='启动')   # 只记录分析，不参与控制
 
     video_stop = threading.Event()
     video_thread = threading.Thread(
@@ -690,6 +718,7 @@ def main():
         elif name == 'pick':
             pick_count += 1
             print('%d/%d pick%d' % (i, len(actions), pick_count), flush=True)
+            log_battery(board, tag='夹取前')   # 只记录分析，不参与控制
             pulses = {int(k): int(v) for k, v in act.get('pulses', {}).items()} if act.get('pulses') else None
             do_pick(board, pick_count, pulses, pull_up_pulse=args.pull_up)
             picked_count += 1
