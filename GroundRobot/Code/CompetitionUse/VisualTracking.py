@@ -24,6 +24,9 @@ import numpy as np
 
 from common.ros_robot_controller_sdk import Board
 
+# spiderpi 根目录（模型在 ~/spiderpi/models/ 下，不在 CompetitionUse/ 下）
+_PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 # ---- LAB 颜色阈值（从 config/lab_config.yaml 内联，重新标定后改这里）----
 LAB = {
     'red':    {'min': (0, 130, 115), 'max': (255, 170, 145)},
@@ -89,6 +92,65 @@ def lab_view(frame, color):
     lo, hi = LAB[color]['min'], LAB[color]['max']
     mask = cv2.inRange(lab, lo, hi)
     return cv2.bitwise_and(frame, frame, mask=mask)
+
+
+class ModelDetector:
+    """ONNX YOLO 检测器（onnxruntime 本地推理）。detect(frame) 返回 {'center':(cx,cy),'conf':..} 或 None。
+
+    模型输出 [4+nc, 8400]，这里只取「fake bug」这一类（CLASS_IDX=15）。若模型里类别不同，
+    改 CLASS_IDX 即可。
+    """
+
+    NAME = 'fake bug'
+    CLASS_IDX = 15
+
+    def __init__(self, model_path, conf=0.5):
+        import onnxruntime as ort
+        opts = ort.SessionOptions()
+        opts.intra_op_num_threads = 4   # Pi5 四核并行
+        self.sess = ort.InferenceSession(model_path, opts, providers=['CPUExecutionProvider'])
+        self.input_name = self.sess.get_inputs()[0].name
+        self.output_name = self.sess.get_outputs()[0].name
+        self.conf = conf
+
+    def detect(self, frame):
+        """检测一帧，返回 {'center':(cx,cy),'conf':score} 或 None，并在 frame 上画框。"""
+        h0, w0 = frame.shape[:2]
+        r = min(640 / w0, 640 / h0)
+        new_w, new_h = int(round(w0 * r)), int(round(h0 * r))
+        pad_x, pad_y = (640 - new_w) // 2, (640 - new_h) // 2
+        canvas = np.full((640, 640, 3), 114, dtype=np.uint8)
+        canvas[pad_y:pad_y + new_h, pad_x:pad_x + new_w] = cv2.resize(frame, (new_w, new_h))
+        blob = canvas[:, :, ::-1].transpose(2, 0, 1)[None].astype(np.float32) / 255.0
+        out = self.sess.run([self.output_name], {self.input_name: blob})[0][0]
+
+        best = None  # (x1, y1, x2, y2, score)
+        for i in range(out.shape[1]):
+            score = float(out[4 + self.CLASS_IDX, i])
+            if score < self.conf:
+                continue
+            cx, cy, w, h = out[0, i], out[1, i], out[2, i], out[3, i]
+            x1 = (cx - w / 2 - pad_x) / r
+            y1 = (cy - h / 2 - pad_y) / r
+            x2 = (cx + w / 2 - pad_x) / r
+            y2 = (cy + h / 2 - pad_y) / r
+            x1 = max(0, min(w0, x1))
+            y1 = max(0, min(h0, y1))
+            x2 = max(0, min(w0, x2))
+            y2 = max(0, min(h0, y2))
+            if x2 - x1 < 2 or y2 - y1 < 2:
+                continue
+            if best is None or score > best[4]:
+                best = (x1, y1, x2, y2, score)
+
+        if best is None:
+            return None
+        x1, y1, x2, y2, score = best
+        cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+        cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 2)
+        cv2.putText(frame, '%s %.2f' % (self.NAME, score), (int(x1), int(y1) - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+        return {'center': (cx, cy), 'conf': float(score)}
 
 
 # ---------------- OpenNI2 深度（内联 agcs_lib.depth.DepthCamera 的最小部分）----------------
@@ -288,9 +350,12 @@ def lan_ip():
 
 
 def main():
-    parser = argparse.ArgumentParser(description='2.1 视觉追踪')
+    parser = argparse.ArgumentParser(description='2.1 视觉追踪（默认 YOLO，可退回颜色）')
     parser.add_argument('--color', default='yellow',
                         choices=['red', 'green', 'blue', 'yellow'])
+    parser.add_argument('--model', default='models/best.onnx',
+                        help='YOLO ONNX 模型路径；传空串 "" 则退回颜色追踪')
+    parser.add_argument('--conf', type=float, default=0.5, help='YOLO 置信度阈值')
     args = parser.parse_args()
 
     board = Board()
@@ -305,6 +370,17 @@ def main():
     cap.set(cv2.CAP_PROP_FPS, 30)
     for _ in range(5):
         cap.read()
+
+    # YOLO 模型（加载失败就退回颜色追踪）
+    model_det = None
+    if args.model:
+        model_path = args.model if os.path.isabs(args.model) else os.path.join(_PKG_ROOT, args.model)
+        try:
+            model_det = ModelDetector(model_path, args.conf)
+            print('YOLO 模型已加载：%s（conf=%.2f）' % (model_path, args.conf), flush=True)
+        except Exception as e:
+            print('YOLO 模型加载失败：%s，退回颜色追踪' % e, flush=True)
+            model_det = None
 
     depth = None
     try:
@@ -335,9 +411,13 @@ def main():
             if not ok:
                 time.sleep(0.05)
                 continue
-            r = detect_color(frame, args.color)
+            if model_det is not None:
+                r = model_det.detect(frame)
+            else:
+                r = detect_color(frame, args.color)
             publish_frame(frame)
-            publish_lab_frame(lab_view(frame, args.color))
+            if model_det is None:
+                publish_lab_frame(lab_view(frame, args.color))
             if r is not None:
                 cx, cy = r['center']
                 # 指数平滑，压掉 LAB 检测的逐帧抖动
