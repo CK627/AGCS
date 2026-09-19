@@ -238,7 +238,7 @@ def start_server():
                     time.sleep(0.05)
                     continue
                 yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + jpg + b'\r\n')
-                time.sleep(0.1)
+                time.sleep(0.02)
         return Response(gen(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
     @app.route('/video_lab.mjpeg')
@@ -251,7 +251,7 @@ def start_server():
                     time.sleep(0.05)
                     continue
                 yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + jpg + b'\r\n')
-                time.sleep(0.1)
+                time.sleep(0.02)
         return Response(gen(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
     threading.Thread(target=app.run, kwargs={'host': '0.0.0.0', 'port': 5000,
@@ -291,6 +291,8 @@ def main():
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     cap.set(cv2.CAP_PROP_SATURATION, 128)
     cap.set(cv2.CAP_PROP_AUTO_WB, 1)
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)   # 摄像头内部只留 1 帧，减少画面延迟
+    cap.set(cv2.CAP_PROP_FPS, 30)
     for _ in range(5):
         cap.read()
 
