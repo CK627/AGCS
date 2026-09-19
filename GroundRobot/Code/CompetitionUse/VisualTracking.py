@@ -32,13 +32,17 @@ LAB = {
     'blue':   {'min': (97, 122, 50), 'max': (255, 153, 104)},
 }
 
-# ---- 云台追踪参数（复刻官方 color_track.py 的纯 P 控制）----
-P_GAIN = 0.1
-DEAD_X, DEAD_Y = 40, 60
+# ---- 云台追踪参数（P + D 控制，带平滑和限流，抑制晃动又保持灵敏）----
+P_GAIN = 0.12          # P 增益（伺服单位/像素），调大更灵敏但更容易晃
+D_GAIN = 0.05          # D 增益（阻尼，抑制来回晃）
+SMOOTH = 0.30          # 目标中心平滑系数，越小越平滑（越不抖）、越大越灵敏
+DEAD_X, DEAD_Y = 25, 35   # 死区（比原来 40/60 小，更灵敏）
 PAN_MIN, PAN_MAX = 0, 1000
 TILT_MIN, TILT_MAX = 0, 1000
 START_X, START_Y = 500, 260
 FRAME_CX, FRAME_CY = 320, 240
+SERVO_TIME = 0.06      # 伺服单次运动时间（秒），长一点更顺滑
+MIN_CMD_INTERVAL = 0.05  # 伺服最小更新间隔（秒），别每帧都发命令
 
 
 # ---------------- 颜色检测（内联 agcs_lib.vision.detect_color 的 LAB 管线）----------------
@@ -47,7 +51,7 @@ def detect_color(frame, color, min_area=50):
     img = frame.copy()
     h0, w0 = img.shape[:2]
     img = cv2.resize(img, (320, 240), interpolation=cv2.INTER_NEAREST)
-    img = cv2.GaussianBlur(img, (3, 3), 3)
+    img = cv2.GaussianBlur(img, (3, 3), 1)
     lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
     lo, hi = LAB[color]['min'], LAB[color]['max']
     mask = cv2.inRange(lab, lo, hi)
@@ -275,6 +279,10 @@ def main():
     pos = {'x': 0.0, 'y': 0.0}
     heading = 0.0
     last_depth_t = 0.0
+    last_cmd_t = 0.0
+    # 平滑 + PID 状态（压抖动、加阻尼）
+    sx, sy = float(FRAME_CX), float(FRAME_CY)
+    prev_ex, prev_ey = 0.0, 0.0
 
     print('追踪开始（Ctrl+C 退出）')
     try:
@@ -287,15 +295,24 @@ def main():
             publish_frame(frame)
             if r is not None:
                 cx, cy = r['center']
-                if abs(cx - FRAME_CX) >= DEAD_X:
-                    x_dis += int(P_GAIN * (FRAME_CX - cx))
+                # 指数平滑，压掉 LAB 检测的逐帧抖动
+                sx = SMOOTH * cx + (1.0 - SMOOTH) * sx
+                sy = SMOOTH * cy + (1.0 - SMOOTH) * sy
+                ex, ey = FRAME_CX - sx, FRAME_CY - sy
+                # P + D：D 阻尼抑制来回晃
+                if abs(ex) >= DEAD_X:
+                    x_dis += int(P_GAIN * ex + D_GAIN * (ex - prev_ex))
                     x_dis = max(PAN_MIN, min(PAN_MAX, x_dis))
-                if abs(cy - FRAME_CY) >= DEAD_Y:
-                    y_dis += int(P_GAIN * (FRAME_CY - cy))
+                if abs(ey) >= DEAD_Y:
+                    y_dis += int(P_GAIN * ey + D_GAIN * (ey - prev_ey))
                     y_dis = max(TILT_MIN, min(TILT_MAX, y_dis))
-                board.bus_servo_set_position(0.02, [[24, y_dis], [21, x_dis]])
-
+                prev_ex, prev_ey = ex, ey
+                # 限流：间隔够长才发伺服命令，减少 churn / 晃动
                 now = time.time()
+                if now - last_cmd_t >= MIN_CMD_INTERVAL:
+                    board.bus_servo_set_position(SERVO_TIME, [[24, y_dis], [21, x_dis]])
+                    last_cmd_t = now
+
                 if depth is not None and now - last_depth_t >= 0.3:
                     last_depth_t = now
                     d = depth.read(100)
