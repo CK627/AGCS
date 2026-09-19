@@ -74,6 +74,14 @@ def detect_color(frame, color, min_area=50):
     return {'center': (cx, cy), 'radius': radius, 'area': float(best_area)}
 
 
+def lab_view(frame, color):
+    """生成 LAB 阈值图：只显示被 LAB 阈值命中的颜色区域，其余黑色。用于可视化调阈值。"""
+    lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+    lo, hi = LAB[color]['min'], LAB[color]['max']
+    mask = cv2.inRange(lab, lo, hi)
+    return cv2.bitwise_and(frame, frame, mask=mask)
+
+
 # ---------------- OpenNI2 深度（内联 agcs_lib.depth.DepthCamera 的最小部分）----------------
 class _OniFrame(ctypes.Structure):
     _fields_ = [
@@ -182,6 +190,8 @@ STATUS = {'state': 'IDLE', 'position_m': {'x': 0.0, 'y': 0.0}, 'heading_deg': 0.
           'message': ''}
 _LATEST_JPEG = None
 _JPEG_LOCK = threading.Lock()
+_LATEST_LAB_JPEG = None
+_LAB_JPEG_LOCK = threading.Lock()
 
 
 def set_status(**kw):
@@ -194,6 +204,14 @@ def publish_frame(frame, max_fps=10.0):
     if ok:
         with _JPEG_LOCK:
             _LATEST_JPEG = jpg.tobytes()
+
+
+def publish_lab_frame(frame, max_fps=10.0):
+    global _LATEST_LAB_JPEG
+    ok, jpg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
+    if ok:
+        with _LAB_JPEG_LOCK:
+            _LATEST_LAB_JPEG = jpg.tobytes()
 
 
 def start_server():
@@ -216,6 +234,19 @@ def start_server():
             while True:
                 with _JPEG_LOCK:
                     jpg = _LATEST_JPEG
+                if jpg is None:
+                    time.sleep(0.05)
+                    continue
+                yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + jpg + b'\r\n')
+                time.sleep(0.1)
+        return Response(gen(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+    @app.route('/video_lab.mjpeg')
+    def video_lab():
+        def gen():
+            while True:
+                with _LAB_JPEG_LOCK:
+                    jpg = _LATEST_LAB_JPEG
                 if jpg is None:
                     time.sleep(0.05)
                     continue
@@ -293,6 +324,7 @@ def main():
                 continue
             r = detect_color(frame, args.color)
             publish_frame(frame)
+            publish_lab_frame(lab_view(frame, args.color))
             if r is not None:
                 cx, cy = r['center']
                 # 指数平滑，压掉 LAB 检测的逐帧抖动
