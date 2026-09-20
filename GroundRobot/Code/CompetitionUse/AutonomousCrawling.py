@@ -39,6 +39,10 @@ RESET = {21: 500, 22: 705, 23: 90, 24: 330}
 GRIPPER_OPEN = 120    # 25 号张开
 GRIPPER_CLOSE = 700   # 25 号闭合（拉满）
 HOLD_SEC = 1.0        # 夹住保持时长（秒）
+# 前后（深度）补偿：框高度越小目标越远。NOMINAL_BBOX_H 是目标在正确夹取距离时的框高度
+# （像素），现场标定；REACH_GAIN 是补偿增益（正负决定方向，现场调）。0 = 关闭补偿。
+NOMINAL_BBOX_H = 0.0  # 目标在正确距离时的框高度（像素），0 表示关闭前后补偿
+REACH_GAIN = 0.3      # 框高度每差 1 像素，23（肘）调多少脉宽
 
 
 STATUS = {'state': 'Grab', 'message': '自动抓取', 'last_result': None}
@@ -208,11 +212,12 @@ class ModelDetector:
         x1, y1, x2, y2, score = best
         cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
         cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 2)
-        return {'center': (cx, cy), 'conf': float(score)}
+        return {'center': (cx, cy), 'conf': float(score),
+                'w': float(x2 - x1), 'h': float(y2 - y1)}
 
 
-def align_target(board, model_det, cam, x_dis, y_dis, iterations=8):
-    """夹取前用模型检测目标，微调 21/24 让目标居中，返回 (是否对准, x_dis, y_dis)。"""
+def align_target(board, model_det, cam, x_dis, y_dis, z_dis, iterations=8):
+    """夹取前用模型检测目标，微调 21/24（左右/上下）+ 23（前后），返回 (是否对准, x, y, z)。"""
     K = 0.2
     for _ in range(iterations):
         f = cam.read()
@@ -224,13 +229,19 @@ def align_target(board, model_det, cam, x_dis, y_dis, iterations=8):
             time.sleep(0.05)
             continue
         cx, cy = r['center']
-        if abs(cx - 320) < 15 and abs(cy - 240) < 15:
-            return True, x_dis, y_dis
+        h = r.get('h', 0.0)
+        centered = abs(cx - 320) < 15 and abs(cy - 240) < 15
+        reach_ok = (NOMINAL_BBOX_H <= 0) or abs(h - NOMINAL_BBOX_H) < 15
+        if centered and reach_ok:
+            return True, x_dis, y_dis, z_dis
         x_dis = max(0, min(1000, int(x_dis + K * (320 - cx))))
         y_dis = max(0, min(1000, int(y_dis + K * (240 - cy))))
-        board.bus_servo_set_position(0.1, [[21, x_dis], [24, y_dis]])
+        if NOMINAL_BBOX_H > 0:
+            # 框小（远）→ 伸更长；框大（近）→ 收回一点
+            z_dis = max(0, min(1000, int(z_dis + REACH_GAIN * (NOMINAL_BBOX_H - h))))
+        board.bus_servo_set_position(0.1, [[21, x_dis], [24, y_dis], [23, z_dis]])
         time.sleep(0.15)
-    return False, x_dis, y_dis
+    return False, x_dis, y_dis, z_dis
 
 
 def main():
@@ -281,9 +292,10 @@ def main():
         # 4) 24 到 270
         move(board, [(24, GRAB[24])], 0.8)
 
-        # 4.5) 夹取前用模型检测目标并对准（微调 21/24 让目标居中）
+        # 4.5) 夹取前用模型检测目标并对准（微调 21/24 左右上下 + 23 前后）
         if model_det is not None:
-            ok, x_dis, y_dis = align_target(board, model_det, cam, GRAB[21], GRAB[24])
+            ok, x_dis, y_dis, z_dis = align_target(
+                board, model_det, cam, GRAB[21], GRAB[24], GRAB[23])
             if ok:
                 set_status(message='已对准目标，准备夹取')
             else:
