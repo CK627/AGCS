@@ -425,8 +425,8 @@ def main():
                     d = depth.read(100)
                     if d is not None:
                         h, w = d.shape
-                        px = min(max(cx, 0), w - 1)
-                        py = min(max(cy, 0), h - 1)
+                        px = int(min(max(cx, 0), w - 1))
+                        py = int(min(max(cy, 0), h - 1))
                         z = int(d[py, px])
                         if z > 0:
                             wx, _, wz = depth.to_world(px, py, float(z))
