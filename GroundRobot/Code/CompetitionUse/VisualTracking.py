@@ -97,12 +97,10 @@ def lab_view(frame, color):
 class ModelDetector:
     """ONNX YOLO 检测器（onnxruntime 本地推理）。detect(frame) 返回 {'center':(cx,cy),'conf':..} 或 None。
 
-    模型输出 [4+nc, 8400]，这里只取「fake bug」这一类（CLASS_IDX=15）。若模型里类别不同，
-    改 CLASS_IDX 即可。
+    模型输出 [4+nc, 8400]，用 argmax 取置信度最高的类别，单类/多类模型都适用。
     """
 
     NAME = 'fake bug'
-    CLASS_IDX = 15
 
     def __init__(self, model_path, conf=0.5):
         import onnxruntime as ort
@@ -124,9 +122,12 @@ class ModelDetector:
         blob = canvas[:, :, ::-1].transpose(2, 0, 1)[None].astype(np.float32) / 255.0
         out = self.sess.run([self.output_name], {self.input_name: blob})[0][0]
 
+        nc = out.shape[0] - 4   # 类别数（单类=1，多类=16）
         best = None  # (x1, y1, x2, y2, score)
         for i in range(out.shape[1]):
-            score = float(out[4 + self.CLASS_IDX, i])
+            scores = out[4:4 + nc, i]
+            cls = int(scores.argmax())
+            score = float(scores[cls])
             if score < self.conf:
                 continue
             cx, cy, w, h = out[0, i], out[1, i], out[2, i], out[3, i]
@@ -353,7 +354,7 @@ def main():
     parser = argparse.ArgumentParser(description='2.1 视觉追踪（默认 YOLO，可退回颜色）')
     parser.add_argument('--color', default='yellow',
                         choices=['red', 'green', 'blue', 'yellow'])
-    parser.add_argument('--model', default='models/best.onnx',
+    parser.add_argument('--model', default='models/v8n.onnx',
                         help='YOLO ONNX 模型路径；传空串 "" 则退回颜色追踪')
     parser.add_argument('--conf', type=float, default=0.5, help='YOLO 置信度阈值')
     args = parser.parse_args()
