@@ -12,8 +12,8 @@
 上报 /status + 视频流 /video.mjpeg（http://<IP>:5000/video.mjpeg）。
 
 用法（先 sudo systemctl stop spiderpi）：
-    python3 AutonomousCrawling.py                    # 默认面积阈值 6%
-    python3 AutonomousCrawling.py --area-ratio 0.08  # 达到 8% 占比就夹
+    python3 AutonomousCrawling.py                    # 默认面积阈值 12%
+    python3 AutonomousCrawling.py --area-ratio 0.15  # 达到 15% 占比才夹（夹得更近）
     python3 AutonomousCrawling.py --model ""         # 不检测，纯固定脉宽夹取
 """
 import os
@@ -45,7 +45,7 @@ APPROACH_D22 = 4          # 每步 22（肩）下降量
 APPROACH_D23 = 4          # 每步 23（肘）伸展量
 K_PAN = 0.3               # 21 横转增益（让目标水平居中）
 K_TILT = 0.3              # 24 俯仰增益（让目标竖直居中）
-AREA_RATIO_THRESHOLD = 0.06  # 虫子框面积占画面比例阈值，达到就夹（默认 6%）
+AREA_RATIO_THRESHOLD = 0.12  # 虫子框面积占画面比例阈值，达到就夹（默认 12%）
 LOST_STOP = 15            # 连续多少步检测不到目标就停止靠近
 
 
