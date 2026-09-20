@@ -49,6 +49,7 @@ HEIGHT_GAIN = 0.3     # 框高度每差 1 像素，22（肩）调多少脉宽（
 APPROACH_STEPS = 30   # 夹爪从复位位分多少步下降到夹取位（步数越多越慢越平滑）
 K_PAN = 0.2           # 21 横转增益（让目标在画面水平居中）
 K_TILT = 0.2          # 24 俯仰增益（让目标在画面竖直居中）
+STOP_CY = 330         # 目标中心 cy 超过它（接近画面底部=太近）就停止靠近
 
 
 STATUS = {'state': 'Grab', 'message': '自动抓取', 'last_result': None}
@@ -280,16 +281,24 @@ def main():
                     # 让目标居中（21 左右、24 俯仰）
                     x_dis = max(0, min(1000, int(x_dis + K_PAN * (320 - cx))))
                     y_dis = max(0, min(1000, int(y_dis + K_TILT * (240 - cy))))
+                    if cy > STOP_CY:
+                        # 目标已太靠画面底部（太近），停止继续往下
+                        board.bus_servo_set_position(0.15, [[21, x_dis], [24, y_dis]])
+                        break
             # 夹爪小步下降/伸展
             w22 = max(0, min(1000, int(w22 - step_22)))
             z23 = max(0, min(1000, int(z23 + step_23)))
             board.bus_servo_set_position(0.15, [[21, x_dis], [24, y_dis], [22, w22], [23, z23]])
             time.sleep(0.2)
 
-        # 3) 慢慢闭合夹爪（夹完停住，不再抬高）
+        # 3) 慢慢闭合夹爪
         move(board, [(25, GRIPPER_CLOSE)], 1.5)
         set_status(last_result='done', message='已夹取')
         time.sleep(HOLD_SEC)
+
+        # 4) 恢复机械臂初始位置（21-24 复位，夹爪保持闭合、不张开）
+        move(board, [(21, RESET[21]), (22, RESET[22]), (23, RESET[23]), (24, RESET[24])], 1.5)
+        set_status(last_result='done', message='已夹取并恢复')
         print('夹取成功', flush=True)
     finally:
         cam.stop()
