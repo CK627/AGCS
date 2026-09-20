@@ -1,19 +1,19 @@
 #!/usr/bin/python3
 # coding=utf8
-"""自动抓取（视觉追踪居中 + 面积阈值靠近）。
+"""自动抓取（视觉追踪居中 + 框高度阈值靠近）。
 
 流程：
     状态 Grab → 恢复官方初始位置（夹爪张开）→ 相机朝下看
     → 循环：模型检测虫子 → 21/24 视觉追踪保持居中 → 22/23 逐步下降靠近
-      → 虫子框面积占画面比例达到 --area-ratio 阈值 → 停止 → 闭合夹爪
+      → 虫子框高度达到 --bbox-h 阈值 → 停止 → 闭合夹爪
     → 保持 → 恢复机械臂初始位置（夹爪保持闭合）。
 
 完全独立：只 import 标准库 + pip 库（cv2/flask/onnxruntime）+ 官方 SDK（common）。
 上报 /status + 视频流 /video.mjpeg（http://<IP>:5000/video.mjpeg）。
 
 用法（先 sudo systemctl stop spiderpi）：
-    python3 AutonomousCrawling.py                    # 默认面积阈值 50%
-    python3 AutonomousCrawling.py --area-ratio 0.60  # 达到 60% 占比才夹
+    python3 AutonomousCrawling.py                    # 默认框高阈值 300px
+    python3 AutonomousCrawling.py --bbox-h 350       # 框高 350px 才夹（夹得更近）
     python3 AutonomousCrawling.py --model ""         # 不检测，纯固定脉宽夹取
 """
 import os
@@ -45,7 +45,7 @@ APPROACH_D22 = 16         # 每步 22（肩）下降量
 APPROACH_D23 = 16         # 每步 23（肘）伸展量
 K_PAN = 0.3               # 21 横转增益（让目标水平居中）
 K_TILT = 0.3              # 24 俯仰增益（让目标竖直居中）
-AREA_RATIO_THRESHOLD = 0.50  # 虫子框面积占画面比例阈值，达到就夹（默认 50%）
+BBOX_H_THRESHOLD = 300  # 虫子框高度阈值(像素)，达到就夹（默认 300）
 
 
 STATUS = {'state': 'Grab', 'message': '自动抓取', 'last_result': None}
@@ -225,8 +225,8 @@ def main():
     parser.add_argument('--model', default='models/v8n.onnx',
                         help='YOLO ONNX 模型路径；传空串 "" 则不检测直接固定脉宽夹')
     parser.add_argument('--conf', type=float, default=0.5, help='YOLO 置信度阈值')
-    parser.add_argument('--area-ratio', type=float, default=AREA_RATIO_THRESHOLD,
-                        help='虫子框面积占画面比例阈值(0~1)，达到就夹，默认 %.2f' % AREA_RATIO_THRESHOLD)
+    parser.add_argument('--bbox-h', type=int, default=BBOX_H_THRESHOLD,
+                        help='虫子框高度阈值(像素)，达到就夹，默认 %d' % BBOX_H_THRESHOLD)
     parser.add_argument('--tilt', type=int, default=260,
                         help='初始 24 号俯仰脉宽（相机初始角度；虫子压在画面上方就调大，比如 400）')
     args = parser.parse_args()
@@ -268,12 +268,11 @@ def main():
         board.bus_servo_set_position(0.3, [[24, args.tilt]])
         time.sleep(0.3)
 
-        # 2) 视觉追踪居中 + 持续下降靠近 + 框面积占比阈值停止
+        # 2) 视觉追踪居中 + 持续下降靠近 + 框高度阈值停止
         x_dis, y_dis = 500, args.tilt          # 21/24 当前值
         w22, z23 = RESET[22], RESET[23]       # 22/23 从复位位开始
-        fw, fh = 640, 480
         reached = False
-        print('开始靠近（面积阈值 %.1f%%）...' % (args.area_ratio * 100), flush=True)
+        print('开始靠近（框高阈值 %dpx）...' % args.bbox_h, flush=True)
         for step in range(APPROACH_STEPS):
             f = cam.read()
             r = None
@@ -282,17 +281,16 @@ def main():
             if r is not None:
                 cx, cy = r['center']
                 w, h = r.get('w', 0.0), r.get('h', 0.0)
-                ratio = (w * h) / (fw * fh)
                 # 强行保持居中：21 左右、24 上下
                 x_dis = max(0, min(1000, int(x_dis + K_PAN * (320 - cx))))
                 y_dis = max(0, min(1000, int(y_dis + K_TILT * (240 - cy))))
-                print('  靠近%02d: 中心=(%.0f,%.0f) 框=%.0fx%.0f 占比=%.1f%% | 21=%d 24=%d 22=%d 23=%d'
-                      % (step, cx, cy, w, h, ratio * 100, x_dis, y_dis, w22, z23), flush=True)
-                if ratio >= args.area_ratio:
+                print('  靠近%02d: 中心=(%.0f,%.0f) 框=%.0fx%.0f 框高=%d | 21=%d 24=%d 22=%d 23=%d'
+                      % (step, cx, cy, w, h, int(h), x_dis, y_dis, w22, z23), flush=True)
+                if h >= args.bbox_h:
                     reached = True
                     # 命令当前居中的 21/24（不再继续下降），准备夹取
                     board.bus_servo_set_position(0.15, [[21, x_dis], [24, y_dis], [22, w22], [23, z23]])
-                    print('  占比达阈值，停止靠近', flush=True)
+                    print('  框高达阈值，停止靠近', flush=True)
                     break
             # 下降一步（找不到目标也不停，继续降着找）
             w22 = max(0, min(1000, int(w22 - APPROACH_D22)))
