@@ -40,6 +40,9 @@ RESET = {21: 500, 22: 705, 23: 90, 24: 330}
 GRIPPER_OPEN = 120    # 25 号张开
 GRIPPER_CLOSE = 700   # 25 号闭合（拉满）
 HOLD_SEC = 1.0        # 夹住保持时长（秒）
+# 用框高估距离：距离(cm) = F_PX_FULL * 虫子实际高度(cm) / 框高(px)
+F_PX_FULL = 838.0     # 原始 640 分辨率焦距像素（与 1.py 标定一致）
+BUG_HEIGHT_CM = 5.0   # 虫子模型实际高度(cm)，现场量一次
 # 前后（深度）补偿：框高度越小目标越远。NOMINAL_BBOX_H 是目标在正确夹取距离时的框高度
 # （像素），现场标定；REACH_GAIN / HEIGHT_GAIN 是补偿增益（正负决定方向，现场调）。0 = 关闭补偿。
 NOMINAL_BBOX_H = 0.0  # 目标在正确距离时的框高度（像素），0 表示关闭前后/高度补偿
@@ -256,8 +259,8 @@ def main():
     parser.add_argument('--model', default='models/v8n.onnx',
                         help='YOLO ONNX 模型路径；传空串 "" 则不检测直接固定脉宽夹')
     parser.add_argument('--conf', type=float, default=0.5, help='YOLO 置信度阈值')
-    parser.add_argument('--target', default='0,18,0',
-                        help='目标坐标 (X右,Y前,Z高) cm，逗号分隔；用于 IK 算夹取 22/23 脉宽')
+    parser.add_argument('--bug-height', type=float, default=BUG_HEIGHT_CM,
+                        help='虫子模型实际高度(cm)，用于框高估距离')
     args = parser.parse_args()
 
     board = Board()
@@ -288,21 +291,6 @@ def main():
     start_server()
     set_status(state='Grab', message='自动抓取（夹取前检测对准）')
 
-    # 用 IK 算夹取 22/23 脉宽（目标坐标）
-    grab_22, grab_23 = GRAB[22], GRAB[23]
-    if args.target:
-        try:
-            xyz = tuple(float(v) for v in args.target.split(','))
-            g = compute_grab_servos(xyz)
-            if g is not None:
-                grab_22, grab_23 = g['22'], g['23']
-                print('IK 夹取位：22=%d 23=%d（目标 %s）'
-                      % (grab_22, grab_23, args.target), flush=True)
-            else:
-                print('IK 无解，用固定脉宽 22=%d 23=%d' % (grab_22, grab_23), flush=True)
-        except Exception as e:
-            print('IK 计算失败，用固定脉宽：%s' % e, flush=True)
-
     try:
         # 1) 恢复官方初始位置（夹爪张开）
         reset_arm(board)
@@ -311,7 +299,30 @@ def main():
         board.bus_servo_set_position(0.3, [[24, 260]])
         time.sleep(0.3)
 
-        # 2) 夹爪逐步靠近 + 保持居中（视觉伺服，小步）
+        # 2) 检测目标，用框高估距离，IK 算夹取 22/23
+        grab_22, grab_23 = GRAB[22], GRAB[23]
+        if model_det is not None:
+            for _ in range(5):
+                f = cam.read()
+                if f is None:
+                    time.sleep(0.05)
+                    continue
+                r = model_det.detect(f)
+                if r is not None:
+                    h = r.get('h', 0.0)
+                    if h > 10:
+                        D = F_PX_FULL * args.bug_height / h  # 距离 cm
+                        g = compute_grab_servos((0.0, D, 0.0))
+                        if g is not None:
+                            grab_22, grab_23 = g['22'], g['23']
+                            print('框高=%.0f → 距离=%.1fcm → IK 22=%d 23=%d'
+                                  % (h, D, grab_22, grab_23), flush=True)
+                        else:
+                            print('框高=%.0f → 距离=%.1fcm，IK 无解' % (h, D), flush=True)
+                    break
+                time.sleep(0.05)
+
+        # 3) 夹爪逐步靠近 + 保持居中（视觉伺服，小步）
         x_dis, y_dis = 500, 260          # 21/24 当前值
         w22, z23 = RESET[22], RESET[23]  # 22/23 从复位位开始
         step_22 = (RESET[22] - grab_22) / APPROACH_STEPS  # 每步 22 下降量
