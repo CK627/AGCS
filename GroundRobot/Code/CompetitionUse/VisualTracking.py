@@ -397,11 +397,11 @@ def main():
             if not ok:
                 time.sleep(0.05)
                 continue
+            publish_frame(frame)  # 先推流纯视频（不带识别框），再检测
             if model_det is not None:
                 r = model_det.detect(frame)
             else:
                 r = detect_color(frame, args.color)
-            publish_frame(frame)
             if r is not None:
                 cx, cy = r['center']
                 # 指数平滑，压掉 LAB 检测的逐帧抖动
