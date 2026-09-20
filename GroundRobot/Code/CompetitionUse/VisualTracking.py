@@ -262,8 +262,6 @@ STATUS = {'state': 'IDLE', 'position_m': {'x': 0.0, 'y': 0.0}, 'heading_deg': 0.
           'message': ''}
 _LATEST_JPEG = None
 _JPEG_LOCK = threading.Lock()
-_LATEST_LAB_JPEG = None
-_LAB_JPEG_LOCK = threading.Lock()
 
 
 def set_status(**kw):
@@ -276,14 +274,6 @@ def publish_frame(frame, max_fps=10.0):
     if ok:
         with _JPEG_LOCK:
             _LATEST_JPEG = jpg.tobytes()
-
-
-def publish_lab_frame(frame, max_fps=10.0):
-    global _LATEST_LAB_JPEG
-    ok, jpg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
-    if ok:
-        with _LAB_JPEG_LOCK:
-            _LATEST_LAB_JPEG = jpg.tobytes()
 
 
 def start_server():
@@ -306,19 +296,6 @@ def start_server():
             while True:
                 with _JPEG_LOCK:
                     jpg = _LATEST_JPEG
-                if jpg is None:
-                    time.sleep(0.05)
-                    continue
-                yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + jpg + b'\r\n')
-                time.sleep(0.02)
-        return Response(gen(), mimetype='multipart/x-mixed-replace; boundary=frame')
-
-    @app.route('/video_lab.mjpeg')
-    def video_lab():
-        def gen():
-            while True:
-                with _LAB_JPEG_LOCK:
-                    jpg = _LATEST_LAB_JPEG
                 if jpg is None:
                     time.sleep(0.05)
                     continue
@@ -417,8 +394,6 @@ def main():
             else:
                 r = detect_color(frame, args.color)
             publish_frame(frame)
-            if model_det is None:
-                publish_lab_frame(lab_view(frame, args.color))
             if r is not None:
                 cx, cy = r['center']
                 # 指数平滑，压掉 LAB 检测的逐帧抖动
