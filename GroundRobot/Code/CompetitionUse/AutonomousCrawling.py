@@ -1,11 +1,12 @@
 #!/usr/bin/python3
 # coding=utf8
-"""自动抓取（固定路线 + 夹取前模型检测对准）。
+"""自动抓取（夹爪逐步靠近 + 模型引导对准）。
 
 流程：
-    状态 Grab → 恢复官方初始位置 → 21 先动 → 22/23 一起动 → 24 到 270
-    → 模型检测目标并对准（微调 21/24）→ 闭合夹爪(25) → 保持夹取
-    → 恢复机械臂初始位置（夹爪保持闭合）。
+    状态 Grab → 恢复官方初始位置（夹爪张开）→ 相机朝前下看
+    → 夹爪分步下降靠近：22/23 从复位位插值到夹取位，每步模型微调 21/24 居中
+      + 22/23 高度/前后补偿（框高估距离）
+    → 慢慢闭合夹爪 → 保持 → 恢复机械臂初始位置（夹爪保持闭合）。
 
 完全独立：只 import 标准库 + pip 库（cv2/flask/onnxruntime）+ 官方 SDK（common）。
 上报 /status + 视频流 /video.mjpeg（http://<IP>:5000/video.mjpeg）。
@@ -40,9 +41,14 @@ GRIPPER_OPEN = 120    # 25 号张开
 GRIPPER_CLOSE = 700   # 25 号闭合（拉满）
 HOLD_SEC = 1.0        # 夹住保持时长（秒）
 # 前后（深度）补偿：框高度越小目标越远。NOMINAL_BBOX_H 是目标在正确夹取距离时的框高度
-# （像素），现场标定；REACH_GAIN 是补偿增益（正负决定方向，现场调）。0 = 关闭补偿。
-NOMINAL_BBOX_H = 0.0  # 目标在正确距离时的框高度（像素），0 表示关闭前后补偿
-REACH_GAIN = 0.3      # 框高度每差 1 像素，23（肘）调多少脉宽
+# （像素），现场标定；REACH_GAIN / HEIGHT_GAIN 是补偿增益（正负决定方向，现场调）。0 = 关闭补偿。
+NOMINAL_BBOX_H = 0.0  # 目标在正确距离时的框高度（像素），0 表示关闭前后/高度补偿
+REACH_GAIN = 0.3      # 框高度每差 1 像素，23（肘）调多少脉宽（前后）
+HEIGHT_GAIN = 0.3     # 框高度每差 1 像素，22（肩）调多少脉宽（高度）
+# 夹爪逐步靠近参数
+APPROACH_STEPS = 10   # 夹爪从复位位分多少步下降到夹取位（步数越多越慢越平滑）
+K_PAN = 0.2           # 21 横转增益（让目标在画面水平居中）
+K_TILT = 0.2          # 24 俯仰增益（让目标在画面竖直居中）
 
 
 STATUS = {'state': 'Grab', 'message': '自动抓取', 'last_result': None}
@@ -216,36 +222,6 @@ class ModelDetector:
                 'w': float(x2 - x1), 'h': float(y2 - y1)}
 
 
-def align_target(board, model_det, cam, x_dis, y_dis, z_dis, iterations=8):
-    """夹取前用模型检测目标，微调 21/24（左右/上下）+ 23（前后），返回 (是否对准, x, y, z)。"""
-    K = 0.2
-    for _ in range(iterations):
-        f = cam.read()
-        if f is None:
-            time.sleep(0.05)
-            continue
-        r = model_det.detect(f)
-        if r is None:
-            time.sleep(0.05)
-            continue
-        cx, cy = r['center']
-        h = r.get('h', 0.0)
-        print('对准 中心=(%.0f,%.0f) 框高=%.0f conf=%.2f'
-              % (cx, cy, h, r.get('conf', 0.0)), flush=True)
-        centered = abs(cx - 320) < 15 and abs(cy - 240) < 15
-        reach_ok = (NOMINAL_BBOX_H <= 0) or abs(h - NOMINAL_BBOX_H) < 15
-        if centered and reach_ok:
-            return True, x_dis, y_dis, z_dis
-        x_dis = max(0, min(1000, int(x_dis + K * (320 - cx))))
-        y_dis = max(0, min(1000, int(y_dis + K * (240 - cy))))
-        if NOMINAL_BBOX_H > 0:
-            # 框小（远）→ 伸更长；框大（近）→ 收回一点
-            z_dis = max(0, min(1000, int(z_dis + REACH_GAIN * (NOMINAL_BBOX_H - h))))
-        board.bus_servo_set_position(0.1, [[21, x_dis], [24, y_dis], [23, z_dis]])
-        time.sleep(0.15)
-    return False, x_dis, y_dis, z_dis
-
-
 def main():
     parser = argparse.ArgumentParser(description='2.3 自动抓取+递物（夹取前用模型检测对准）')
     parser.add_argument('--model', default='models/v8n.onnx',
@@ -282,33 +258,42 @@ def main():
     set_status(state='Grab', message='自动抓取（夹取前检测对准）')
 
     try:
-        # 1) 恢复官方初始位置
+        # 1) 恢复官方初始位置（夹爪张开）
         reset_arm(board)
+        time.sleep(0.5)
+        # 相机朝前下看
+        board.bus_servo_set_position(0.3, [[24, 260]])
+        x_dis, y_dis = 500, 260   # 21/24 当前值
 
-        # 2) 21 先动
-        move(board, [(21, GRAB[21])], 0.8)
+        # 2) 夹爪逐步靠近目标：22/23 从复位位插值到夹取位，每步模型微调 21/24/22/23
+        for step in range(1, APPROACH_STEPS + 1):
+            ratio = step / APPROACH_STEPS
+            w22 = RESET[22] + (GRAB[22] - RESET[22]) * ratio
+            z23 = RESET[23] + (GRAB[23] - RESET[23]) * ratio
+            if model_det is not None:
+                f = cam.read()
+                if f is not None:
+                    r = model_det.detect(f)
+                    if r is not None:
+                        cx, cy = r['center']
+                        h = r.get('h', 0.0)
+                        print('靠近 中心=(%.0f,%.0f) 框高=%.0f conf=%.2f'
+                              % (cx, cy, h, r.get('conf', 0.0)), flush=True)
+                        x_dis = max(0, min(1000, int(x_dis + K_PAN * (320 - cx))))
+                        y_dis = max(0, min(1000, int(y_dis + K_TILT * (240 - cy))))
+                        if NOMINAL_BBOX_H > 0:
+                            # 框小（远）→ 22 更低、23 更伸；框大（近）→ 收回一点
+                            w22 = max(0, min(1000, int(w22 + HEIGHT_GAIN * (NOMINAL_BBOX_H - h))))
+                            z23 = max(0, min(1000, int(z23 + REACH_GAIN * (NOMINAL_BBOX_H - h))))
+            board.bus_servo_set_position(0.2, [[21, x_dis], [24, y_dis], [22, w22], [23, z23]])
+            time.sleep(0.25)
 
-        # 3) 22 和 23 一起动
-        move(board, [(22, GRAB[22]), (23, GRAB[23])], 1.2)
-
-        # 4) 24 到 270
-        move(board, [(24, GRAB[24])], 0.8)
-
-        # 4.5) 夹取前用模型检测目标并对准（微调 21/24 左右上下 + 23 前后）
-        if model_det is not None:
-            ok, x_dis, y_dis, z_dis = align_target(
-                board, model_det, cam, GRAB[21], GRAB[24], GRAB[23])
-            if ok:
-                set_status(message='已对准目标，准备夹取')
-            else:
-                set_status(message='未检测到目标，按原固定脉宽夹取')
-
-        # 5) 闭合夹爪（25）
-        move(board, [(25, GRIPPER_CLOSE)], 1.0)
+        # 3) 慢慢闭合夹爪
+        move(board, [(25, GRIPPER_CLOSE)], 1.5)
         set_status(last_result='done', message='已夹取')
         time.sleep(HOLD_SEC)
 
-        # 6) 恢复机械臂初始位置（21-24 复位，夹爪保持闭合）
+        # 4) 恢复机械臂初始位置（21-24 复位，夹爪保持闭合）
         move(board, [(21, RESET[21]), (22, RESET[22]), (23, RESET[23]), (24, RESET[24])], 1.5)
         set_status(last_result='done', message='已夹取并恢复')
         print('夹取成功', flush=True)
