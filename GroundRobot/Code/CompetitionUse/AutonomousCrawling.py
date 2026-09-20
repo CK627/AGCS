@@ -6,7 +6,7 @@
     复位（夹爪张开）→ 相机转到初始角度
     → 阶段一：21/24 追踪把虫子锁在画面中心（连续 CENTER_HOLD 帧 ±CENTER_TOL 内）
     → 阶段二：22/23 展开前进（高度随展开变化），24 联动保持夹爪水平，21 不动
-      → 虫子框面积占画面比例达到 --area-ratio 阈值 → 闭合夹爪
+      → 前方距离（=焦距×虫子高度/框高）达到 --distance 阈值 → 闭合夹爪
     → 保持 → 复位（夹爪保持闭合）。
 
 依赖：官方 SDK(common) + cv2 + onnxruntime + flask（推流）。
@@ -14,7 +14,7 @@
 
 用法（先 sudo systemctl stop spiderpi）：
     python3 AutonomousCrawling.py                            # 默认参数
-    python3 AutonomousCrawling.py --area-ratio 0.15 --tilt 330 --conf 0.4
+    python3 AutonomousCrawling.py --distance 15 --tilt 330 --conf 0.4
     python3 AutonomousCrawling.py --model ""                # 不检测，纯固定脉宽夹取
 """
 import os
@@ -52,7 +52,9 @@ CENTER_HOLD = 5         # 连续多少帧居中才进入前进
 APPROACH_STEPS = 60     # 最多前进步数（安全上限）
 APPROACH_D22 = 6        # 每步 22（肩）展开量
 APPROACH_D23 = 6        # 每步 23（肘）展开量
-AREA_RATIO_THRESHOLD = 0.082   # 面积阈值（默认 8.2%）
+F_PX = 838.0            # 焦距（像素，640 分辨率）
+BUG_HEIGHT_CM = 5.0     # 虫子物理高度(cm)，用于距离估算
+DISTANCE_THRESHOLD = 17.0   # 前方距离阈值(cm)，达到就夹
 LEVEL_SUM = 1125        # 夹爪水平时 22+23+24 = 1125（alpha=0）
 
 SLEEP_S = 0.25          # 每步间隔（秒），拉长让舵机走完、不震荡
@@ -224,8 +226,8 @@ def main():
     parser.add_argument('--model', default='models/v8n.onnx',
                         help='YOLO ONNX 模型路径；传空串 "" 则不检测')
     parser.add_argument('--conf', type=float, default=0.5, help='YOLO 置信度阈值')
-    parser.add_argument('--area-ratio', type=float, default=AREA_RATIO_THRESHOLD,
-                        help='面积阈值(0~1)，默认 %.2f' % AREA_RATIO_THRESHOLD)
+    parser.add_argument('--distance', type=float, default=DISTANCE_THRESHOLD,
+                        help='前方距离阈值(cm)，达到就夹，默认 %.1f' % DISTANCE_THRESHOLD)
     parser.add_argument('--tilt', type=int, default=330,
                         help='初始 24 号俯仰脉宽（默认 330=水平朝前看）')
     args = parser.parse_args()
@@ -295,26 +297,27 @@ def main():
         if not centered:
             print('  追踪步数用尽仍未居中，仍进入前进', flush=True)
 
-        # 3) 阶段二：前进靠近（22/23 展开，24 保持水平），面积达阈值夹
+        # 3) 阶段二：前进靠近（22/23 展开，24 保持水平），前方距离达阈值夹
         w22, z23 = RESET[22], RESET[23]     # 22/23 从复位位开始
         reached = False
-        last_ratio = 0.0
-        print('阶段二：前进靠近（面积阈值 %.1f%%）...' % (args.area_ratio * 100), flush=True)
+        last_dist = 999.0
+        print('阶段二：前进靠近（距离阈值 %.1fcm）...' % args.distance, flush=True)
         for step in range(APPROACH_STEPS):
             _f, r = cam.read()
             if r is not None:
                 w, h = r.get('w', 0.0), r.get('h', 0.0)
-                last_ratio = (w * h) / (FRAME_W * FRAME_H)
-                if last_ratio >= args.area_ratio:
+                if h > 0:
+                    last_dist = F_PX * BUG_HEIGHT_CM / h   # 前方距离(cm)，框高越大越近
+                if last_dist <= args.distance:
                     reached = True
-                    print('  面积达阈值，停止前进', flush=True)
+                    print('  距离达阈值(%.1fcm)，停止前进' % last_dist, flush=True)
                     break
             # 前进：22 展开、23 伸展，24 联动保持夹爪水平（alpha=0）
             w22 = max(0, min(1000, int(w22 - APPROACH_D22)))
             z23 = max(0, min(1000, int(z23 + APPROACH_D23)))
             y_dis = max(0, min(1000, int(LEVEL_SUM - w22 - z23)))
-            print('  前进%02d: 占比=%.1f%% | 21=%d 22=%d 23=%d 24=%d'
-                  % (step, last_ratio * 100, x_dis, w22, z23, y_dis), flush=True)
+            print('  前进%02d: 距离=%.1fcm | 21=%d 22=%d 23=%d 24=%d'
+                  % (step, last_dist, x_dis, w22, z23, y_dis), flush=True)
             board.bus_servo_set_position(SLEEP_S, [[21, x_dis], [24, y_dis], [22, w22], [23, z23]])
             time.sleep(SLEEP_S)
         if not reached:
