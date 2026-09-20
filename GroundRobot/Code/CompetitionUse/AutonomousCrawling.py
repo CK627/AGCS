@@ -1,17 +1,18 @@
 #!/usr/bin/python3
 # coding=utf8
-"""自动抓取 + 人脸识别递物（固定路线）。
+"""自动抓取（固定路线 + 夹取前模型检测对准）。
 
 流程：
     状态 Grab → 恢复官方初始位置 → 21 先动 → 22/23 一起动 → 24 到 270
-    → 闭合夹爪(25) → 保持夹取 → 恢复机械臂初始位置（夹爪保持闭合）
-    → 21 左转 → 识别人脸(OpenCV Haar) → 松开夹爪放到手上 → 恢复。
+    → 模型检测目标并对准（微调 21/24）→ 闭合夹爪(25) → 保持夹取
+    → 恢复机械臂初始位置（夹爪保持闭合）。
 
-完全独立：只 import 标准库 + pip 库（cv2/flask）+ 官方 SDK（common）。
+完全独立：只 import 标准库 + pip 库（cv2/flask/onnxruntime）+ 官方 SDK（common）。
 上报 /status + 视频流 /video.mjpeg（http://<IP>:5000/video.mjpeg）。
 
 用法（先 sudo systemctl stop spiderpi）：
     python3 AutonomousCrawling.py
+    python3 AutonomousCrawling.py --model ""   # 不检测，纯固定脉宽夹取
 """
 import os
 import sys
@@ -38,13 +39,6 @@ RESET = {21: 500, 22: 705, 23: 90, 24: 330}
 GRIPPER_OPEN = 120    # 25 号张开
 GRIPPER_CLOSE = 700   # 25 号闭合（拉满）
 HOLD_SEC = 1.0        # 夹住保持时长（秒）
-TURN_LEFT_21 = 900    # 夹取后 21 左转目标脉宽（>500 朝左）
-LOOK_UP_24 = 500      # 左转后 24 抬头看人脸的脉宽（>330 朝上）
-FACE_TIMEOUT = 15.0   # 人脸检测超时（秒）
-HAND_WAIT = 2.0       # 识别人脸后等待伸手的固定时长（秒）
-HAND_MIN_AREA = 5000  # 手掌肤色区域最小面积（已停用手掌检测，保留备用）
-# 递物位姿（21-24，占位：保持臂抬起、24 手腕朝下朝向手掌，需现场调）
-HANDOVER = {21: 900, 22: 345, 23: 575, 24: 280}
 
 
 STATUS = {'state': 'Grab', 'message': '自动抓取', 'last_result': None}
@@ -157,28 +151,6 @@ def reset_arm(board):
     """恢复官方初始位置：机械臂复位 + 夹爪张开。"""
     move(board, [(21, RESET[21]), (22, RESET[22]), (23, RESET[23]),
                  (24, RESET[24]), (25, GRIPPER_OPEN)], 1.5)
-
-
-def detect_face(cascade, frame):
-    """OpenCV Haar 级联检测人脸，返回是否有脸。"""
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    faces = cascade.detectMultiScale(gray, 1.1, 6, minSize=(80, 80))
-    return len(faces) > 0
-
-
-def detect_hand(frame):
-    """肤色(HSV)检测手掌：返回是否有较大的肤色区域（手）。"""
-    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    lower = np.array([0, 20, 70], dtype=np.uint8)
-    upper = np.array([20, 255, 255], dtype=np.uint8)
-    mask = cv2.inRange(hsv, lower, upper)
-    mask = cv2.erode(mask, None, iterations=2)
-    mask = cv2.dilate(mask, None, iterations=2)
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    for c in contours:
-        if cv2.contourArea(c) > HAND_MIN_AREA:
-            return True
-    return False
 
 
 class ModelDetector:
@@ -320,43 +292,8 @@ def main():
 
         # 6) 恢复机械臂初始位置（21-24 复位，夹爪保持闭合）
         move(board, [(21, RESET[21]), (22, RESET[22]), (23, RESET[23]), (24, RESET[24])], 1.5)
-        set_status(message='已恢复，准备左转')
-
-        # 7) 21 左转（面向人）
-        move(board, [(21, TURN_LEFT_21)], 1.0)
-        set_status(message='已左转')
-
-        # 8) 抬头看（24 向上看人脸）
-        move(board, [(24, LOOK_UP_24)], 1.0)
-        set_status(message='已抬头，识别人脸')
-
-        # 9) 识别人脸（OpenCV Haar 级联）
-        face_cascade = cv2.CascadeClassifier(
-            cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-        found = False
-        deadline = time.time() + FACE_TIMEOUT
-        while time.time() < deadline:
-            f = cam.read()
-            if f is not None and detect_face(face_cascade, f):
-                found = True
-                break
-            time.sleep(0.05)
-        # 9) 等待伸手（固定时长，不识别手掌）-> 调整机械臂 -> 松开夹爪放到手上
-        if found:
-            set_status(message='已识别人脸，等待伸手')
-            time.sleep(HAND_WAIT)
-
-            move(board, [(21, HANDOVER[21]), (22, HANDOVER[22]),
-                         (23, HANDOVER[23]), (24, HANDOVER[24])], 1.5)  # 调整机械臂朝向手掌
-            move(board, [(25, GRIPPER_OPEN)], 1.0)  # 松开夹爪
-            set_status(last_result='done', message='已放置')
-            print('夹取成功', flush=True)
-        else:
-            set_status(last_result='failed', message='未检测到人脸')
-
-        # 10) 恢复机械臂位置（21-24 复位，夹爪已张开）
-        move(board, [(21, RESET[21]), (22, RESET[22]), (23, RESET[23]), (24, RESET[24])], 1.5)
-        set_status(message='已完成')
+        set_status(last_result='done', message='已夹取并恢复')
+        print('夹取成功', flush=True)
     finally:
         cam.stop()
         cap.release()
