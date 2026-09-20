@@ -42,8 +42,9 @@ HOLD_SEC = 1.0         # 夹住保持时长
 
 # ---- 视觉追踪参数（阶段一：居中）----
 TRACK_STEPS = 200       # 最多追踪步数（安全上限）
-K_PAN = 0.2             # 21 横转增益（水平居中，小步不震荡）
-K_TILT = 0.2            # 24 俯仰增益（竖直居中，小步不震荡）
+K_PAN = 0.1             # 21 横转增益（水平居中，小步不震荡）
+K_TILT = 0.1            # 24 俯仰增益（竖直居中，小步不震荡）
+DEADBAND = 30           # 死区：偏差在这个像素内就不纠正（避免过冲震荡）
 CENTER_TOL = 30         # 中心判据：|cx-320|<30 且 |cy-240|<30 算居中（像素）
 CENTER_HOLD = 5         # 连续多少帧居中才进入前进
 
@@ -272,8 +273,13 @@ def main():
             _f, r = cam.read()
             if r is not None:
                 cx, cy = r['center']
-                x_dis = max(0, min(1000, int(x_dis + K_PAN * (320 - cx))))
-                y_dis = max(0, min(1000, int(y_dis + K_TILT * (240 - cy))))
+                err_x = 320 - cx
+                err_y = 240 - cy
+                # 死区：偏差在死区内就不纠正，避免过冲震荡
+                if abs(err_x) > DEADBAND:
+                    x_dis = max(0, min(1000, int(x_dis + K_PAN * err_x)))
+                if abs(err_y) > DEADBAND:
+                    y_dis = max(0, min(1000, int(y_dis + K_TILT * err_y)))
                 if abs(cx - 320) < CENTER_TOL and abs(cy - 240) < CENTER_TOL:
                     hold += 1
                 else:
