@@ -110,14 +110,18 @@ class ModelDetector:
         self.input_name = self.sess.get_inputs()[0].name
         self.output_name = self.sess.get_outputs()[0].name
         self.conf = conf
+        # 从模型读输入尺寸（320 或 640），letterbox 不再写死
+        shp = self.sess.get_inputs()[0].shape
+        self.in_h, self.in_w = int(shp[2]), int(shp[3])
 
     def detect(self, frame):
         """检测一帧，返回 {'center':(cx,cy),'conf':score} 或 None，并在 frame 上画框。"""
         h0, w0 = frame.shape[:2]
-        r = min(640 / w0, 640 / h0)
+        ih, iw = self.in_h, self.in_w
+        r = min(iw / w0, ih / h0)
         new_w, new_h = int(round(w0 * r)), int(round(h0 * r))
-        pad_x, pad_y = (640 - new_w) // 2, (640 - new_h) // 2
-        canvas = np.full((640, 640, 3), 114, dtype=np.uint8)
+        pad_x, pad_y = (iw - new_w) // 2, (ih - new_h) // 2
+        canvas = np.full((ih, iw, 3), 114, dtype=np.uint8)
         canvas[pad_y:pad_y + new_h, pad_x:pad_x + new_w] = cv2.resize(frame, (new_w, new_h))
         blob = canvas[:, :, ::-1].transpose(2, 0, 1)[None].astype(np.float32) / 255.0
         out = self.sess.run([self.output_name], {self.input_name: blob})[0][0]
