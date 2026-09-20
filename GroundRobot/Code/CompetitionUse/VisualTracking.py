@@ -25,7 +25,11 @@ import numpy as np
 from common.ros_robot_controller_sdk import Board
 
 # spiderpi 根目录（模型在 ~/spiderpi/models/ 下，不在 CompetitionUse/ 下）
-_PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if getattr(sys, 'frozen', False):
+    # PyInstaller 打包后：按可执行文件位置找模型（可执行文件放 spiderpi/CompetitionUse/ 下）
+    _PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(sys.argv[0])))
+else:
+    _PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # ---- LAB 颜色阈值（从 config/lab_config.yaml 内联，重新标定后改这里）----
 LAB = {
