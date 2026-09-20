@@ -18,6 +18,7 @@
 import os
 import sys
 import time
+import ctypes
 import threading
 import argparse
 
@@ -25,6 +26,14 @@ import cv2
 import numpy as np
 
 from common.ros_robot_controller_sdk import Board
+
+# eye-in-hand 坐标转换（同目录，纯数学，不依赖 SDK）
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import eye_in_hand as EIH
+except Exception as _e:  # 打包成 exe 时若未收集，退回框高估距
+    EIH = None
+    print('eye_in_hand 导入失败：%s，退回框高估距' % _e, flush=True)
 
 # spiderpi 根目录（模型在 ~/spiderpi/models/ 下）
 if getattr(sys, 'frozen', False):
@@ -192,6 +201,155 @@ def compute_grab_servos(target_xyz, alpha1=-90.0, alpha2=100.0):
             '23': servos['servo23'], '24': servos['servo24']}
 
 
+# ---------------- 深度相机（OpenNI2，内联最小版，与 probe_bug_depth.py 一致）----------------
+class _OniFrame(ctypes.Structure):
+    _fields_ = [
+        ('dataSize', ctypes.c_int), ('data', ctypes.c_void_p),
+        ('sensorType', ctypes.c_int), ('timestamp', ctypes.c_uint64),
+        ('frameIndex', ctypes.c_int), ('width', ctypes.c_int), ('height', ctypes.c_int),
+        ('videoMode_pixelFormat', ctypes.c_int), ('videoMode_resX', ctypes.c_int),
+        ('videoMode_resY', ctypes.c_int), ('videoMode_fps', ctypes.c_int),
+        ('croppingEnabled', ctypes.c_int), ('cropOriginX', ctypes.c_int),
+        ('cropOriginY', ctypes.c_int), ('stride', ctypes.c_int),
+    ]
+
+
+class _OniDeviceInfo(ctypes.Structure):
+    _fields_ = [
+        ('uri', ctypes.c_char * 256), ('vendor', ctypes.c_char * 256),
+        ('name', ctypes.c_char * 256), ('usbVendorId', ctypes.c_uint16),
+        ('usbProductId', ctypes.c_uint16),
+    ]
+
+
+class DepthCam:
+    def __init__(self, lib='/home/pi/orbbec_sdk/libOpenNI2.so'):
+        self.lib = ctypes.CDLL(lib)
+        self._device = ctypes.c_void_p()
+        self._stream = ctypes.c_void_p()
+        L = self.lib
+        L.oniInitialize.argtypes = [ctypes.c_int]; L.oniInitialize.restype = ctypes.c_int
+        L.oniShutdown.argtypes = []; L.oniShutdown.restype = None
+        L.oniGetDeviceList.argtypes = [ctypes.POINTER(ctypes.POINTER(_OniDeviceInfo)),
+                                       ctypes.POINTER(ctypes.c_int)]
+        L.oniGetDeviceList.restype = ctypes.c_int
+        L.oniReleaseDeviceList.argtypes = [ctypes.POINTER(_OniDeviceInfo)]
+        L.oniReleaseDeviceList.restype = ctypes.c_int
+        L.oniDeviceOpen.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_void_p)]
+        L.oniDeviceOpen.restype = ctypes.c_int
+        L.oniDeviceClose.argtypes = [ctypes.c_void_p]; L.oniDeviceClose.restype = ctypes.c_int
+        L.oniDeviceCreateStream.argtypes = [ctypes.c_void_p, ctypes.c_int,
+                                            ctypes.POINTER(ctypes.c_void_p)]
+        L.oniDeviceCreateStream.restype = ctypes.c_int
+        L.oniStreamStart.argtypes = [ctypes.c_void_p]; L.oniStreamStart.restype = ctypes.c_int
+        L.oniStreamStop.argtypes = [ctypes.c_void_p]; L.oniStreamStop.restype = None
+        L.oniStreamDestroy.argtypes = [ctypes.c_void_p]; L.oniStreamDestroy.restype = None
+        L.oniStreamReadFrame.argtypes = [ctypes.c_void_p,
+                                         ctypes.POINTER(ctypes.POINTER(_OniFrame))]
+        L.oniStreamReadFrame.restype = ctypes.c_int
+        L.oniFrameRelease.argtypes = [ctypes.POINTER(_OniFrame)]
+        L.oniFrameRelease.restype = None
+        L.oniCoordinateConverterDepthToWorld.argtypes = [ctypes.c_void_p, ctypes.c_float,
+                                                         ctypes.c_float, ctypes.c_float,
+                                                         ctypes.POINTER(ctypes.c_float),
+                                                         ctypes.POINTER(ctypes.c_float),
+                                                         ctypes.POINTER(ctypes.c_float)]
+        L.oniCoordinateConverterDepthToWorld.restype = ctypes.c_int
+
+    def open(self):
+        self.lib.oniInitialize(2002)
+        devs = ctypes.POINTER(_OniDeviceInfo)()
+        n = ctypes.c_int(0)
+        self.lib.oniGetDeviceList(ctypes.byref(devs), ctypes.byref(n))
+        if n.value == 0:
+            raise RuntimeError('未找到深度设备')
+        uri = bytes(devs[0].uri)
+        self.lib.oniReleaseDeviceList(devs)
+        self.lib.oniDeviceOpen(uri, ctypes.byref(self._device))
+        self.lib.oniDeviceCreateStream(self._device, 3, ctypes.byref(self._stream))  # 3=深度
+        self.lib.oniStreamStart(self._stream)
+
+    def read(self, timeout_ms=100):
+        frame = ctypes.POINTER(_OniFrame)()
+        if self.lib.oniStreamReadFrame(self._stream, ctypes.byref(frame)) != 0:
+            return None
+        try:
+            f = frame.contents
+            raw = ctypes.string_at(f.data, f.dataSize)
+            arr = np.frombuffer(raw, dtype=np.uint16)
+            arr = arr[:f.stride // 2 * f.height].reshape(f.height, f.stride // 2)
+            return arr[:, :f.width].copy()
+        finally:
+            self.lib.oniFrameRelease(frame)
+
+    def depth_to_world(self, x, y, z):
+        """深度像素 (x,y) + 深度值 z(mm) -> 世界坐标 (X右,Y上,Z前) mm（工厂标定）。"""
+        wx = ctypes.c_float()
+        wy = ctypes.c_float()
+        wz = ctypes.c_float()
+        rc = self.lib.oniCoordinateConverterDepthToWorld(
+            self._stream, float(x), float(y), float(z),
+            ctypes.byref(wx), ctypes.byref(wy), ctypes.byref(wz))
+        if rc != 0:
+            return None
+        return (wx.value, wy.value, wz.value)
+
+    def close(self):
+        if self._stream:
+            self.lib.oniStreamDestroy(self._stream)
+        if self._device:
+            self.lib.oniDeviceClose(self._device)
+        self.lib.oniShutdown()
+
+
+def _depth_median(depth, cx, cy, r=3):
+    """取 (cx,cy) 附近深度中位数（中心黑洞=0 时往邻域扩），返回 (z_mm, xi, yi) 或 (None, xi, yi)。"""
+    xi, yi = int(round(cx)), int(round(cy))
+    h, w = depth.shape
+    for radius in range(0, r + 1):
+        vals = []
+        for dy in range(-radius, radius + 1):
+            for dx in range(-radius, radius + 1):
+                yy, xx = yi + dy, xi + dx
+                if 0 <= xx < w and 0 <= yy < h:
+                    v = int(depth[yy, xx])
+                    if v > 0:
+                        vals.append(v)
+        if vals:
+            vals.sort()
+            return vals[len(vals) // 2], xi, yi
+    return None, xi, yi
+
+
+def measure_bug_base(depth_cam, depth_frame, det, R_c2e, t_c2e, pose, z_offset_cm=0.0):
+    """检测框中心 + 邻域中值深度 -> 机械臂基座 (x右,y前,z上) cm。失败返回 (None, dbg)。
+
+    链（动态 eye-in-hand）：中心(cx,cy) 中值深度 -> depth_to_world(深度相机 X右Y上Z前)
+        -> 翻 Y -> T_end_to_base(当前 pose) × T_cam_to_end -> 基座 cm -> 加 z_offset。
+    pose = 当前臂位姿 (p21, p22, p23, p24)。
+    """
+    dbg = {}
+    cx, cy = det['center']
+    dbg['center'] = (round(cx, 1), round(cy, 1))
+
+    z_mm, xi, yi = _depth_median(depth_frame, cx, cy)
+    dbg['z_mm'] = z_mm
+    if z_mm is None or z_mm <= 0:
+        return None, dbg
+
+    w = depth_cam.depth_to_world(float(xi), float(yi), float(z_mm))
+    if w is None:
+        dbg['err'] = 'depth_to_world 失败'
+        return None, dbg
+    wx, wy, wz = w
+    cam = EIH.depth_world_to_cam(wx, wy, wz)
+    xyz = EIH.cam_to_base_dynamic(cam, pose[0], pose[1], pose[2], pose[3], R_c2e, t_c2e)
+    dbg['cam'] = (round(wx, 0), round(wy, 0), round(wz, 0))
+    xyz[2] += z_offset_cm
+    dbg['xyz'] = (round(xyz[0, 0], 1), round(xyz[1, 0], 1), round(xyz[2, 0], 1))
+    return (float(xyz[0, 0]), float(xyz[1, 0]), float(xyz[2, 0])), dbg
+
+
 def reset_arm(board):
     """恢复官方初始位置：机械臂复位 + 夹爪张开。"""
     move(board, [(21, RESET[21]), (22, RESET[22]), (23, RESET[23]),
@@ -260,7 +418,17 @@ def main():
                         help='YOLO ONNX 模型路径；传空串 "" 则不检测直接固定脉宽夹')
     parser.add_argument('--conf', type=float, default=0.5, help='YOLO 置信度阈值')
     parser.add_argument('--bug-height', type=float, default=BUG_HEIGHT_CM,
-                        help='虫子模型实际高度(cm)，用于框高估距离')
+                        help='虫子模型实际高度(cm)：eye-in-hand 用表面深度减它，框高估距用它算距离')
+    parser.add_argument('--eye-in-hand', action='store_true', default=True,
+                        help='用 eye-in-hand 算虫子基座 (X,Y,Z) 再喂 IK（默认开；深度相机失败自动退回框高）')
+    parser.add_argument('--no-eye-in-hand', action='store_true',
+                        help='强制关闭 eye-in-hand，用框高估距')
+    parser.add_argument('--cam2arm', default='config/cam2arm.yaml',
+                        help='手眼标定 cam2arm.yaml（相对 _PKG_ROOT）')
+    parser.add_argument('--calib-pose', default='500,705,90,260',
+                        help='标定 cam2arm 时机械臂位姿 21,22,23,24（逗号分隔；拆固定手眼用，必须填正确值）')
+    parser.add_argument('--z-offset', type=float, default=0.0,
+                        help='夹取高度偏移 cm（加到 eye-in-hand 算出的 z 上，默认 0）')
     args = parser.parse_args()
 
     board = Board()
@@ -286,6 +454,31 @@ def main():
             print('YOLO 模型加载失败：%s，退回固定脉宽夹取' % e, flush=True)
             model_det = None
 
+    # 深度相机 + 手眼标定（eye-in-hand 用；任一失败则退回框高估距）
+    depth, R_c2a, t_c2a = None, None, None
+    use_eih = args.eye_in_hand and not args.no_eye_in_hand and EIH is not None
+    if use_eih:
+        try:
+            depth = DepthCam()
+            depth.open()
+            print('深度相机已打开（eye-in-hand 模式）', flush=True)
+        except Exception as e:
+            print('深度相机打开失败：%s，退回框高估距' % e, flush=True)
+            depth = None
+            use_eih = False
+    if use_eih:
+        try:
+            R_c2a, t_c2a = EIH.load_cam2arm(os.path.join(_PKG_ROOT, args.cam2arm))
+            calib = [int(v) for v in args.calib_pose.split(',')]
+            if len(calib) != 4:
+                raise ValueError('--calib-pose 需 4 个数 21,22,23,24')
+            R_c2e, t_c2e = EIH.extract_cam2end(R_c2a, t_c2a, calib[0], calib[1], calib[2], calib[3])
+            print('cam2arm 已加载，固定手眼已拆解（标定位姿 %s）' % calib, flush=True)
+        except Exception as e:
+            print('cam2arm/标定位姿解析失败：%s，退回框高估距' % e, flush=True)
+            R_c2e, t_c2e = None, None
+            use_eih = False
+
     cam = Camera(cap)
 
     start_server()
@@ -299,8 +492,8 @@ def main():
         board.bus_servo_set_position(0.3, [[24, 260]])
         time.sleep(0.3)
 
-        # 2) 检测目标，用框高估距离，IK 算夹取 22/23
-        grab_22, grab_23 = GRAB[22], GRAB[23]
+        # 2) 检测目标，算夹取舵机（优先 eye-in-hand，退回框高估距）
+        grab_21, grab_22, grab_23, grab_24 = GRAB[21], GRAB[22], GRAB[23], GRAB[24]
         if model_det is not None:
             for _ in range(5):
                 f = cam.read()
@@ -308,22 +501,51 @@ def main():
                     time.sleep(0.05)
                     continue
                 r = model_det.detect(f)
-                if r is not None:
-                    h = r.get('h', 0.0)
-                    if h > 10:
-                        D = F_PX_FULL * args.bug_height / h  # 距离 cm
-                        g = compute_grab_servos((0.0, D, 0.0))
-                        if g is not None:
-                            grab_22, grab_23 = g['22'], g['23']
-                            print('框高=%.0f → 距离=%.1fcm → IK 22=%d 23=%d'
-                                  % (h, D, grab_22, grab_23), flush=True)
+                if r is None:
+                    time.sleep(0.05)
+                    continue
+                h = r.get('h', 0.0)
+                if h <= 10:
+                    continue
+                xyz = None
+                if use_eih and depth is not None:
+                    df = depth.read(100)
+                    if df is None:
+                        print('eye-in-hand: 深度帧读不到', flush=True)
+                    else:
+                        # 测量位姿 = 复位位(21=500,22=705,23=90) + 相机 24=260 朝下看
+                        xyz, dbg = measure_bug_base(depth, df, r, R_c2e, t_c2e,
+                                                    (500, RESET[22], RESET[23], 260),
+                                                    args.z_offset)
+                        if xyz is not None:
+                            print('eye-in-hand: 中心%s 深度=%smm 相机=%s -> 基座(X=%.1f,Y=%.1f,Z=%.1f)cm'
+                                  % (dbg.get('center'), dbg.get('z_mm'), dbg.get('cam'),
+                                     xyz[0], xyz[1], xyz[2]), flush=True)
                         else:
-                            print('框高=%.0f → 距离=%.1fcm，IK 无解' % (h, D), flush=True)
-                    break
-                time.sleep(0.05)
+                            print('eye-in-hand: 深度无效 center=%s z_mm=%s'
+                                  % (dbg.get('center'), dbg.get('z_mm')), flush=True)
+                if xyz is not None:
+                    g = compute_grab_servos(xyz)
+                    if g is not None:
+                        grab_21, grab_22, grab_23, grab_24 = g['21'], g['22'], g['23'], g['24']
+                        print('  → IK 21=%d 22=%d 23=%d 24=%d' % (grab_21, grab_22, grab_23, grab_24),
+                              flush=True)
+                    else:
+                        print('  → 目标 (X=%.1f,Y=%.1f,Z=%.1f) IK 无解' % xyz, flush=True)
+                else:
+                    # 退回框高估距：距离(cm) = F_PX * 虫子高度 / 框高，喂 (0, Y, 0)
+                    D = F_PX_FULL * args.bug_height / h
+                    g = compute_grab_servos((0.0, D, 0.0))
+                    if g is not None:
+                        grab_21, grab_22, grab_23, grab_24 = g['21'], g['22'], g['23'], g['24']
+                        print('框高=%.0f → 距离=%.1fcm → IK 22=%d 23=%d'
+                              % (h, D, grab_22, grab_23), flush=True)
+                    else:
+                        print('框高=%.0f → 距离=%.1fcm，IK 无解' % (h, D), flush=True)
+                break
 
         # 3) 夹爪逐步靠近 + 保持居中（视觉伺服，小步）
-        x_dis, y_dis = 500, 260          # 21/24 当前值
+        x_dis, y_dis = grab_21, grab_24          # 21/24 从 IK 解开始，视觉伺服在其上微调
         w22, z23 = RESET[22], RESET[23]  # 22/23 从复位位开始
         step_22 = (RESET[22] - grab_22) / APPROACH_STEPS  # 每步 22 下降量
         step_23 = (grab_23 - RESET[23]) / APPROACH_STEPS  # 每步 23 伸展量
@@ -359,6 +581,11 @@ def main():
     finally:
         cam.stop()
         cap.release()
+        if depth is not None:
+            try:
+                depth.close()
+            except Exception:
+                pass
 
 
 if __name__ == '__main__':
