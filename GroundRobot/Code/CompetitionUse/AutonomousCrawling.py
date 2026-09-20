@@ -268,8 +268,8 @@ def main():
         # 2) 夹爪逐步靠近目标：22/23 从复位位插值到夹取位，每步模型微调 21/24/22/23
         for step in range(1, APPROACH_STEPS + 1):
             ratio = step / APPROACH_STEPS
-            w22 = RESET[22] + (GRAB[22] - RESET[22]) * ratio
-            z23 = RESET[23] + (GRAB[23] - RESET[23]) * ratio
+            w22 = int(RESET[22] + (GRAB[22] - RESET[22]) * ratio)
+            z23 = int(RESET[23] + (GRAB[23] - RESET[23]) * ratio)
             if model_det is not None:
                 f = cam.read()
                 if f is not None:
