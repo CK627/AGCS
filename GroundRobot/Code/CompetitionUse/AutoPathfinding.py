@@ -25,6 +25,12 @@ import numpy as np
 from common.ros_robot_controller_sdk import Board
 from common import kinematics
 
+# spiderpi 根目录（模型在 ~/spiderpi/models/ 下）
+if getattr(sys, 'frozen', False):
+    _PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(sys.argv[0])))
+else:
+    _PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 # ---- LAB 颜色阈值（与 VisualTracking 一致，重新标定后改这里）----
 LAB = {
     'red':    {'min': (0, 130, 115), 'max': (255, 170, 145)},
@@ -44,8 +50,8 @@ PAN_MOVE_MS = 0.001      # 21 号每步移动时间
 PAN_SETTLE_MS = 0.06     # 每步到位等待
 
 # ---- 追踪/逼近参数 ----
-P_GAIN = 0.1
-DEAD_X, DEAD_Y = 40, 60
+P_GAIN = 0.2
+DEAD_X, DEAD_Y = 20, 30
 FRAME_CX, FRAME_CY = 320, 240
 TRACK_INTERVAL = 0.03
 PAN_BAND = 80           # 21 号偏离 500 的转身阈值
@@ -85,6 +91,69 @@ def detect_color(frame, color, min_area=50):
     cv2.circle(frame, (cx, cy), radius, (0, 255, 0), 2)
     cv2.putText(frame, color, (cx - 20, cy - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
     return {'center': (cx, cy), 'radius': radius, 'area': float(best_area)}
+
+
+class ModelDetector:
+    """ONNX YOLO 检测器（onnxruntime 本地推理）。detect(frame) 返回 dict 或 None。
+
+    返回 {'center':(cx,cy), 'radius':.., 'area':.., 'conf':..}，字段与 detect_color 对齐，
+    下游 Tracker / Pathfinder 不用改。
+    """
+
+    NAME = 'fake bug'
+
+    def __init__(self, model_path, conf=0.5):
+        import onnxruntime as ort
+        opts = ort.SessionOptions()
+        opts.intra_op_num_threads = 4   # Pi5 四核并行
+        self.sess = ort.InferenceSession(model_path, opts, providers=['CPUExecutionProvider'])
+        self.input_name = self.sess.get_inputs()[0].name
+        self.output_name = self.sess.get_outputs()[0].name
+        self.conf = conf
+        shp = self.sess.get_inputs()[0].shape
+        self.in_h, self.in_w = int(shp[2]), int(shp[3])
+
+    def detect(self, frame):
+        h0, w0 = frame.shape[:2]
+        ih, iw = self.in_h, self.in_w
+        r = min(iw / w0, ih / h0)
+        new_w, new_h = int(round(w0 * r)), int(round(h0 * r))
+        pad_x, pad_y = (iw - new_w) // 2, (ih - new_h) // 2
+        canvas = np.full((ih, iw, 3), 114, dtype=np.uint8)
+        canvas[pad_y:pad_y + new_h, pad_x:pad_x + new_w] = cv2.resize(frame, (new_w, new_h))
+        blob = canvas[:, :, ::-1].transpose(2, 0, 1)[None].astype(np.float32) / 255.0
+        out = self.sess.run([self.output_name], {self.input_name: blob})[0][0]
+
+        nc = out.shape[0] - 4
+        best = None  # (x1, y1, x2, y2, score)
+        for i in range(out.shape[1]):
+            scores = out[4:4 + nc, i]
+            cls = int(scores.argmax())
+            score = float(scores[cls])
+            if score < self.conf:
+                continue
+            cx, cy, w, h = out[0, i], out[1, i], out[2, i], out[3, i]
+            x1 = (cx - w / 2 - pad_x) / r
+            y1 = (cy - h / 2 - pad_y) / r
+            x2 = (cx + w / 2 - pad_x) / r
+            y2 = (cy + h / 2 - pad_y) / r
+            x1 = max(0, min(w0, x1)); y1 = max(0, min(h0, y1))
+            x2 = max(0, min(w0, x2)); y2 = max(0, min(h0, y2))
+            if x2 - x1 < 2 or y2 - y1 < 2:
+                continue
+            if best is None or score > best[4]:
+                best = (x1, y1, x2, y2, score)
+
+        if best is None:
+            return None
+        x1, y1, x2, y2, score = best
+        cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+        bw, bh = x2 - x1, y2 - y1
+        cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 2)
+        cv2.putText(frame, '%s %.2f' % (self.NAME, score), (int(x1), int(y1) - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+        return {'center': (cx, cy), 'radius': max(bw, bh) / 2.0,
+                'area': float(bw * bh), 'conf': float(score)}
 
 
 # ---------------- OpenNI2 深度（内联）----------------
@@ -329,12 +398,13 @@ class Tracker:
 
 # ---------------- 寻路主体 ----------------
 class Pathfinder:
-    def __init__(self, board, ik, cam, depth, color):
+    def __init__(self, board, ik, cam, depth, color, model_det=None):
         self.board = board
         self.ik = ik
         self.cam = cam
         self.depth = depth
         self.color = color
+        self.model_det = model_det
         self.x_dis, self.y_dis = 500, 260
         self.tracker = None
 
@@ -348,6 +418,8 @@ class Pathfinder:
         if f is None:
             return None
         publish_frame(f)
+        if self.model_det is not None:
+            return self.model_det.detect(f)
         return detect_color(f, self.color)
 
     def confirm(self, tries=4, need_hits=2):
@@ -563,9 +635,12 @@ class Pathfinder:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='2.2 自动寻路')
+    parser = argparse.ArgumentParser(description='2.2 自动寻路（默认 YOLO，可退回颜色）')
     parser.add_argument('--color', default='yellow',
                         choices=['red', 'green', 'blue', 'yellow'])
+    parser.add_argument('--model', default='models/v8n.onnx',
+                        help='YOLO ONNX 模型路径；传空串 "" 则退回颜色')
+    parser.add_argument('--conf', type=float, default=0.5, help='YOLO 置信度阈值')
     args = parser.parse_args()
 
     board = Board()
@@ -576,9 +651,22 @@ def main():
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     cap.set(cv2.CAP_PROP_SATURATION, 128)
     cap.set(cv2.CAP_PROP_AUTO_WB, 1)
+    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.75)   # 自动曝光，抗环境光
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     for _ in range(5):
         cap.read()
     cam = Camera(cap)
+
+    # YOLO 模型（加载失败退回颜色）
+    model_det = None
+    if args.model:
+        model_path = args.model if os.path.isabs(args.model) else os.path.join(_PKG_ROOT, args.model)
+        try:
+            model_det = ModelDetector(model_path, args.conf)
+            print('YOLO 模型已加载：%s（conf=%.2f）' % (model_path, args.conf), flush=True)
+        except Exception as e:
+            print('YOLO 模型加载失败：%s，退回颜色' % e, flush=True)
+            model_det = None
 
     depth = None
     try:
@@ -592,7 +680,7 @@ def main():
     ik.stand(ik.initial_pos, t=500)
     time.sleep(0.5)
 
-    pf = Pathfinder(board, ik, cam, depth, args.color)
+    pf = Pathfinder(board, ik, cam, depth, args.color, model_det)
     try:
         pf.run()
     except KeyboardInterrupt:
