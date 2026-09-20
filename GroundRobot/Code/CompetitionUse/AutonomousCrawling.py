@@ -40,7 +40,7 @@ GRIPPER_OPEN = 120    # 25 号张开
 GRIPPER_CLOSE = 700   # 25 号闭合（拉满）
 HOLD_SEC = 1.0        # 夹住保持时长（秒）
 # 视觉追踪 + 持续靠近参数
-APPROACH_STEPS = 100      # 最多靠近步数（安全上限）
+APPROACH_STEPS = 25       # 最多靠近步数（安全上限）
 APPROACH_D22 = 16         # 每步 22（肩）下降量
 APPROACH_D23 = 16         # 每步 23（肘）伸展量
 K_PAN = 0.3               # 21 横转增益（让目标水平居中）
