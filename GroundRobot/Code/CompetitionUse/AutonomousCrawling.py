@@ -161,6 +161,34 @@ def move(board, servos, sec):
     time.sleep(sec + 0.1)
 
 
+def compute_grab_servos(target_xyz, alpha1=-90.0, alpha2=100.0):
+    """用官方 IK 解目标坐标 (X右,Y前,Z高 cm) 对应的 21/22/23/24 脉宽。
+
+    返回 {'21':..,'22':..,'23':..,'24':..} 或 None（无解/超范围）。
+    导入官方 arm_ik 前先用空壳替换 Board，避免二次打开串口。
+    """
+    import common.ros_robot_controller_sdk as sdk
+
+    class _NoPortBoard:
+        def __init__(self, *a, **k):
+            pass
+
+    orig_board = sdk.Board
+    sdk.Board = _NoPortBoard
+    try:
+        import arm_ik.arm_move_ik as AMK
+    finally:
+        sdk.Board = orig_board
+
+    ik = AMK.ArmIK()
+    r = ik.setPitchRange(tuple(target_xyz), alpha1, alpha2)
+    if r is False:
+        return None
+    servos, _alpha = r
+    return {'21': servos['servo21'], '22': servos['servo22'],
+            '23': servos['servo23'], '24': servos['servo24']}
+
+
 def reset_arm(board):
     """恢复官方初始位置：机械臂复位 + 夹爪张开。"""
     move(board, [(21, RESET[21]), (22, RESET[22]), (23, RESET[23]),
@@ -228,6 +256,8 @@ def main():
     parser.add_argument('--model', default='models/v8n.onnx',
                         help='YOLO ONNX 模型路径；传空串 "" 则不检测直接固定脉宽夹')
     parser.add_argument('--conf', type=float, default=0.5, help='YOLO 置信度阈值')
+    parser.add_argument('--target', default='0,18,0',
+                        help='目标坐标 (X右,Y前,Z高) cm，逗号分隔；用于 IK 算夹取 22/23 脉宽')
     args = parser.parse_args()
 
     board = Board()
@@ -258,6 +288,21 @@ def main():
     start_server()
     set_status(state='Grab', message='自动抓取（夹取前检测对准）')
 
+    # 用 IK 算夹取 22/23 脉宽（目标坐标）
+    grab_22, grab_23 = GRAB[22], GRAB[23]
+    if args.target:
+        try:
+            xyz = tuple(float(v) for v in args.target.split(','))
+            g = compute_grab_servos(xyz)
+            if g is not None:
+                grab_22, grab_23 = g['22'], g['23']
+                print('IK 夹取位：22=%d 23=%d（目标 %s）'
+                      % (grab_22, grab_23, args.target), flush=True)
+            else:
+                print('IK 无解，用固定脉宽 22=%d 23=%d' % (grab_22, grab_23), flush=True)
+        except Exception as e:
+            print('IK 计算失败，用固定脉宽：%s' % e, flush=True)
+
     try:
         # 1) 恢复官方初始位置（夹爪张开）
         reset_arm(board)
@@ -269,8 +314,8 @@ def main():
         # 2) 夹爪逐步靠近 + 保持居中（视觉伺服，小步）
         x_dis, y_dis = 500, 260          # 21/24 当前值
         w22, z23 = RESET[22], RESET[23]  # 22/23 从复位位开始
-        step_22 = (RESET[22] - GRAB[22]) / APPROACH_STEPS  # 每步 22 下降量
-        step_23 = (GRAB[23] - RESET[23]) / APPROACH_STEPS  # 每步 23 伸展量
+        step_22 = (RESET[22] - grab_22) / APPROACH_STEPS  # 每步 22 下降量
+        step_23 = (grab_23 - RESET[23]) / APPROACH_STEPS  # 每步 23 伸展量
         for step in range(APPROACH_STEPS):
             f = cam.read()
             if f is not None and model_det is not None:
