@@ -54,7 +54,7 @@ APPROACH_D22 = 6        # 每步 22（肩）展开量
 APPROACH_D23 = 6        # 每步 23（肘）展开量
 F_PX = 838.0            # 焦距（像素，640 分辨率）
 BUG_HEIGHT_CM = 5.0     # 虫子物理高度(cm)，用于距离估算
-DISTANCE_THRESHOLD = 6.0    # 前方距离阈值(cm)，达到就夹
+DISTANCE_THRESHOLD = 8.0    # 前方距离阈值(cm)，达到就夹
 RELIABLE_MAX_H = 450    # 框高超过此值视为被裁（距离不可靠），改用外推
 LEVEL_SUM = 1125        # 夹爪水平时 22+23+24 = 1125（alpha=0）
 
