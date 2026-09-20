@@ -1,25 +1,24 @@
 #!/usr/bin/python3
 # coding=utf8
-"""标定：22(肩)/23(肘) 脉宽 → 夹爪位置（离地高度 + 水平距离）。
+"""标定：22(肩)/23(肘) 脉宽 → 夹爪位置（离地高度 + 水平距离），交互式输入。
 
 跑法（先 sudo systemctl stop spiderpi）：
     python3 calib_reach.py
 
-分两轮扫：
-  A 轮：23 固定 500，22 从 350 扫到 650；
-  B 轮：22 固定 400，23 从 350 扫到 550。
-
-每档停 8 秒，用尺子量两个数，记成 (脉宽, 离地高度cm, 水平距离cm)：
+脚本把舵机移到指定位置，提示你输入「离地高度 水平距离」(cm)，空格隔开：
   离地高度 = 夹爪最低点到地面的垂直距离；
   水平距离 = 机器人中心到夹爪正下方地面点的水平距离。
 
-两轮量完，把表发给 Claude，拟合 (22,23) → (高度, 水平) 的映射，反推夹取该用的脉宽。
+输完回车，脚本记录并移到下一个位置。全部扫完打印数据表并存到 calib_data.txt。
 """
 import time
 from common.ros_robot_controller_sdk import Board
 
-SWEEP_22 = [350, 400, 450, 500, 550, 600, 650]   # A 轮：22 不同脉宽
-SWEEP_23 = [350, 400, 450, 500, 550]             # B 轮：23 不同脉宽
+# 扫描的 (22, 23) 组合：先 23=500 扫 22，再 22=400 扫 23（去重）
+SWEEP = [
+    (350, 500), (400, 500), (450, 500), (500, 500), (550, 500), (600, 500), (650, 500),
+    (400, 350), (400, 400), (400, 450), (400, 550),
+]
 
 
 def main():
@@ -28,24 +27,40 @@ def main():
     board.bus_servo_set_position(1.5, [[21, 500], [24, 250], [25, 120]])
     time.sleep(1.6)
 
-    print('===== A 轮：23=500 固定，扫 22（肩） =====', flush=True)
-    for p in SWEEP_22:
-        board.bus_servo_set_position(1.2, [[23, 500], [22, p]])
+    data = []
+    print('开始标定。每个位置输入「离地高度 水平距离」(cm)，空格隔开，直接回车跳过。', flush=True)
+    for (p22, p23) in SWEEP:
+        board.bus_servo_set_position(1.2, [[22, p22], [23, p23]])
         time.sleep(1.4)
-        print('\n>>> 22=%d, 23=500   （量离地高度 + 水平距离）' % p, flush=True)
-        time.sleep(8)
-
-    print('\n===== B 轮：22=400 固定，扫 23（肘） =====', flush=True)
-    for p in SWEEP_23:
-        board.bus_servo_set_position(1.2, [[22, 400], [23, p]])
-        time.sleep(1.4)
-        print('\n>>> 22=400, 23=%d   （量离地高度 + 水平距离）' % p, flush=True)
-        time.sleep(8)
+        print('\n>>> 22=%d, 23=%d' % (p22, p23), flush=True)
+        s = input('  离地高度(cm) 水平距离(cm)：').strip()
+        h = d = None
+        if s:
+            parts = s.split()
+            if len(parts) >= 2:
+                try:
+                    h = float(parts[0])
+                    d = float(parts[1])
+                except ValueError:
+                    pass
+        data.append((p22, p23, h, d))
 
     # 复位
     board.bus_servo_set_position(1.5, [[21, 500], [22, 705], [23, 90], [24, 330]])
     time.sleep(1.6)
-    print('\n标定结束，把 (脉宽, 离地高度, 水平距离) 表发给 Claude', flush=True)
+
+    # 打印数据表 + 存文件
+    print('\n===== 收集到的数据 =====', flush=True)
+    lines = ['22,23,离地高度cm,水平距离cm']
+    for (p22, p23, h, d) in data:
+        hs = ('%.1f' % h) if h is not None else ''
+        ds = ('%.1f' % d) if d is not None else ''
+        print('22=%d, 23=%d → 高度 %s, 水平 %s' % (p22, p23, hs, ds), flush=True)
+        lines.append('%d,%d,%s,%s' % (p22, p23, hs, ds))
+
+    with open('calib_data.txt', 'w') as f:
+        f.write('\n'.join(lines) + '\n')
+    print('\n数据已存到 calib_data.txt', flush=True)
 
 
 if __name__ == '__main__':
