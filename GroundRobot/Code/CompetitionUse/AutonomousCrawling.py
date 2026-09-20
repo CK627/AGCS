@@ -320,23 +320,34 @@ def _depth_median(depth, cx, cy, r=3):
     return None, xi, yi
 
 
-def measure_bug_base(depth_cam, depth_frame, det, R_c2e, t_c2e, pose, z_offset_cm=0.0):
-    """检测框中心 + 邻域中值深度 -> 机械臂基座 (x右,y前,z上) cm。失败返回 (None, dbg)。
+def measure_bug_base(depth_cam, depth_frame, det, R_c2e, t_c2e, pose, z_offset_cm=0.0, bug_height_cm=0.0):
+    """检测框 -> 深度 -> 机械臂基座 (x右,y前,z上) cm。失败返回 (None, dbg)。
 
-    链（动态 eye-in-hand）：中心(cx,cy) 中值深度 -> depth_to_world(深度相机 X右Y上Z前)
-        -> 翻 Y -> T_end_to_base(当前 pose) × T_cam_to_end -> 基座 cm -> 加 z_offset。
+    深度黑洞处理：虫子中心反不了红外(深度=0)，先试中心邻域；无效则读虫子底部
+    下方表面深度，再减虫子离地高度 bug_height_cm 得到虫子深度。
     pose = 当前臂位姿 (p21, p22, p23, p24)。
     """
     dbg = {}
     cx, cy = det['center']
+    h = det.get('h', 0.0)
     dbg['center'] = (round(cx, 1), round(cy, 1))
+    dbg['h'] = round(h, 1)
 
-    z_mm, xi, yi = _depth_median(depth_frame, cx, cy)
-    dbg['z_mm'] = z_mm
-    if z_mm is None or z_mm <= 0:
-        return None, dbg
+    z_mm, _, _ = _depth_median(depth_frame, cx, cy, r=3)
+    dbg['z_center'] = z_mm
+    if z_mm is None:
+        # 中心黑洞：读虫子底部下方表面深度，减虫子离地高度 -> 虫子深度
+        z_surf, _, _ = _depth_median(depth_frame, cx, cy + h / 2 + 10, r=3)
+        dbg['z_surface'] = z_surf
+        if z_surf is None:
+            return None, dbg
+        z_mm = max(1.0, z_surf - bug_height_cm * 10.0)
+        dbg['z_bug'] = z_mm
+        dbg['src'] = 'surface'
+    else:
+        dbg['src'] = 'body'
 
-    w = depth_cam.depth_to_world(float(xi), float(yi), float(z_mm))
+    w = depth_cam.depth_to_world(float(cx), float(cy), float(z_mm))
     if w is None:
         dbg['err'] = 'depth_to_world 失败'
         return None, dbg
@@ -417,7 +428,7 @@ def main():
                         help='YOLO ONNX 模型路径；传空串 "" 则不检测直接固定脉宽夹')
     parser.add_argument('--conf', type=float, default=0.5, help='YOLO 置信度阈值')
     parser.add_argument('--bug-height', type=float, default=BUG_HEIGHT_CM,
-                        help='虫子模型实际高度(cm)：eye-in-hand 用表面深度减它，框高估距用它算距离')
+                        help='虫子离地/离表面高度(cm)：中心是深度黑洞时，用表面深度减它得到虫子深度')
     parser.add_argument('--eye-in-hand', action='store_true', default=True,
                         help='用 eye-in-hand 算虫子基座 (X,Y,Z) 再喂 IK（默认开；深度相机失败自动退回框高）')
     parser.add_argument('--no-eye-in-hand', action='store_true',
@@ -478,7 +489,7 @@ def main():
             R_c2e, t_c2e = None, None
             use_eih = False
 
-    cam = Camera(cap)
+    cam = Camera(cap, model_det)   # 传模型，让视频推流画上识别框
 
     start_server()
     set_status(state='Grab', message='自动抓取（夹取前检测对准）')
@@ -514,10 +525,14 @@ def main():
                             print('eye-in-hand: 深度帧读不到', flush=True)
                         else:
                             xyz, dbg = measure_bug_base(depth, df, r, R_c2e, t_c2e,
-                                                        (grab_21, w22, z23, y_dis), args.z_offset)
+                                                        (grab_21, w22, z23, y_dis), args.z_offset,
+                                                        args.bug_height)
                             if xyz is not None:
-                                print('eye-in-hand: 中心%s 深度=%smm -> 基座(X=%.1f,Y=%.1f,Z=%.1f)cm'
-                                      % (dbg.get('center'), dbg.get('z_mm'), xyz[0], xyz[1], xyz[2]), flush=True)
+                                print('eye-in-hand: 中心%s 框高=%.0f 源=%s 中心深=%s 表面深=%s 虫子深=%s'
+                                      ' -> 基座(X=%.1f,Y=%.1f,Z=%.1f)cm'
+                                      % (dbg.get('center'), dbg.get('h', 0), dbg.get('src'),
+                                         dbg.get('z_center'), dbg.get('z_surface'), dbg.get('z_bug'),
+                                         xyz[0], xyz[1], xyz[2]), flush=True)
                                 g = compute_grab_servos(xyz)
                                 if g is not None:
                                     grab_21, grab_22, grab_23, grab_24 = g['21'], g['22'], g['23'], g['24']
@@ -529,8 +544,9 @@ def main():
                                         step_22 = (w22 - grab_22) / remain
                                         step_23 = (grab_23 - z23) / remain
                             else:
-                                print('eye-in-hand: 深度无效 center=%s z_mm=%s'
-                                      % (dbg.get('center'), dbg.get('z_mm')), flush=True)
+                                print('eye-in-hand: 深度无效 中心=%s 框高=%.0f 中心深=%s 表面深=%s'
+                                      % (dbg.get('center'), dbg.get('h', 0),
+                                         dbg.get('z_center'), dbg.get('z_surface')), flush=True)
 
             # 下降一步
             w22 = max(0, min(1000, int(w22 - step_22)))
