@@ -54,7 +54,8 @@ APPROACH_D22 = 6        # 每步 22（肩）展开量
 APPROACH_D23 = 6        # 每步 23（肘）展开量
 F_PX = 838.0            # 焦距（像素，640 分辨率）
 BUG_HEIGHT_CM = 5.0     # 虫子物理高度(cm)，用于距离估算
-DISTANCE_THRESHOLD = 5.0    # 前方距离阈值(cm)，达到就夹
+DISTANCE_THRESHOLD = 15.0   # 前方距离阈值(cm)，达到就夹
+RELIABLE_MAX_H = 450    # 框高超过此值视为被裁（距离不可靠），改用外推
 LEVEL_SUM = 1125        # 夹爪水平时 22+23+24 = 1125（alpha=0）
 
 SLEEP_S = 0.25          # 每步间隔（秒），拉长让舵机走完、不震荡
@@ -298,26 +299,43 @@ def main():
             print('  追踪步数用尽仍未居中，仍进入前进', flush=True)
 
         # 3) 阶段二：前进靠近（22/23 展开，24 保持水平），前方距离达阈值夹
-        w22, z23 = RESET[22], RESET[23]     # 22/23 从复位位开始
+        #    距离可靠时直接测；目标丢失/框被裁时用「一致速度」外推
+        w22, z23 = RESET[22], RESET[23]
+        last_dist = 999.0      # 最近一次可靠距离
+        dist_rate = 0.4        # 每步距离下降速率(cm/步)，实测自适应
+        since_reliable = 0     # 距上次可靠测量过了多少步
         reached = False
-        last_dist = 999.0
         print('阶段二：前进靠近（距离阈值 %.1fcm）...' % args.distance, flush=True)
         for step in range(APPROACH_STEPS):
             _f, r = cam.read()
+            cur = None
             if r is not None:
                 w, h = r.get('w', 0.0), r.get('h', 0.0)
-                if h > 0:
-                    last_dist = F_PX * BUG_HEIGHT_CM / h   # 前方距离(cm)，框高越大越近
-                if last_dist <= args.distance:
-                    reached = True
-                    print('  距离达阈值(%.1fcm)，停止前进' % last_dist, flush=True)
-                    break
+                if 0 < h < RELIABLE_MAX_H:   # 框未裁，距离可靠
+                    d = F_PX * BUG_HEIGHT_CM / h
+                    if last_dist < 999.0 and d < last_dist:
+                        rate = last_dist - d
+                        dist_rate = rate if dist_rate <= 0 else 0.7 * dist_rate + 0.3 * rate
+                    last_dist = d
+                    since_reliable = 0
+                    cur = d
+                else:
+                    since_reliable += 1
+            else:
+                since_reliable += 1
+            if cur is None:
+                # 外推：按一致速度推算当前距离
+                cur = max(0.0, last_dist - dist_rate * since_reliable)
+            print('  前进%02d: 距离=%.1fcm | 21=%d 22=%d 23=%d 24=%d'
+                  % (step, cur, x_dis, w22, z23, y_dis), flush=True)
+            if cur <= args.distance:
+                reached = True
+                print('  距离达阈值，停止前进', flush=True)
+                break
             # 前进：22 展开、23 伸展，24 联动保持夹爪水平（alpha=0）
             w22 = max(0, min(1000, int(w22 - APPROACH_D22)))
             z23 = max(0, min(1000, int(z23 + APPROACH_D23)))
             y_dis = max(0, min(1000, int(LEVEL_SUM - w22 - z23)))
-            print('  前进%02d: 距离=%.1fcm | 21=%d 22=%d 23=%d 24=%d'
-                  % (step, last_dist, x_dis, w22, z23, y_dis), flush=True)
             board.bus_servo_set_position(SLEEP_S, [[21, x_dis], [24, y_dis], [22, w22], [23, z23]])
             time.sleep(SLEEP_S)
         if not reached:
