@@ -12,8 +12,8 @@
 上报 /status + 视频流 /video.mjpeg（http://<IP>:5000/video.mjpeg）。
 
 用法（先 sudo systemctl stop spiderpi）：
-    python3 AutonomousCrawling.py                    # 默认面积阈值 12%
-    python3 AutonomousCrawling.py --area-ratio 0.15  # 达到 15% 占比才夹（夹得更近）
+    python3 AutonomousCrawling.py                    # 默认面积阈值 20%
+    python3 AutonomousCrawling.py --area-ratio 0.25  # 达到 25% 占比才夹（夹得更近）
     python3 AutonomousCrawling.py --model ""         # 不检测，纯固定脉宽夹取
 """
 import os
@@ -41,11 +41,11 @@ GRIPPER_CLOSE = 700   # 25 号闭合（拉满）
 HOLD_SEC = 1.0        # 夹住保持时长（秒）
 # 视觉追踪 + 持续靠近参数
 APPROACH_STEPS = 100      # 最多靠近步数（安全上限）
-APPROACH_D22 = 4          # 每步 22（肩）下降量
-APPROACH_D23 = 4          # 每步 23（肘）伸展量
+APPROACH_D22 = 8          # 每步 22（肩）下降量
+APPROACH_D23 = 8          # 每步 23（肘）伸展量
 K_PAN = 0.3               # 21 横转增益（让目标水平居中）
 K_TILT = 0.3              # 24 俯仰增益（让目标竖直居中）
-AREA_RATIO_THRESHOLD = 0.12  # 虫子框面积占画面比例阈值，达到就夹（默认 12%）
+AREA_RATIO_THRESHOLD = 0.20  # 虫子框面积占画面比例阈值，达到就夹（默认 20%）
 LOST_STOP = 15            # 连续多少步检测不到目标就停止靠近
 
 
@@ -306,7 +306,7 @@ def main():
             w22 = max(0, min(1000, int(w22 - APPROACH_D22)))
             z23 = max(0, min(1000, int(z23 + APPROACH_D23)))
             board.bus_servo_set_position(0.15, [[21, x_dis], [24, y_dis], [22, w22], [23, z23]])
-            time.sleep(0.2)
+            time.sleep(0.15)
 
         if not reached:
             print('未达阈值，用当前位夹取', flush=True)
