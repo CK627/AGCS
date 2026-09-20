@@ -492,73 +492,56 @@ def main():
         board.bus_servo_set_position(0.3, [[24, 260]])
         time.sleep(0.3)
 
-        # 2) 检测目标，算夹取舵机（优先 eye-in-hand，退回框高估距）
+        # 2) 下降搜索 + eye-in-hand 定位 + 接近夹取
+        #    找到虫子前：相机朝下看(24=260)边降边找；找到后：eye-in-hand 定位、夹爪保持水平接近
         grab_21, grab_22, grab_23, grab_24 = GRAB[21], GRAB[22], GRAB[23], GRAB[24]
-        if model_det is not None:
-            for _ in range(5):
-                f = cam.read()
-                if f is None:
-                    time.sleep(0.05)
-                    continue
-                r = model_det.detect(f)
-                if r is None:
-                    time.sleep(0.05)
-                    continue
-                h = r.get('h', 0.0)
-                if h <= 10:
-                    continue
-                xyz = None
-                if use_eih and depth is not None:
-                    df = depth.read(100)
-                    if df is None:
-                        print('eye-in-hand: 深度帧读不到', flush=True)
-                    else:
-                        # 测量位姿 = 复位位(21=500,22=705,23=90) + 相机 24=260 朝下看
-                        xyz, dbg = measure_bug_base(depth, df, r, R_c2e, t_c2e,
-                                                    (500, RESET[22], RESET[23], 260),
-                                                    args.z_offset)
-                        if xyz is not None:
-                            print('eye-in-hand: 中心%s 深度=%smm 相机=%s -> 基座(X=%.1f,Y=%.1f,Z=%.1f)cm'
-                                  % (dbg.get('center'), dbg.get('z_mm'), dbg.get('cam'),
-                                     xyz[0], xyz[1], xyz[2]), flush=True)
-                        else:
-                            print('eye-in-hand: 深度无效 center=%s z_mm=%s'
-                                  % (dbg.get('center'), dbg.get('z_mm')), flush=True)
-                if xyz is not None:
-                    g = compute_grab_servos(xyz)
-                    if g is not None:
-                        grab_21, grab_22, grab_23, grab_24 = g['21'], g['22'], g['23'], g['24']
-                        print('  → IK 21=%d 22=%d 23=%d 24=%d' % (grab_21, grab_22, grab_23, grab_24),
-                              flush=True)
-                    else:
-                        print('  → 目标 (X=%.1f,Y=%.1f,Z=%.1f) IK 无解' % xyz, flush=True)
-                else:
-                    # 退回框高估距：距离(cm) = F_PX * 虫子高度 / 框高，喂 (0, Y, 0)
-                    D = F_PX_FULL * args.bug_height / h
-                    g = compute_grab_servos((0.0, D, 0.0))
-                    if g is not None:
-                        grab_21, grab_22, grab_23, grab_24 = g['21'], g['22'], g['23'], g['24']
-                        print('框高=%.0f → 距离=%.1fcm → IK 22=%d 23=%d'
-                              % (h, D, grab_22, grab_23), flush=True)
-                    else:
-                        print('框高=%.0f → 距离=%.1fcm，IK 无解' % (h, D), flush=True)
-                break
-
-        # 3) 纯固定下降：高度固定，夹取位在初始检测时就已由 IK 算死，下降过程不追踪、不依赖检测
+        measured = False
         w22, z23 = RESET[22], RESET[23]            # 22/23 从复位位开始
-        step_22 = (RESET[22] - grab_22) / APPROACH_STEPS  # 每步 22 下降量
-        step_23 = (grab_23 - RESET[23]) / APPROACH_STEPS  # 每步 23 伸展量
-        print('开始下降: 21=%d  22 %d→%d  23 %d→%d'
-              % (grab_21, RESET[22], grab_22, RESET[23], grab_23), flush=True)
+        step_22 = (RESET[22] - grab_22) / APPROACH_STEPS
+        step_23 = (grab_23 - RESET[23]) / APPROACH_STEPS
+        print('开始下降搜索: 22 %d→%d  23 %d→%d' % (RESET[22], grab_22, RESET[23], grab_23), flush=True)
         for step in range(APPROACH_STEPS):
+            y_dis = 260 if not measured else max(0, min(1000, int(LEVEL_SUM - w22 - z23)))
+
+            # 还没定位到：试着检测虫子，检测到就 eye-in-hand 定位并重算夹取目标
+            if not measured and model_det is not None and use_eih and depth is not None:
+                f = cam.read()
+                if f is not None:
+                    r = model_det.detect(f)
+                    if r is not None:
+                        df = depth.read(100)
+                        if df is None:
+                            print('eye-in-hand: 深度帧读不到', flush=True)
+                        else:
+                            xyz, dbg = measure_bug_base(depth, df, r, R_c2e, t_c2e,
+                                                        (grab_21, w22, z23, y_dis), args.z_offset)
+                            if xyz is not None:
+                                print('eye-in-hand: 中心%s 深度=%smm -> 基座(X=%.1f,Y=%.1f,Z=%.1f)cm'
+                                      % (dbg.get('center'), dbg.get('z_mm'), xyz[0], xyz[1], xyz[2]), flush=True)
+                                g = compute_grab_servos(xyz)
+                                if g is not None:
+                                    grab_21, grab_22, grab_23, grab_24 = g['21'], g['22'], g['23'], g['24']
+                                    measured = True
+                                    print('  → IK 21=%d 22=%d 23=%d 24=%d'
+                                          % (grab_21, grab_22, grab_23, grab_24), flush=True)
+                                    remain = APPROACH_STEPS - step - 1
+                                    if remain > 0:
+                                        step_22 = (w22 - grab_22) / remain
+                                        step_23 = (grab_23 - z23) / remain
+                            else:
+                                print('eye-in-hand: 深度无效 center=%s z_mm=%s'
+                                      % (dbg.get('center'), dbg.get('z_mm')), flush=True)
+
+            # 下降一步
             w22 = max(0, min(1000, int(w22 - step_22)))
             z23 = max(0, min(1000, int(z23 + step_23)))
-            y_dis = max(0, min(1000, int(LEVEL_SUM - w22 - z23)))   # 24 联动保持夹爪水平
-            print('  下降%02d/%d: 21=%d 22=%d 23=%d 24=%d'
-                  % (step, APPROACH_STEPS, grab_21, w22, z23, y_dis), flush=True)
+            y_dis = 260 if not measured else max(0, min(1000, int(LEVEL_SUM - w22 - z23)))
+            print('  下降%02d/%d: 21=%d 22=%d 23=%d 24=%d%s'
+                  % (step, APPROACH_STEPS, grab_21, w22, z23, y_dis, ' [已定位]' if measured else ''), flush=True)
             board.bus_servo_set_position(0.15, [[21, grab_21], [24, y_dis], [22, w22], [23, z23]])
             time.sleep(0.2)
-        print('下降结束: 21=%d 22=%d 23=%d 24=%d' % (grab_21, w22, z23, y_dis), flush=True)
+        print('下降结束: 21=%d 22=%d 23=%d 24=%d%s'
+              % (grab_21, w22, z23, y_dis, ' [已定位]' if measured else ' [未定位,用默认夹取位]'), flush=True)
 
         # 3) 慢慢闭合夹爪
         move(board, [(25, GRIPPER_CLOSE)], 1.5)
