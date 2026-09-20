@@ -60,8 +60,7 @@ HEIGHT_GAIN = 0.3     # 框高度每差 1 像素，22（肩）调多少脉宽（
 # 夹爪逐步靠近参数
 APPROACH_STEPS = 30   # 夹爪从复位位分多少步下降到夹取位（步数越多越慢越平滑）
 K_PAN = 0.2           # 21 横转增益（让目标在画面水平居中）
-K_TILT = 0.2          # 24 俯仰增益（让目标在画面竖直居中）
-STOP_CY = 330         # 目标中心 cy 超过它（接近画面底部=太近）就停止靠近
+LEVEL_SUM = 1125      # 夹爪水平时 21 号不参与：22+23+24 = 1125（alpha=0）
 
 
 STATUS = {'state': 'Grab', 'message': '自动抓取', 'last_result': None}
@@ -544,9 +543,9 @@ def main():
                         print('框高=%.0f → 距离=%.1fcm，IK 无解' % (h, D), flush=True)
                 break
 
-        # 3) 夹爪逐步靠近 + 保持居中（视觉伺服，小步）
-        x_dis, y_dis = grab_21, grab_24          # 21/24 从 IK 解开始，视觉伺服在其上微调
-        w22, z23 = RESET[22], RESET[23]  # 22/23 从复位位开始
+        # 3) 夹爪逐步下降 + 保持夹爪水平（21 左右微调；24 随 22/23 联动保持 alpha=0，不再俯仰追目标）
+        x_dis = grab_21                            # 21 从 IK 解开始，只做左右居中
+        w22, z23 = RESET[22], RESET[23]            # 22/23 从复位位开始
         step_22 = (RESET[22] - grab_22) / APPROACH_STEPS  # 每步 22 下降量
         step_23 = (grab_23 - RESET[23]) / APPROACH_STEPS  # 每步 23 伸展量
         for step in range(APPROACH_STEPS):
@@ -556,16 +555,11 @@ def main():
                 if r is not None:
                     cx, cy = r['center']
                     print('靠近 中心=(%.0f,%.0f)' % (cx, cy), flush=True)
-                    # 让目标居中（21 左右、24 俯仰）
-                    x_dis = max(0, min(1000, int(x_dis + K_PAN * (320 - cx))))
-                    y_dis = max(0, min(1000, int(y_dis + K_TILT * (240 - cy))))
-                    if cy > STOP_CY:
-                        # 目标已太靠画面底部（太近），停止继续往下
-                        board.bus_servo_set_position(0.15, [[21, x_dis], [24, y_dis]])
-                        break
-            # 夹爪小步下降/伸展
+                    x_dis = max(0, min(1000, int(x_dis + K_PAN * (320 - cx))))   # 仅左右居中
+            # 夹爪小步下降/伸展；24 号联动保持夹爪水平：alpha=0 => 24 = LEVEL_SUM - 22 - 23
             w22 = max(0, min(1000, int(w22 - step_22)))
             z23 = max(0, min(1000, int(z23 + step_23)))
+            y_dis = max(0, min(1000, int(LEVEL_SUM - w22 - z23)))
             board.bus_servo_set_position(0.15, [[21, x_dis], [24, y_dis], [22, w22], [23, z23]])
             time.sleep(0.2)
 
