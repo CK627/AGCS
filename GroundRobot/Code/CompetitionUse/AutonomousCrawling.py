@@ -230,6 +230,8 @@ def align_target(board, model_det, cam, x_dis, y_dis, z_dis, iterations=8):
             continue
         cx, cy = r['center']
         h = r.get('h', 0.0)
+        print('对准 中心=(%.0f,%.0f) 框高=%.0f conf=%.2f'
+              % (cx, cy, h, r.get('conf', 0.0)), flush=True)
         centered = abs(cx - 320) < 15 and abs(cy - 240) < 15
         reach_ok = (NOMINAL_BBOX_H <= 0) or abs(h - NOMINAL_BBOX_H) < 15
         if centered and reach_ok:
