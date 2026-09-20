@@ -46,6 +46,7 @@ APPROACH_D23 = 4          # 每步 23（肘）伸展量
 K_PAN = 0.3               # 21 横转增益（让目标水平居中）
 K_TILT = 0.3              # 24 俯仰增益（让目标竖直居中）
 AREA_RATIO_THRESHOLD = 0.06  # 虫子框面积占画面比例阈值，达到就夹（默认 6%）
+LOST_STOP = 15            # 连续多少步检测不到目标就停止靠近
 
 
 STATUS = {'state': 'Grab', 'message': '自动抓取', 'last_result': None}
@@ -227,6 +228,8 @@ def main():
     parser.add_argument('--conf', type=float, default=0.5, help='YOLO 置信度阈值')
     parser.add_argument('--area-ratio', type=float, default=AREA_RATIO_THRESHOLD,
                         help='虫子框面积占画面比例阈值(0~1)，达到就夹，默认 %.2f' % AREA_RATIO_THRESHOLD)
+    parser.add_argument('--tilt', type=int, default=260,
+                        help='初始 24 号俯仰脉宽（相机初始角度；虫子压在画面上方就调大，比如 400）')
     args = parser.parse_args()
 
     board = Board()
@@ -261,16 +264,17 @@ def main():
         # 1) 恢复官方初始位置（夹爪张开）
         reset_arm(board)
         time.sleep(0.5)
-        # 相机朝下看（能看到目标的角度）
-        print('  [动作] 24 号转到 260（相机朝下看）', flush=True)
-        board.bus_servo_set_position(0.3, [[24, 260]])
+        # 相机转到初始角度（朝下看；虫子压画面上方就调大 --tilt）
+        print('  [动作] 24 号转到 %d（初始角度）' % args.tilt, flush=True)
+        board.bus_servo_set_position(0.3, [[24, args.tilt]])
         time.sleep(0.3)
 
         # 2) 视觉追踪居中 + 持续下降靠近 + 框面积占比阈值停止
-        x_dis, y_dis = 500, 260               # 21/24 当前值
+        x_dis, y_dis = 500, args.tilt          # 21/24 当前值
         w22, z23 = RESET[22], RESET[23]       # 22/23 从复位位开始
         fw, fh = 640, 480
         reached = False
+        lost_count = 0
         print('开始靠近（面积阈值 %.1f%%）...' % (args.area_ratio * 100), flush=True)
         for step in range(APPROACH_STEPS):
             f = cam.read()
@@ -278,6 +282,7 @@ def main():
             if f is not None and model_det is not None:
                 r = model_det.detect(f)
             if r is not None:
+                lost_count = 0
                 cx, cy = r['center']
                 w, h = r.get('w', 0.0), r.get('h', 0.0)
                 ratio = (w * h) / (fw * fh)
@@ -292,6 +297,11 @@ def main():
                     board.bus_servo_set_position(0.15, [[21, x_dis], [24, y_dis], [22, w22], [23, z23]])
                     print('  占比达阈值，停止靠近', flush=True)
                     break
+            else:
+                lost_count += 1
+                if lost_count >= LOST_STOP:
+                    print('  连续 %d 步没检测到目标，停止靠近' % lost_count, flush=True)
+                    break
             # 下降一步
             w22 = max(0, min(1000, int(w22 - APPROACH_D22)))
             z23 = max(0, min(1000, int(z23 + APPROACH_D23)))
@@ -299,7 +309,7 @@ def main():
             time.sleep(0.2)
 
         if not reached:
-            print('到步数上限仍未达阈值，用当前位夹取', flush=True)
+            print('未达阈值，用当前位夹取', flush=True)
 
         # 3) 慢慢闭合夹爪
         move(board, [(25, GRIPPER_CLOSE)], 1.5)
