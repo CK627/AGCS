@@ -54,7 +54,7 @@ APPROACH_D22 = 6        # 每步 22（肩）展开量
 APPROACH_D23 = 6        # 每步 23（肘）展开量
 F_PX = 838.0            # 焦距（像素，640 分辨率）
 BUG_HEIGHT_CM = 5.0     # 虫子物理高度(cm)，用于距离估算
-DISTANCE_THRESHOLD = 17.0   # 前方距离阈值(cm)，达到就夹
+DISTANCE_THRESHOLD = 5.0    # 前方距离阈值(cm)，达到就夹
 LEVEL_SUM = 1125        # 夹爪水平时 22+23+24 = 1125（alpha=0）
 
 SLEEP_S = 0.25          # 每步间隔（秒），拉长让舵机走完、不震荡
