@@ -164,7 +164,7 @@ def move(board, servos, sec):
 def reset_arm(board):
     """恢复官方初始位置：机械臂复位 + 夹爪张开。"""
     move(board, [(21, RESET[21]), (22, RESET[22]), (23, RESET[23]),
-                 (24, RESET[24]), (25, GRIPPER_OPEN)], 1.5)
+                 (24, RESET[24]), (25, GRIPPER_OPEN)], 0.8)
 
 
 class ModelDetector:
@@ -343,12 +343,12 @@ def main():
             print('  前进步数用尽仍未达阈值，用当前位夹取', flush=True)
 
         # 4) 闭合夹爪 + 保持
-        move(board, [(25, GRIPPER_CLOSE)], 1.5)
+        move(board, [(25, GRIPPER_CLOSE)], 0.8)
         set_status(last_result='done', message='已夹取')
         time.sleep(HOLD_SEC)
 
         # 5) 复位（夹爪保持闭合）
-        move(board, [(21, RESET[21]), (22, RESET[22]), (23, RESET[23]), (24, RESET[24])], 1.5)
+        move(board, [(21, RESET[21]), (22, RESET[22]), (23, RESET[23]), (24, RESET[24])], 0.8)
         set_status(last_result='done', message='已夹取并恢复')
         print('夹取成功', flush=True)
     finally:
