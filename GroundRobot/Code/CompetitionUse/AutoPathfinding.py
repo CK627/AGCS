@@ -417,12 +417,10 @@ class Pathfinder:
         f = self.cam.read()
         if f is None:
             return None
+        publish_frame(f)
         if self.model_det is not None:
-            r = self.model_det.detect(f)   # 先检测（画红框）
-        else:
-            r = detect_color(f, self.color)  # 先检测（画绿圈）
-        publish_frame(f)   # 再推流，画面带识别框
-        return r
+            return self.model_det.detect(f)
+        return detect_color(f, self.color)
 
     def confirm(self, tries=4, need_hits=2):
         """目标连续若干帧且居中才算确认，避免边缘/噪声误判。"""
