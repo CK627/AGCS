@@ -13,13 +13,22 @@
 用法（先 sudo systemctl stop spiderpi）：
     python3 AutonomousCrawling.py
 """
+import os
+import sys
 import time
 import threading
+import argparse
 
 import cv2
 import numpy as np
 
 from common.ros_robot_controller_sdk import Board
+
+# spiderpi 根目录（模型在 ~/spiderpi/models/ 下）
+if getattr(sys, 'frozen', False):
+    _PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(sys.argv[0])))
+else:
+    _PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 # 目标舵机脉宽（21/22/23/24）
@@ -172,7 +181,90 @@ def detect_hand(frame):
     return False
 
 
+class ModelDetector:
+    """ONNX YOLO 检测器（onnxruntime 本地推理）。detect(frame) 返回 {'center':(cx,cy),'conf':..} 或 None。"""
+
+    NAME = 'fake bug'
+
+    def __init__(self, model_path, conf=0.5):
+        import onnxruntime as ort
+        opts = ort.SessionOptions()
+        opts.intra_op_num_threads = 4
+        self.sess = ort.InferenceSession(model_path, opts, providers=['CPUExecutionProvider'])
+        self.input_name = self.sess.get_inputs()[0].name
+        self.output_name = self.sess.get_outputs()[0].name
+        self.conf = conf
+        shp = self.sess.get_inputs()[0].shape
+        self.in_h, self.in_w = int(shp[2]), int(shp[3])
+
+    def detect(self, frame):
+        h0, w0 = frame.shape[:2]
+        ih, iw = self.in_h, self.in_w
+        r = min(iw / w0, ih / h0)
+        new_w, new_h = int(round(w0 * r)), int(round(h0 * r))
+        pad_x, pad_y = (iw - new_w) // 2, (ih - new_h) // 2
+        canvas = np.full((ih, iw, 3), 114, dtype=np.uint8)
+        canvas[pad_y:pad_y + new_h, pad_x:pad_x + new_w] = cv2.resize(frame, (new_w, new_h))
+        blob = canvas[:, :, ::-1].transpose(2, 0, 1)[None].astype(np.float32) / 255.0
+        out = self.sess.run([self.output_name], {self.input_name: blob})[0][0]
+
+        nc = out.shape[0] - 4
+        best = None
+        for i in range(out.shape[1]):
+            scores = out[4:4 + nc, i]
+            cls = int(scores.argmax())
+            score = float(scores[cls])
+            if score < self.conf:
+                continue
+            cx, cy, w, h = out[0, i], out[1, i], out[2, i], out[3, i]
+            x1 = (cx - w / 2 - pad_x) / r
+            y1 = (cy - h / 2 - pad_y) / r
+            x2 = (cx + w / 2 - pad_x) / r
+            y2 = (cy + h / 2 - pad_y) / r
+            x1 = max(0, min(w0, x1)); y1 = max(0, min(h0, y1))
+            x2 = max(0, min(w0, x2)); y2 = max(0, min(h0, y2))
+            if x2 - x1 < 2 or y2 - y1 < 2:
+                continue
+            if best is None or score > best[4]:
+                best = (x1, y1, x2, y2, score)
+
+        if best is None:
+            return None
+        x1, y1, x2, y2, score = best
+        cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+        cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 2)
+        return {'center': (cx, cy), 'conf': float(score)}
+
+
+def align_target(board, model_det, cam, x_dis, y_dis, iterations=8):
+    """夹取前用模型检测目标，微调 21/24 让目标居中，返回 (是否对准, x_dis, y_dis)。"""
+    K = 0.2
+    for _ in range(iterations):
+        f = cam.read()
+        if f is None:
+            time.sleep(0.05)
+            continue
+        r = model_det.detect(f)
+        if r is None:
+            time.sleep(0.05)
+            continue
+        cx, cy = r['center']
+        if abs(cx - 320) < 15 and abs(cy - 240) < 15:
+            return True, x_dis, y_dis
+        x_dis = max(0, min(1000, int(x_dis + K * (320 - cx))))
+        y_dis = max(0, min(1000, int(y_dis + K * (240 - cy))))
+        board.bus_servo_set_position(0.1, [[21, x_dis], [24, y_dis]])
+        time.sleep(0.15)
+    return False, x_dis, y_dis
+
+
 def main():
+    parser = argparse.ArgumentParser(description='2.3 自动抓取+递物（夹取前用模型检测对准）')
+    parser.add_argument('--model', default='models/v8n.onnx',
+                        help='YOLO ONNX 模型路径；传空串 "" 则不检测直接固定脉宽夹')
+    parser.add_argument('--conf', type=float, default=0.5, help='YOLO 置信度阈值')
+    args = parser.parse_args()
+
     board = Board()
 
     cap = cv2.VideoCapture(0)
@@ -180,12 +272,25 @@ def main():
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     cap.set(cv2.CAP_PROP_SATURATION, 128)
     cap.set(cv2.CAP_PROP_AUTO_WB, 1)
+    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.75)
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     for _ in range(5):
         cap.read()
     cam = Camera(cap)
 
+    # YOLO 模型（夹取前检测对准用；加载失败则不检测）
+    model_det = None
+    if args.model:
+        model_path = args.model if os.path.isabs(args.model) else os.path.join(_PKG_ROOT, args.model)
+        try:
+            model_det = ModelDetector(model_path, args.conf)
+            print('YOLO 模型已加载：%s（conf=%.2f）' % (model_path, args.conf), flush=True)
+        except Exception as e:
+            print('YOLO 模型加载失败：%s，退回固定脉宽夹取' % e, flush=True)
+            model_det = None
+
     start_server()
-    set_status(state='Grab', message='固定路线夹取')
+    set_status(state='Grab', message='自动抓取（夹取前检测对准）')
 
     try:
         # 1) 恢复官方初始位置
@@ -199,6 +304,14 @@ def main():
 
         # 4) 24 到 270
         move(board, [(24, GRAB[24])], 0.8)
+
+        # 4.5) 夹取前用模型检测目标并对准（微调 21/24 让目标居中）
+        if model_det is not None:
+            ok, x_dis, y_dis = align_target(board, model_det, cam, GRAB[21], GRAB[24])
+            if ok:
+                set_status(message='已对准目标，准备夹取')
+            else:
+                set_status(message='未检测到目标，按原固定脉宽夹取')
 
         # 5) 闭合夹爪（25）
         move(board, [(25, GRIPPER_CLOSE)], 1.0)
