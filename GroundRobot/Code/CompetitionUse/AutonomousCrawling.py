@@ -263,37 +263,50 @@ def main():
         time.sleep(0.5)
         # 相机朝前下看
         board.bus_servo_set_position(0.3, [[24, 260]])
-        x_dis, y_dis = 500, 260   # 21/24 当前值
+        time.sleep(0.3)
 
-        # 2) 夹爪逐步靠近目标：22/23 从复位位插值到夹取位，每步模型微调 21/24/22/23
+        # 2) 先检测目标（机械臂还在抬起位、相机看地面），算出各舵机目标值
+        target_21 = GRAB[21]
+        target_22 = GRAB[22]
+        target_23 = GRAB[23]
+        target_24 = GRAB[24]
+        if model_det is not None:
+            for _ in range(5):
+                f = cam.read()
+                if f is None:
+                    time.sleep(0.05)
+                    continue
+                r = model_det.detect(f)
+                if r is not None:
+                    cx, cy = r['center']
+                    h = r.get('h', 0.0)
+                    print('检测 中心=(%.0f,%.0f) 框高=%.0f conf=%.2f'
+                          % (cx, cy, h, r.get('conf', 0.0)), flush=True)
+                    target_21 = max(0, min(1000, int(GRAB[21] + K_PAN * (320 - cx))))
+                    target_24 = max(0, min(1000, int(260 + K_TILT * (240 - cy))))
+                    if NOMINAL_BBOX_H > 0:
+                        # 框小（远）→ 22 更低、23 更伸；框大（近）→ 收回一点
+                        target_22 = max(0, min(1000, int(GRAB[22] + HEIGHT_GAIN * (NOMINAL_BBOX_H - h))))
+                        target_23 = max(0, min(1000, int(GRAB[23] + REACH_GAIN * (NOMINAL_BBOX_H - h))))
+                    break
+                time.sleep(0.05)
+
+        # 3) 夹爪慢速靠近：21/24/22/23 从当前位置插值到目标位（不边动边看，避免目标出画面）
         for step in range(1, APPROACH_STEPS + 1):
             ratio = step / APPROACH_STEPS
-            w22 = int(RESET[22] + (GRAB[22] - RESET[22]) * ratio)
-            z23 = int(RESET[23] + (GRAB[23] - RESET[23]) * ratio)
-            if model_det is not None:
-                f = cam.read()
-                if f is not None:
-                    r = model_det.detect(f)
-                    if r is not None:
-                        cx, cy = r['center']
-                        h = r.get('h', 0.0)
-                        print('靠近 中心=(%.0f,%.0f) 框高=%.0f conf=%.2f'
-                              % (cx, cy, h, r.get('conf', 0.0)), flush=True)
-                        x_dis = max(0, min(1000, int(x_dis + K_PAN * (320 - cx))))
-                        y_dis = max(0, min(1000, int(y_dis + K_TILT * (240 - cy))))
-                        if NOMINAL_BBOX_H > 0:
-                            # 框小（远）→ 22 更低、23 更伸；框大（近）→ 收回一点
-                            w22 = max(0, min(1000, int(w22 + HEIGHT_GAIN * (NOMINAL_BBOX_H - h))))
-                            z23 = max(0, min(1000, int(z23 + REACH_GAIN * (NOMINAL_BBOX_H - h))))
-            board.bus_servo_set_position(0.2, [[21, x_dis], [24, y_dis], [22, w22], [23, z23]])
-            time.sleep(0.25)
+            x21 = int(500 + (target_21 - 500) * ratio)
+            y24 = int(260 + (target_24 - 260) * ratio)
+            w22 = int(RESET[22] + (target_22 - RESET[22]) * ratio)
+            z23 = int(RESET[23] + (target_23 - RESET[23]) * ratio)
+            board.bus_servo_set_position(0.5, [[21, x21], [24, y24], [22, w22], [23, z23]])
+            time.sleep(0.55)
 
-        # 3) 慢慢闭合夹爪
+        # 4) 慢慢闭合夹爪
         move(board, [(25, GRIPPER_CLOSE)], 1.5)
         set_status(last_result='done', message='已夹取')
         time.sleep(HOLD_SEC)
 
-        # 4) 恢复机械臂初始位置（21-24 复位，夹爪保持闭合）
+        # 5) 恢复机械臂初始位置（21-24 复位，夹爪保持闭合）
         move(board, [(21, RESET[21]), (22, RESET[22]), (23, RESET[23]), (24, RESET[24])], 1.5)
         set_status(last_result='done', message='已夹取并恢复')
         print('夹取成功', flush=True)
