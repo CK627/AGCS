@@ -52,7 +52,7 @@ CENTER_HOLD = 5         # 连续多少帧居中才进入前进
 APPROACH_STEPS = 60     # 最多前进步数（安全上限）
 APPROACH_D22 = 6        # 每步 22（肩）展开量
 APPROACH_D23 = 6        # 每步 23（肘）展开量
-AREA_RATIO_THRESHOLD = 0.10   # 面积阈值（默认 10%）
+AREA_RATIO_THRESHOLD = 0.082   # 面积阈值（默认 8.2%）
 LEVEL_SUM = 1125        # 夹爪水平时 22+23+24 = 1125（alpha=0）
 
 SLEEP_S = 0.25          # 每步间隔（秒），拉长让舵机走完、不震荡
