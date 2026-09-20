@@ -58,7 +58,8 @@ DISTANCE_THRESHOLD = 8.0    # 前方距离阈值(cm)，达到就夹
 RELIABLE_MAX_H = 450    # 框高超过此值视为被裁（距离不可靠），改用外推
 LEVEL_SUM = 1125        # 夹爪水平时 22+23+24 = 1125（alpha=0）
 
-SLEEP_S = 0.25          # 每步间隔（秒），拉长让舵机走完、不震荡
+SLEEP_S = 0.25          # 追踪每步间隔（秒），拉长让舵机走完、不震荡
+APPROACH_SLEEP = 0.12   # 前进每步间隔（秒），更快
 FRAME_W, FRAME_H = 640, 480
 
 
@@ -336,8 +337,8 @@ def main():
             w22 = max(0, min(1000, int(w22 - APPROACH_D22)))
             z23 = max(0, min(1000, int(z23 + APPROACH_D23)))
             y_dis = max(0, min(1000, int(LEVEL_SUM - w22 - z23)))
-            board.bus_servo_set_position(SLEEP_S, [[21, x_dis], [24, y_dis], [22, w22], [23, z23]])
-            time.sleep(SLEEP_S)
+            board.bus_servo_set_position(APPROACH_SLEEP, [[21, x_dis], [24, y_dis], [22, w22], [23, z23]])
+            time.sleep(APPROACH_SLEEP)
         if not reached:
             print('  前进步数用尽仍未达阈值，用当前位夹取', flush=True)
 
