@@ -170,6 +170,7 @@ def lan_ip():
 def move(board, servos, sec):
     """按给定脉宽移动舵机；sec 为移动时长（秒），阻塞到移动完成。"""
     board.bus_servo_set_position(sec, [[sid, p] for sid, p in servos])
+    print('  [动作] 舵机%s 移动 %.1fs' % (servos, sec), flush=True)
     time.sleep(sec + 0.1)
 
 
@@ -489,6 +490,7 @@ def main():
         reset_arm(board)
         time.sleep(0.5)
         # 相机朝下看（能看到目标的角度）
+        print('  [动作] 24 号转到 260（相机朝下看）', flush=True)
         board.bus_servo_set_position(0.3, [[24, 260]])
         time.sleep(0.3)
 
@@ -550,13 +552,14 @@ def main():
         step_22 = (RESET[22] - grab_22) / APPROACH_STEPS  # 每步 22 下降量
         step_23 = (grab_23 - RESET[23]) / APPROACH_STEPS  # 每步 23 伸展量
         cy = 240.0                                  # 未检测到时按「已居中」处理
+        print('开始下降: 22 %d→%d (步长%.1f)  23 %d→%d (步长%.1f)'
+              % (RESET[22], grab_22, step_22, RESET[23], grab_23, step_23), flush=True)
         for step in range(APPROACH_STEPS):
             f = cam.read()
             if f is not None and model_det is not None:
                 r = model_det.detect(f)
                 if r is not None:
                     cx, cy = r['center']
-                    print('靠近 中心=(%.0f,%.0f)' % (cx, cy), flush=True)
                     x_dis = max(0, min(1000, int(x_dis + K_PAN * (320 - cx))))   # 左右居中
             # 夹爪小步下降/伸展
             w22 = max(0, min(1000, int(w22 - step_22)))
@@ -564,8 +567,11 @@ def main():
             # 24 号：以「夹爪水平 alpha=0」为基准，叠一个比例俯仰微调让目标竖直居中。
             # 关键：每步从水平基准重算（不是累加），目标低于中心时只会小幅低头、不会越降越低头。
             y_dis = max(0, min(1000, int((LEVEL_SUM - w22 - z23) + K_TILT * (240 - cy))))
+            print('  下降%02d/30: 21=%d 22=%d 23=%d 24=%d | 中心=(%.0f,%.0f)'
+                  % (step, x_dis, w22, z23, y_dis, cx, cy), flush=True)
             board.bus_servo_set_position(0.15, [[21, x_dis], [24, y_dis], [22, w22], [23, z23]])
             time.sleep(0.2)
+        print('下降结束: 21=%d 22=%d 23=%d 24=%d' % (x_dis, w22, z23, y_dis), flush=True)
 
         # 3) 慢慢闭合夹爪
         move(board, [(25, GRIPPER_CLOSE)], 1.5)
