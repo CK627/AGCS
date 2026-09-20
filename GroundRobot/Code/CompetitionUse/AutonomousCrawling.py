@@ -224,7 +224,7 @@ class ModelDetector:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='2.3 自动抓取（视觉追踪 + 靠近 + 距离阈值）')
+    parser = argparse.ArgumentParser(description='2.3 自动抓取')
     parser.add_argument('--model', default='models/v8n.onnx',
                         help='YOLO ONNX 模型路径；传空串 "" 则不检测')
     parser.add_argument('--conf', type=float, default=0.5, help='YOLO 置信度阈值')
@@ -258,7 +258,7 @@ def main():
 
     cam = Camera(cap, model_det)   # 传模型，视频推流画识别框
     start_server()
-    set_status(state='Grab', message='自动抓取（视觉追踪 + 靠近 + 距离阈值）')
+    set_status(state='Grab', message='自动抓取')
 
     try:
         # 1) 复位 + 相机转到初始角度
