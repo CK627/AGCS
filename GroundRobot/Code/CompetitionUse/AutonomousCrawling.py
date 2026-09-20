@@ -113,7 +113,7 @@ def start_server():
 
 
 class Camera:
-    """后台线程连续取帧 + 检测画框 + 推流；主线程经 read() 取「最新帧 + 检测结果」。
+    """后台线程连续取帧 + 检测 + 推流（纯视频不带框）；主线程经 read() 取「最新帧 + 检测结果」。
 
     检测只在后台线程做一次（避免与主线程并发调 onnx session），主线程读结果即可。
     """
@@ -135,7 +135,7 @@ class Camera:
             if ok:
                 det = None
                 if self.model_det is not None:
-                    det = self.model_det.detect(f)   # 检测 + 画框（约几十 ms）
+                    det = self.model_det.detect(f)   # 检测（约几十 ms）
                 with self._lock:
                     self.frame = f
                     self.detection = det
@@ -218,7 +218,6 @@ class ModelDetector:
             return None
         x1, y1, x2, y2, score = best
         cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
-        cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 2)
         return {'center': (cx, cy), 'conf': float(score),
                 'w': float(x2 - x1), 'h': float(y2 - y1)}
 
@@ -256,7 +255,7 @@ def main():
             print('YOLO 模型加载失败：%s，退回固定脉宽夹取' % e, flush=True)
             model_det = None
 
-    cam = Camera(cap, model_det)   # 传模型，视频推流画识别框
+    cam = Camera(cap, model_det)   # 传模型（推流纯视频，不带识别框）
     start_server()
     set_status(state='Grab', message='自动抓取')
 

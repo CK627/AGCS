@@ -336,7 +336,7 @@ def lan_ip():
 
 
 def main():
-    parser = argparse.ArgumentParser(description='2.1 视觉追踪（默认 YOLO，可退回颜色）')
+    parser = argparse.ArgumentParser(description='2.1 视觉追踪')
     parser.add_argument('--color', default='yellow',
                         choices=['red', 'green', 'blue', 'yellow'])
     parser.add_argument('--model', default='models/v8n.onnx',

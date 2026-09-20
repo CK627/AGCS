@@ -637,7 +637,7 @@ class Pathfinder:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='2.2 自动寻路（默认 YOLO，可退回颜色）')
+    parser = argparse.ArgumentParser(description='2.2 自动寻路')
     parser.add_argument('--color', default='yellow',
                         choices=['red', 'green', 'blue', 'yellow'])
     parser.add_argument('--model', default='models/v8n.onnx',
