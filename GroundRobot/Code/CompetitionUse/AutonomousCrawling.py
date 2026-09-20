@@ -41,12 +41,13 @@ HOLD_SEC = 1.0         # 夹住保持时长
 
 # ---- 靠近参数 ----
 APPROACH_STEPS = 60     # 最多靠近步数（安全上限）
-APPROACH_D22 = 10       # 每步 22（肩）下降量
-APPROACH_D23 = 10       # 每步 23（肘）伸展量
-K_PAN = 0.3             # 21 横转增益（水平居中）
-K_TILT = 0.3            # 24 俯仰增益（竖直居中）
-AREA_RATIO_THRESHOLD = 0.20   # 面积阈值（默认 20%）
+APPROACH_D22 = 6        # 每步 22（肩）下降量
+APPROACH_D23 = 6        # 每步 23（肘）伸展量
+K_PAN = 0.6             # 21 横转增益（水平居中）
+K_TILT = 0.6            # 24 俯仰增益（竖直居中）
+AREA_RATIO_THRESHOLD = 0.10   # 面积阈值（默认 10%）
 SLEEP_S = 0.12          # 每步间隔（秒）
+LOST_STOP = 20          # 连续多少步检测不到目标就停止靠近
 FRAME_W, FRAME_H = 640, 480
 
 
@@ -255,14 +256,16 @@ def main():
         board.bus_servo_set_position(0.3, [[24, args.tilt]])
         time.sleep(0.3)
 
-        # 2) 视觉追踪居中 + 持续下降靠近 + 面积阈值停止
+        # 2) 视觉追踪居中 + 检测到才靠近 + 面积阈值停止；找不到就停
         x_dis, y_dis = 500, args.tilt       # 21/24 当前值
         w22, z23 = RESET[22], RESET[23]     # 22/23 从复位位开始
         reached = False
+        lost_count = 0
         print('开始靠近（面积阈值 %.1f%%）...' % (args.area_ratio * 100), flush=True)
         for step in range(APPROACH_STEPS):
             _f, r = cam.read()
             if r is not None:
+                lost_count = 0
                 cx, cy = r['center']
                 w, h = r.get('w', 0.0), r.get('h', 0.0)
                 ratio = (w * h) / (FRAME_W * FRAME_H)
@@ -276,14 +279,20 @@ def main():
                     board.bus_servo_set_position(0.15, [[21, x_dis], [24, y_dis], [22, w22], [23, z23]])
                     print('  面积达阈值，停止靠近', flush=True)
                     break
-            # 下降一步
-            w22 = max(0, min(1000, int(w22 - APPROACH_D22)))
-            z23 = max(0, min(1000, int(z23 + APPROACH_D23)))
+                # 检测到才下降靠近
+                w22 = max(0, min(1000, int(w22 - APPROACH_D22)))
+                z23 = max(0, min(1000, int(z23 + APPROACH_D23)))
+            else:
+                # 找不到就不降；连续丢太久就停
+                lost_count += 1
+                if lost_count >= LOST_STOP:
+                    print('  连续 %d 步找不到目标，停止' % lost_count, flush=True)
+                    break
             board.bus_servo_set_position(SLEEP_S, [[21, x_dis], [24, y_dis], [22, w22], [23, z23]])
             time.sleep(SLEEP_S)
 
         if not reached:
-            print('到步数上限仍未达阈值，用当前位夹取', flush=True)
+            print('未达阈值，用当前位夹取', flush=True)
 
         # 3) 闭合夹爪 + 保持
         move(board, [(25, GRIPPER_CLOSE)], 1.5)
