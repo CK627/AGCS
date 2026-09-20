@@ -50,16 +50,16 @@ CENTER_HOLD = 5         # 连续多少帧居中才进入前进
 
 # ---- 前进参数（阶段二：靠近）----
 APPROACH_STEPS = 60     # 最多前进步数（安全上限）
-APPROACH_D22 = 6        # 每步 22（肩）展开量
-APPROACH_D23 = 6        # 每步 23（肘）展开量
+APPROACH_D22 = 10       # 每步 22（肩）展开量
+APPROACH_D23 = 10       # 每步 23（肘）展开量
 F_PX = 838.0            # 焦距（像素，640 分辨率）
 BUG_HEIGHT_CM = 5.0     # 虫子物理高度(cm)，用于距离估算
 DISTANCE_THRESHOLD = 8.0    # 前方距离阈值(cm)，达到就夹
 RELIABLE_MAX_H = 450    # 框高超过此值视为被裁（距离不可靠），改用外推
 LEVEL_SUM = 1125        # 夹爪水平时 22+23+24 = 1125（alpha=0）
 
-SLEEP_S = 0.25          # 追踪每步间隔（秒），拉长让舵机走完、不震荡
-APPROACH_SLEEP = 0.12   # 前进每步间隔（秒），更快
+SLEEP_S = 0.18          # 追踪每步间隔（秒）
+APPROACH_SLEEP = 0.15   # 前进每步间隔（秒），步大一点、走时长一点更平滑
 FRAME_W, FRAME_H = 640, 480
 
 
