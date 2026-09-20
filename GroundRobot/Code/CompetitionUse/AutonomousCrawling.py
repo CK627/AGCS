@@ -1,20 +1,22 @@
 #!/usr/bin/python3
 # coding=utf8
-"""2.3 自动抓取：视觉追踪居中 + 持续靠近 + 面积阈值停止。
+"""2.3 自动抓取：视觉追踪（看到虫子就 21/24 追踪居中，居中后夹取）。
 
 流程：
     复位（夹爪张开）→ 相机转到初始角度 → 循环：
-      模型检测虫子 → 21/24 追踪保持居中 → 22/23 逐步下降靠近
-      → 虫子框面积占画面比例达到 --area-ratio 阈值 → 停止 → 闭合夹爪
+      模型检测虫子 → 21/24 追踪保持居中
+      → 中心连续 CENTER_HOLD 帧落在 ±CENTER_TOL 内 → 闭合夹爪
     → 保持 → 复位（夹爪保持闭合）。
+
+只动 21（横转）/24（俯仰）追踪，不动 22/23（不下降）。
 
 依赖：官方 SDK(common) + cv2 + onnxruntime + flask（推流）。
 上报 /status + 视频流 /video.mjpeg（http://<IP>:5000/video.mjpeg）。
 
 用法（先 sudo systemctl stop spiderpi）：
-    python3 AutonomousCrawling.py                              # 默认参数
-    python3 AutonomousCrawling.py --area-ratio 0.25 --tilt 330 --conf 0.4
-    python3 AutonomousCrawling.py --model ""                  # 不检测，纯固定脉宽夹取
+    python3 AutonomousCrawling.py                      # 默认参数
+    python3 AutonomousCrawling.py --tilt 330 --conf 0.4
+    python3 AutonomousCrawling.py --model ""          # 不检测，纯固定脉宽夹取
 """
 import os
 import sys
@@ -39,15 +41,13 @@ GRIPPER_OPEN = 120     # 25 号张开
 GRIPPER_CLOSE = 700    # 25 号闭合
 HOLD_SEC = 1.0         # 夹住保持时长
 
-# ---- 靠近参数 ----
-APPROACH_STEPS = 60     # 最多靠近步数（安全上限）
-APPROACH_D22 = 6        # 每步 22（肩）下降量
-APPROACH_D23 = 6        # 每步 23（肘）伸展量
+# ---- 视觉追踪参数 ----
+TRACK_STEPS = 200       # 最多追踪步数（安全上限）
 K_PAN = 0.6             # 21 横转增益（水平居中）
 K_TILT = 0.6            # 24 俯仰增益（竖直居中）
-AREA_RATIO_THRESHOLD = 0.10   # 面积阈值（默认 10%）
+CENTER_TOL = 30         # 中心判据：|cx-320|<30 且 |cy-240|<30 算居中（像素）
+CENTER_HOLD = 5         # 连续多少帧居中才夹取
 SLEEP_S = 0.12          # 每步间隔（秒）
-LOST_STOP = 20          # 连续多少步检测不到目标就停止靠近
 FRAME_W, FRAME_H = 640, 480
 
 
@@ -216,8 +216,6 @@ def main():
     parser.add_argument('--model', default='models/v8n.onnx',
                         help='YOLO ONNX 模型路径；传空串 "" 则不检测')
     parser.add_argument('--conf', type=float, default=0.5, help='YOLO 置信度阈值')
-    parser.add_argument('--area-ratio', type=float, default=AREA_RATIO_THRESHOLD,
-                        help='面积阈值(0~1)，默认 %.2f' % AREA_RATIO_THRESHOLD)
     parser.add_argument('--tilt', type=int, default=330,
                         help='初始 24 号俯仰脉宽（默认 330=水平朝前看）')
     args = parser.parse_args()
@@ -256,43 +254,33 @@ def main():
         board.bus_servo_set_position(0.3, [[24, args.tilt]])
         time.sleep(0.3)
 
-        # 2) 视觉追踪居中 + 检测到才靠近 + 面积阈值停止；找不到就停
+        # 2) 纯视觉追踪：看到虫子就 21/24 追踪居中，居中稳定后夹取（不下降）
         x_dis, y_dis = 500, args.tilt       # 21/24 当前值
-        w22, z23 = RESET[22], RESET[23]     # 22/23 从复位位开始
-        reached = False
-        lost_count = 0
-        print('开始靠近（面积阈值 %.1f%%）...' % (args.area_ratio * 100), flush=True)
-        for step in range(APPROACH_STEPS):
+        centered = 0
+        grabbed = False
+        print('开始视觉追踪（居中判据 ±%dpx，连续 %d 帧）...' % (CENTER_TOL, CENTER_HOLD), flush=True)
+        for step in range(TRACK_STEPS):
             _f, r = cam.read()
             if r is not None:
-                lost_count = 0
                 cx, cy = r['center']
-                w, h = r.get('w', 0.0), r.get('h', 0.0)
-                ratio = (w * h) / (FRAME_W * FRAME_H)
                 # 追踪保持居中：21 左右、24 上下
                 x_dis = max(0, min(1000, int(x_dis + K_PAN * (320 - cx))))
                 y_dis = max(0, min(1000, int(y_dis + K_TILT * (240 - cy))))
-                print('  靠近%02d: 中心=(%.0f,%.0f) 框=%.0fx%.0f 占比=%.1f%% | 21=%d 24=%d 22=%d 23=%d'
-                      % (step, cx, cy, w, h, ratio * 100, x_dis, y_dis, w22, z23), flush=True)
-                if ratio >= args.area_ratio:
-                    reached = True
-                    board.bus_servo_set_position(0.15, [[21, x_dis], [24, y_dis], [22, w22], [23, z23]])
-                    print('  面积达阈值，停止靠近', flush=True)
+                print('  追踪%03d: 中心=(%.0f,%.0f) 偏差=(%+.0f,%+.0f) | 21=%d 24=%d'
+                      % (step, cx, cy, cx - 320, cy - 240, x_dis, y_dis), flush=True)
+                if abs(cx - 320) < CENTER_TOL and abs(cy - 240) < CENTER_TOL:
+                    centered += 1
+                else:
+                    centered = 0
+                if centered >= CENTER_HOLD:
+                    grabbed = True
+                    print('  已居中，夹取', flush=True)
                     break
-                # 检测到才下降靠近
-                w22 = max(0, min(1000, int(w22 - APPROACH_D22)))
-                z23 = max(0, min(1000, int(z23 + APPROACH_D23)))
-            else:
-                # 找不到就不降；连续丢太久就停
-                lost_count += 1
-                if lost_count >= LOST_STOP:
-                    print('  连续 %d 步找不到目标，停止' % lost_count, flush=True)
-                    break
-            board.bus_servo_set_position(SLEEP_S, [[21, x_dis], [24, y_dis], [22, w22], [23, z23]])
+            board.bus_servo_set_position(SLEEP_S, [[21, x_dis], [24, y_dis]])
             time.sleep(SLEEP_S)
 
-        if not reached:
-            print('未达阈值，用当前位夹取', flush=True)
+        if not grabbed:
+            print('追踪步数用尽仍未居中，用当前位夹取', flush=True)
 
         # 3) 闭合夹爪 + 保持
         move(board, [(25, GRIPPER_CLOSE)], 1.5)
