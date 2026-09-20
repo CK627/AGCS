@@ -120,7 +120,7 @@ VOLTAGE_EXTRA_LOW_V = 10.3  # 补偿达到最大距离时对应的电压
 
 
 # ---------- 模型 + 雅可比（阶段二） ----------
-DEFAULT_MODEL = 'models/best.onnx'  # 默认模型路径（相对 spiderpi 根目录）
+DEFAULT_MODEL = 'models/v8n.onnx'  # 默认模型路径（相对 spiderpi 根目录，新 v8n 单类模型）
 MODEL_CONF = 0.8           # 模型置信度阈值
 JAC_DELTA = 20             # 标定时每个舵机的扰动脉宽
 CALIB_SAMPLES = 5          # 标定时 bbox 中心平均帧数
@@ -345,7 +345,6 @@ class ModelDetector:
     """ONNX YOLO 检测器（onnxruntime 本地推理），detect() 返回 bbox dict 或 None。"""
 
     NAME = 'fake bug'  # 目标类别名
-    CLASS_IDX = 15     # 目标类在模型输出里的索引（16 类模型里 fake bug 是第 15 类，输出 [4+16, 8400]）
 
     def __init__(self, model_path, conf, classes, read_frame, publish):
         import onnxruntime as ort
@@ -358,14 +357,17 @@ class ModelDetector:
         self.classes = set(classes) if classes else None
         self.read_frame = read_frame
         self.publish = publish
+        shp = self.sess.get_inputs()[0].shape
+        self.in_h, self.in_w = int(shp[2]), int(shp[3])
 
     def _letterbox(self, img):
-        """等比缩放到 640x640 补灰边，返回 (画布, 缩放比, pad_x, pad_y)。"""
+        """等比缩放到模型输入尺寸补灰边，返回 (画布, 缩放比, pad_x, pad_y)。"""
         h0, w0 = img.shape[:2]
-        r = min(640 / w0, 640 / h0)
+        ih, iw = self.in_h, self.in_w
+        r = min(iw / w0, ih / h0)
         new_w, new_h = int(round(w0 * r)), int(round(h0 * r))
-        pad_x, pad_y = (640 - new_w) // 2, (640 - new_h) // 2
-        canvas = np.full((640, 640, 3), 114, dtype=np.uint8)
+        pad_x, pad_y = (iw - new_w) // 2, (ih - new_h) // 2
+        canvas = np.full((ih, iw, 3), 114, dtype=np.uint8)
         canvas[pad_y:pad_y + new_h, pad_x:pad_x + new_w] = cv2.resize(img, (new_w, new_h))
         return canvas, r, pad_x, pad_y
 
@@ -381,9 +383,12 @@ class ModelDetector:
         blob = canvas[:, :, ::-1].transpose(2, 0, 1)[None].astype(np.float32) / 255.0
         out = self.sess.run([self.output_name], {self.input_name: blob})[0][0]  # [4+nc, 8400]
 
+        nc = out.shape[0] - 4   # 类别数（单类=1，多类=16）
         best = None  # (x1, y1, x2, y2, score)
         for i in range(out.shape[1]):
-            score = float(out[4 + self.CLASS_IDX, i])
+            scores = out[4:4 + nc, i]
+            cls = int(scores.argmax())
+            score = float(scores[cls])
             if score < self.conf:
                 continue
             cx, cy, w, h = out[0, i], out[1, i], out[2, i], out[3, i]
