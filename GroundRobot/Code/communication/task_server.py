@@ -169,6 +169,22 @@ def _create_app():
                 time.sleep(0.1)
         return Response(gen(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
+    @app.route('/video_feed')
+    def video_feed():
+        """别名：无人机 / YOLO 仪表盘按 /video_feed 拉流，这里兼容同一个彩色 MJPEG 流。"""
+        def gen():
+            while True:
+                with latest_jpeg_lock:
+                    jpg = latest_jpeg
+                if jpg is not None:
+                    yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n'
+                           + jpg + b'\r\n')
+                else:
+                    yield (b'--frame\r\nContent-Type: text/plain\r\n\r\n'
+                           b'no video\r\n\r\n')
+                time.sleep(0.1)
+        return Response(gen(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
     @app.route('/video_lab.mjpeg')
     def video_lab_mjpeg():
         def gen():

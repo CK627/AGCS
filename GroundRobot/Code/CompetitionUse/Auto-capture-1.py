@@ -344,7 +344,8 @@ def video_loop(detectors, stop_event):
 class ModelDetector:
     """ONNX YOLO 检测器（onnxruntime 本地推理），detect() 返回 bbox dict 或 None。"""
 
-    NAME = 'fake bug'  # 单类目标（模型 best.onnx 训练的类别）
+    NAME = 'fake bug'  # 目标类别名
+    CLASS_IDX = 15     # 目标类在模型输出里的索引（16 类模型里 fake bug 是第 15 类，输出 [4+16, 8400]）
 
     def __init__(self, model_path, conf, classes, read_frame, publish):
         import onnxruntime as ort
@@ -378,11 +379,11 @@ class ModelDetector:
         h0, w0 = frame.shape[:2]
         canvas, r, pad_x, pad_y = self._letterbox(frame)
         blob = canvas[:, :, ::-1].transpose(2, 0, 1)[None].astype(np.float32) / 255.0
-        out = self.sess.run([self.output_name], {self.input_name: blob})[0][0]  # [5, 8400]
+        out = self.sess.run([self.output_name], {self.input_name: blob})[0][0]  # [4+nc, 8400]
 
         best = None  # (x1, y1, x2, y2, score)
         for i in range(out.shape[1]):
-            score = float(out[4, i])
+            score = float(out[4 + self.CLASS_IDX, i])
             if score < self.conf:
                 continue
             cx, cy, w, h = out[0, i], out[1, i], out[2, i], out[3, i]

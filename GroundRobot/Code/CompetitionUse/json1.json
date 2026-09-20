@@ -59,11 +59,11 @@
     "speed": 50,
     "index": 9
   },
-  {
+ {
     "action": "forward",
-    "step": 50,
+    "step": 75,
     "speed": 50,
-    "index": 10
+    "index": 9
   },
 
   {
