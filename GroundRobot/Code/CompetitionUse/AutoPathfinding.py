@@ -526,11 +526,11 @@ class Pathfinder:
                 return r
         return None
 
-    def distance_cm(self, cx, cy):
-        """读目标中心周围一块区域的深度，取有效值中位数(cm)。
+    def distance_cm(self, cx, cy, radius=30):
+        """读目标底部（靠地面）一块区域的深度，取有效值中位数(cm)。
 
-        色块中心反射不到结构光（深度=0），取周围区域中位数绕过「深度黑洞」；
-        整个区域全无效说明目标太近（低于深度相机最小测距），返回 0.0 视为已靠近。
+        目标本身不反射结构光，中心区域是「深度黑洞」；改读目标底部往下一点的地面，
+        那里有有效深度，能绕开黑洞、量到真实的接近距离。
         """
         if self.depth is None:
             return None
@@ -538,9 +538,11 @@ class Pathfinder:
         if d is None:
             return None
         h, w = d.shape
-        rr = 30
-        x0 = max(0, int(cx) - rr); x1 = min(w, int(cx) + rr)
-        y0 = max(0, int(cy) - rr); y1 = min(h, int(cy) + rr)
+        rr = 25
+        bx = int(max(0, min(w - 1, cx)))
+        by = int(max(0, min(h - 1, cy + radius + 15)))  # 目标底部再往下 = 地面
+        x0 = max(0, bx - rr); x1 = min(w, bx + rr)
+        y0 = max(0, by - rr); y1 = min(h, by + rr)
         valid = d[y0:y1, x0:x1]
         valid = valid[valid > 0]
         if valid.size == 0:
@@ -603,7 +605,7 @@ class Pathfinder:
                 time.sleep(0.4)
                 continue
 
-            d_cm = self.distance_cm(cx, cy)
+            d_cm = self.distance_cm(cx, cy, r.get('radius', 30))
             last_distance = d_cm
             lost_steps = 0
             wx = (cx - FRAME_CX) / 570.0 * (d_cm / 100.0) if d_cm else 0.0  # 粗略横向位置
