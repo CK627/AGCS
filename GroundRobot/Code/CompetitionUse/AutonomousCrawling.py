@@ -91,11 +91,12 @@ def start_server():
 
 
 class Camera:
-    """后台线程连续取帧（存最新帧）+ 推流（10fps 限流）。"""
+    """后台线程连续取帧（存最新帧）+ 检测画框 + 推流（10fps 限流）。"""
 
-    def __init__(self, cap):
+    def __init__(self, cap, model_det=None):
         self.cap = cap
         self.frame = None
+        self.model_det = model_det
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._last_pub = 0.0
@@ -106,6 +107,8 @@ class Camera:
         while not self._stop.is_set():
             ok, f = self.cap.read()
             if ok:
+                if self.model_det is not None:
+                    self.model_det.detect(f)  # 画识别框（约 65ms）
                 with self._lock:
                     self.frame = f
                 now = time.time()
@@ -248,7 +251,6 @@ def main():
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     for _ in range(5):
         cap.read()
-    cam = Camera(cap)
 
     # YOLO 模型（夹取前检测对准用；加载失败则不检测）
     model_det = None
@@ -260,6 +262,8 @@ def main():
         except Exception as e:
             print('YOLO 模型加载失败：%s，退回固定脉宽夹取' % e, flush=True)
             model_det = None
+
+    cam = Camera(cap, model_det)   # 传模型给 Camera，推流画识别框
 
     start_server()
     set_status(state='Grab', message='自动抓取（夹取前检测对准）')
