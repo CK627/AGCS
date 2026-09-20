@@ -60,7 +60,8 @@ HEIGHT_GAIN = 0.3     # 框高度每差 1 像素，22（肩）调多少脉宽（
 # 夹爪逐步靠近参数
 APPROACH_STEPS = 30   # 夹爪从复位位分多少步下降到夹取位（步数越多越慢越平滑）
 K_PAN = 0.2           # 21 横转增益（让目标在画面水平居中）
-LEVEL_SUM = 1125      # 夹爪水平时 21 号不参与：22+23+24 = 1125（alpha=0）
+K_TILT = 0.2          # 24 俯仰增益（以「夹爪水平」为基准，比例微调让目标竖直居中，不累加）
+LEVEL_SUM = 1125      # 夹爪水平时 22+23+24 = 1125（alpha=0）
 
 
 STATUS = {'state': 'Grab', 'message': '自动抓取', 'last_result': None}
@@ -543,11 +544,12 @@ def main():
                         print('框高=%.0f → 距离=%.1fcm，IK 无解' % (h, D), flush=True)
                 break
 
-        # 3) 夹爪逐步下降 + 保持夹爪水平（21 左右微调；24 随 22/23 联动保持 alpha=0，不再俯仰追目标）
+        # 3) 夹爪逐步下降 + 保持夹爪水平 + 目标居中（24 以水平为基准做比例俯仰微调，不累加）
         x_dis = grab_21                            # 21 从 IK 解开始，只做左右居中
         w22, z23 = RESET[22], RESET[23]            # 22/23 从复位位开始
         step_22 = (RESET[22] - grab_22) / APPROACH_STEPS  # 每步 22 下降量
         step_23 = (grab_23 - RESET[23]) / APPROACH_STEPS  # 每步 23 伸展量
+        cy = 240.0                                  # 未检测到时按「已居中」处理
         for step in range(APPROACH_STEPS):
             f = cam.read()
             if f is not None and model_det is not None:
@@ -555,11 +557,13 @@ def main():
                 if r is not None:
                     cx, cy = r['center']
                     print('靠近 中心=(%.0f,%.0f)' % (cx, cy), flush=True)
-                    x_dis = max(0, min(1000, int(x_dis + K_PAN * (320 - cx))))   # 仅左右居中
-            # 夹爪小步下降/伸展；24 号联动保持夹爪水平：alpha=0 => 24 = LEVEL_SUM - 22 - 23
+                    x_dis = max(0, min(1000, int(x_dis + K_PAN * (320 - cx))))   # 左右居中
+            # 夹爪小步下降/伸展
             w22 = max(0, min(1000, int(w22 - step_22)))
             z23 = max(0, min(1000, int(z23 + step_23)))
-            y_dis = max(0, min(1000, int(LEVEL_SUM - w22 - z23)))
+            # 24 号：以「夹爪水平 alpha=0」为基准，叠一个比例俯仰微调让目标竖直居中。
+            # 关键：每步从水平基准重算（不是累加），目标低于中心时只会小幅低头、不会越降越低头。
+            y_dis = max(0, min(1000, int((LEVEL_SUM - w22 - z23) + K_TILT * (240 - cy))))
             board.bus_servo_set_position(0.15, [[21, x_dis], [24, y_dis], [22, w22], [23, z23]])
             time.sleep(0.2)
 
