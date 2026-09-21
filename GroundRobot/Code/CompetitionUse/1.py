@@ -90,7 +90,10 @@ STOP_DIST_CM = 9.0                 # 估距 ≤ N cm 就夹（调小=更近）
                                    # 就是「框快占满画面」；框被画面裁掉时按速率外推（同 AutonomousCrawling）
 RELIABLE_MAX_H = 450               # 框高超过它=框被裁了，距离不可靠，改用速率外推
 STOP_DEPTH_CM = 5.0                # 深度 ≤ N cm 也算够近（Astra Pro 近端 0.6m 内是盲区，基本不触发）
-REACH_EXTRA = 20                   # 22/23 在 JSON 夹取位上额外前伸的量（估距一直不够近时的兜底终点）
+REACH_EXTRA = 20                   # 22/23 在 JSON 夹取位上额外前伸的量（--reach-extra 可调）
+                                   # 注意：手臂伸到头（22 到 state[22]-REACH_EXTRA）差不多就是
+                                   # 模型丢目标的距离，所以「最后几步」靠它只能再走一点点；
+                                   # 真要紧贴就得把这个值调大（代价是夹爪更低、可能低头碰地）
 GRAB_HOLD = 3                      # 判据要连续 N 帧成立才夹（单帧检测抖一下不能夹）
 OBSERVE_TIMEOUT_S = 3.0            # 转 21 后观测目标的最长时间（秒）
 # ---------- 目标丢失 = 「已经贴脸」的信号（盲走收尾） ----------
@@ -713,7 +716,8 @@ def reacquire(board, model_det, y24, pick_count, step):
 
 
 def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
-            pull_up_pulse=None, no_depth=False, manual=False, s24_now=None):
+            pull_up_pulse=None, no_depth=False, manual=False, s24_now=None,
+            stop_dist=None, reach_extra=None):
     """执行第 1/2 次夹取。默认全自动：转 21 观测 → 靠近夹取 / 固定夹取。
 
     先只转 21 号到夹取方向再观测（不动 22/23/24）：
@@ -734,6 +738,8 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
         return
 
     state = dict(pulses)
+    stop_cm = STOP_DIST_CM if stop_dist is None else float(stop_dist)
+    reach = REACH_EXTRA if reach_extra is None else int(reach_extra)
     # 1. 先只转 21 到夹取方向（不动 22/23/24），再观测目标（给足时间让模型识别）
     board.bus_servo_set_position(1.0, [[21, state[21]]])
     time.sleep(1.0)
@@ -767,8 +773,8 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
         # 靠近——现场看到的就是这个「翘一下」。观测阶段只动 21，所以 24 还在走路留下的位置。
         y24 = _clamp24(OFFICIAL_ARM[24] if s24_now is None else s24_now)
         s21 = state[21]          # 21 跟踪起点（转 21 后的实际值）
-        t22 = state[22] - REACH_EXTRA   # 22 终点：比 JSON 更低、更前伸
-        t23 = state[23] + REACH_EXTRA   # 23 终点：比 JSON 更伸展
+        t22 = state[22] - reach        # 22 终点：比 JSON 更低、更前伸
+        t23 = state[23] + reach        # 23 终点：比 JSON 更伸展
         hit = 0            # 判据连续成立的帧数
         miss = 0           # 连续丢帧数
         last_dist = None   # 最近一次可靠估距（cm）
@@ -790,12 +796,12 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
                 if mem_cm is not None and mem_cm <= LOST_NEAR_CM:
                     # 近到模型认不出 —— 这是信号不是故障：锁定记忆目标，按当时的角度盲走收尾
                     rate = dist_rate if dist_rate > 0.05 else CM_PER_STEP_FALLBACK
-                    need_cm = max(0.0, mem_cm - STOP_DIST_CM)
+                    need_cm = max(0.0, mem_cm - stop_cm)
                     n_blind = min(BLIND_MAX_STEPS, max(BLIND_MIN_STEPS, int(need_cm / rate) + 1))
                     print('pick%d 靠近 #%d 目标丢失（模型只在远处训练过，%.1fcm 认不出）= 已贴脸，'
                           '锁定记忆目标盲走收尾：估距 %.1fcm → %.1fcm，剩 %.1fcm，'
                           '按 %.2fcm/步 走 %d 步'
-                          % (pick_count, step, mem_cm, mem_cm, STOP_DIST_CM, need_cm, rate, n_blind),
+                          % (pick_count, step, mem_cm, mem_cm, stop_cm, need_cm, rate, n_blind),
                           flush=True)
                     # 按丢目标前最后一眼的角度对正；偏差在死区内就别动，保持当时角度直着走
                     if mem_cx is not None and abs(mem_cx - IMG_CX) >= TRACK_DEAD_X:
@@ -854,7 +860,7 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
                 mem_cm = cur_cm      # 记忆距离：丢目标那一刻就按它算剩下的路
             mem_cx = cx              # 记忆横向：最后一次看到目标的位置
             dep_cm = None if (no_depth or depth is None) else depth_cm_at(depth, cx, cy, rotate)
-            close = (cur_cm is not None and cur_cm <= STOP_DIST_CM) or \
+            close = (cur_cm is not None and cur_cm <= stop_cm) or \
                     (dep_cm is not None and dep_cm < STOP_DEPTH_CM)
             hit = hit + 1 if close else 0
             print('pick%d 靠近 #%d conf=%.2f 中心=(%.0f,%.0f) 框=%dx%d 距离=%s%s 深度=%s 22=%d 23=%d 24=%d%s'
@@ -1003,6 +1009,12 @@ def main():
     parser.add_argument('--classes', default='', help='YOLO 目标类别，逗号分隔；留空=接受所有')
     parser.add_argument('--no-depth', action='store_true',
                         help='关掉深度相机，只用「目标中心→夹爪像素」判够近')
+    parser.add_argument('--stop-dist', type=float, default=STOP_DIST_CM,
+                        help='框高估距 ≤ N cm 就夹（默认 %(default)s）')
+    parser.add_argument('--reach-extra', type=int, default=REACH_EXTRA,
+                        help='22/23 越过路线 JSON 夹取位再前伸的脉宽（默认 %(default)d）。'
+                             '手臂伸到头还差一点才够近时，调大它把夹取点往前推；'
+                             '太大会让夹爪低头碰地面')
     parser.add_argument('--manual', action='store_true',
                         help='夹取/放下恢复手动回车微调（调试用）')
     args = parser.parse_args()
@@ -1138,7 +1150,8 @@ def main():
             pulses = {int(k): int(v) for k, v in act.get('pulses', {}).items()} if act.get('pulses') else None
             do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
                     pull_up_pulse=args.pull_up, no_depth=args.no_depth,
-                    manual=args.manual, s24_now=cam_state['pulse'])
+                    manual=args.manual, s24_now=cam_state['pulse'],
+                    stop_dist=args.stop_dist, reach_extra=args.reach_extra)
             picked_count += 1
             report(picked_count=picked_count,
                    message='第 %d 次夹取完成' % picked_count)
