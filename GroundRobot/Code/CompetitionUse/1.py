@@ -149,6 +149,12 @@ TRACK_DEAD_X = 40                  # 21 水平死区（像素）
 # 所以这里必须每步都跟（P 控制），而不是只在画面边缘才动手。
 CAM24_MIN = 160                    # 24 下限（再小=太朝下，会照到自己的夹爪）
 CAM24_MAX = 360                    # 24 上限（再大=太朝上，目标跑出画面底部）
+# 靠近时 24 **最多比路线 JSON 的夹取角低**这么多。原来只有 CAM24_MIN=160 兜底，可 160
+# 比 pick1 的夹取角 290 低了 130 —— 现场 24 从 210 被一路压到 160，相机越看越朝下，
+# 框顶跟着顶出画面上边（18-19：24 一路 210→160，同时 框顶 120→0，目标被裁）。
+# 24 的活只是「把目标留在画面里」，不需要看那么低，所以再按夹取角收一道：
+# pick1 不低于 290−60=230、pick2 不低于 320−60=260。
+CAM24_DOWN_MAX = 60                # 24 相对夹取角最多往下压这么多脉宽
 # 靠近到最后目标框会长到 300~400px 高，还一味按「框中心对 190」往下压 24，框顶就顶出
 # 画面上边（框被裁 → 模型认不出 → 现场丢目标就是这么来的）。所以瞄准行加个下限：
 # 框顶至少留 CAM24_TOP_MARGIN 像素，框越大瞄准行自动越低，24 就不会一直往下推。
@@ -815,7 +821,11 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
         # 24 从**当前实际值**起步，不要拉回复位位 330：走路段的颜色跟踪会把 24 压低
         # （CAM_TRACK_MIN_24=160），这里一拉回 330 相机就猛地往上翘一下，然后才开始
         # 靠近——现场看到的就是这个「翘一下」。观测阶段只动 21，所以 24 还在走路留下的位置。
-        y24 = _clamp24(OFFICIAL_ARM[24] if s24_now is None else s24_now)
+        # 24 的「不许比夹取角低太多」下限（见 CAM24_DOWN_MAX）：24 和夹爪同轴，
+        # 一路往低压=相机一路朝下看，框顶很快顶出画面上边 → 目标被裁、认不出。
+        y24_floor = max(CAM24_MIN, clamp_pulse(state[24] - CAM24_DOWN_MAX))
+        y24 = max(y24_floor,
+                  _clamp24(OFFICIAL_ARM[24] if s24_now is None else s24_now))
         s21 = state[21]          # 21 跟踪起点（转 21 后的实际值）
         t22 = state[22] - reach        # 22 终点：比 JSON 更低、更前伸
         t23 = state[23] + reach        # 23 终点：比 JSON 更伸展
@@ -954,8 +964,10 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
             # 瞄准行 = max(偏上的那一行, 框顶留够边距时框中心能到的最高行)：
             # 框小的时候就是 190（偏上），框长到 300~400px 后自动往下让，
             # 免得框顶被画面上边裁掉——一裁模型就认不出，那就是现场丢目标的原因。
+            # 往下压到 y24_floor（比夹取角低 CAM24_DOWN_MAX）就顶住不动：18-19 现场
+            # 一路压到 CAM24_MIN=160，相机太朝下，框顶 120→0，目标直接被画面上边裁掉。
             if abs(cy - aim_cy) >= CAM24_DEAD_Y:
-                y24 = _clamp24(y24 + int(CAM24_P * (aim_cy - cy)))
+                y24 = max(y24_floor, _clamp24(y24 + int(CAM24_P * (aim_cy - cy))))
             # 22/23 朝终点前伸一步（不越过终点）
             w22 = _step_toward(w22, t22, APPROACH_D)
             z23 = _step_toward(z23, t23, APPROACH_D)
