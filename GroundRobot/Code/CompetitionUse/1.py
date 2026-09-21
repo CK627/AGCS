@@ -5,9 +5,9 @@
 走路：直线段走融合导航（相机写状态、IMU 管执行、先航向后横向）。默认 LaneFusion
 （--fusion reference 可换 ReferenceFusion）。颜色检测只用于导航「保证不跑歪」。
 
-夹取（pick）：路线把机身开到定点（目标在机身左侧）后，YOLO 认目标 + 深度判距（≤8cm 就夹）→ 闭合夹爪 → 拔起 → 复位；
-不够近就机体左移微调（限 --max-approach 步），认不到则兜底照常夹（路线可信）。
---manual 退回手动回车微调。place 仍读 json1.json 固定脉宽。全程默认全自动，无 input 阻塞。
+夹取（pick）：路线把机身开到定点后，先只转 21 观测目标；观测到 → 摆 22/23/24 + 深度判距（≤8cm 就夹）+ 左移逼近；
+观测不到 → 摆 22/23/24 固定脉宽夹取（兜底）。--manual 退回手动回车微调。
+place 仍读 json1.json 固定脉宽。全程默认全自动，无 input 阻塞。
 """
 
 import argparse
@@ -74,6 +74,7 @@ STOP_DEPTH_CM = 8.0                # 目标距离 ≤ N cm 就夹（定点夹取
 CLOSE_AREA = 20000                 # bbox w×h ≥ N 判「够近」（读不到深度时的兜底）
 PICK_STEP_MM = 30                  # 不够近时每次左移 mm（目标在机身左侧）
 PICK_MAX_APPROACH = 3              # 不够近时最多左移几步
+OBSERVE_TRIES = 3                  # 转 21 后观测目标的帧数
 MOVE_SPEED = 50      # 六足直线前进/后退的速度，越大走得越快
 TURN_SPEED = 30      # 六足左转/右转的速度，越大转得越快
 STRIDE_SCALE = 0.95   # 前进/后退名义步幅的缩放系数；现场实测 0.946 短一点、0.96 又过了，0.95 折中
@@ -630,46 +631,72 @@ def imu_turn(ik, board, imu_state, delta_deg):
 
 def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
             pull_up_pulse=None, no_depth=False, manual=False):
-    """执行第 1/2 次夹取。默认全自动：摆臂 → YOLO 认目标 + 深度判距 → 闭合夹爪 → 拔起 → 复位。
+    """执行第 1/2 次夹取。默认全自动：先转 21 观测 → 摆 22/23/24 → 深度判距夹取 / 固定夹取。
 
-    路线把机身开到定点（目标在机身左侧）。目标距离 ≤ STOP_DEPTH_CM（8cm）就夹；
-    不够近就机体左移一小步再判（限 PICK_MAX_APPROACH 步）；连续认不到就兜底用 JSON 固定脉宽夹。
+    先只转 21 号到夹取方向再观测（不动 22/23/24）：
+    - 观测到目标 → 摆 22/23/24 到夹取位，进入独立靠近夹取（深度判距 + 左移逼近，≤STOP_DEPTH_CM 就夹）；
+    - 观测不到 → 摆 22/23/24 到夹取位，直接用 JSON 固定脉宽夹取（兜底）。
     --manual 退回原来的手动回车微调。
     """
-    if pick_count == 1:
-        state = pick1_prepare(board, pulses)
-    else:
-        state = pick2_prepare(board, pulses)
     if manual:
+        if pick_count == 1:
+            state = pick1_prepare(board, pulses)
+        else:
+            state = pick2_prepare(board, pulses)
         arm_fine_tune(board, state, 'pick', pull_up=(pick_count == 1),
                       pull_up_pulse=pull_up_pulse,
                       restore_s24=(PICK1_RESTORE_24 if pick_count == 1 else None))
         return
 
-    for step in range(PICK_MAX_APPROACH + 1):
-        det = model_det.detect()
-        if det is None:
-            print('pick%d YOLO 未识别到目标（第 %d/%d 次，不左移）'
-                  % (pick_count, step + 1, PICK_MAX_APPROACH + 1), flush=True)
-            time.sleep(0.3)
-            continue
-        cx = det['x'] + det['w'] / 2.0
-        cy = det['y'] + det['h'] / 2.0
-        area = det['w'] * det['h']
-        dist_cm = None if (no_depth or depth is None) else depth_cm_at(depth, cx, cy, rotate)
-        close = (dist_cm is not None and dist_cm < STOP_DEPTH_CM) or \
-                (dist_cm is None and (no_depth or depth is None) and area >= CLOSE_AREA)
-        print('pick%d YOLO conf=%.2f bbox=%dx%d dist=%s%s'
-              % (pick_count, det['conf'], det['w'], det['h'],
-                 '%.1fcm' % dist_cm if dist_cm is not None else 'None',
-                 ' -> 够近，夹取' if close else ''), flush=True)
-        if close:
+    state = dict(pulses)
+    # 1. 先只转 21 到夹取方向（不动 22/23/24），再观测目标
+    board.bus_servo_set_position(0.8, [[21, state[21]]])
+    time.sleep(0.8)
+    observed = False
+    for i in range(OBSERVE_TRIES):
+        if model_det.detect() is not None:
+            observed = True
             break
-        # 不够近：左移（目标在机身左侧，笔直走来的）
-        if step < PICK_MAX_APPROACH:
-            ik.left_move(ik.initial_pos, 2, PICK_STEP_MM, MOVE_SPEED, 1)
-            time.sleep(0.1)
+        time.sleep(0.2)
 
+    # 2. 摆 22/23/24 到夹取位（pick1/pick2 顺序不同）
+    if pick_count == 1:
+        set_servos(board, state, [22, 23, 24])
+    else:
+        set_servos(board, state, [22, 23])
+        board.bus_servo_set_position(2.2, [[24, 500]])
+        time.sleep(2.2)
+        set_servos(board, state, [24])
+
+    # 3. 观测到了 → 独立靠近夹取（深度判距 + 左移逼近）
+    if observed:
+        print('pick%d 观测到目标，进入靠近夹取' % pick_count, flush=True)
+        for step in range(PICK_MAX_APPROACH + 1):
+            det = model_det.detect()
+            if det is None:
+                print('pick%d 目标丢失（第 %d/%d 次，不左移）'
+                      % (pick_count, step + 1, PICK_MAX_APPROACH + 1), flush=True)
+                time.sleep(0.3)
+                continue
+            cx = det['x'] + det['w'] / 2.0
+            cy = det['y'] + det['h'] / 2.0
+            area = det['w'] * det['h']
+            dist_cm = None if (no_depth or depth is None) else depth_cm_at(depth, cx, cy, rotate)
+            close = (dist_cm is not None and dist_cm < STOP_DEPTH_CM) or \
+                    (dist_cm is None and (no_depth or depth is None) and area >= CLOSE_AREA)
+            print('pick%d YOLO conf=%.2f bbox=%dx%d dist=%s%s'
+                  % (pick_count, det['conf'], det['w'], det['h'],
+                     '%.1fcm' % dist_cm if dist_cm is not None else 'None',
+                     ' -> 够近，夹取' if close else ''), flush=True)
+            if close:
+                break
+            if step < PICK_MAX_APPROACH:
+                ik.left_move(ik.initial_pos, 2, PICK_STEP_MM, MOVE_SPEED, 1)
+                time.sleep(0.1)
+    else:
+        print('pick%d 观测不到目标，固定夹取' % pick_count, flush=True)
+
+    # 4. 夹取：闭 25 + 抬 22（仅第一次）+ 复位
     board.bus_servo_set_position(2.0, [[25, GRIPPER_CLOSE]])
     time.sleep(2.0)
     time.sleep(0.5)
