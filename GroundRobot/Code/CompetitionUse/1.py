@@ -26,7 +26,6 @@ import json
 import math
 import os
 import re
-import socket
 import sys
 import threading
 import time
@@ -191,18 +190,6 @@ CAM_TRACK_STEP = 6         # 每块俯仰调整步长（脉宽）
 CAM_TRACK_CY_LOW = 185     # 方块中心 cy 超过它（快出画面底部）→ 往下压 24
 CAM_TRACK_CY_HIGH = 55     # 方块中心 cy 低于它（快出画面顶部）→ 往上抬 24
 camera_lock = threading.Lock()
-
-
-def lan_ip():
-    """获取本机局域网 IP，用于打印视频推流地址。"""
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(('8.8.8.8', 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except Exception:
-        return '127.0.0.1'
 
 
 def report(**kw):
@@ -539,7 +526,7 @@ def init_imu(board):
     return state
 
 
-def reset_imu(board, imu_state, reset_yaw=True):
+def reset_imu(imu_state, reset_yaw=True):
     """转弯后重新标定 gz 零漂，并（可选）清零航向积分。
 
     **融合模式下 `reset_yaw` 必须传 False**：零漂是传感器属性，重标没问题；
@@ -554,7 +541,7 @@ def reset_imu(board, imu_state, reset_yaw=True):
         tracker.reset()
 
 
-def update_imu(state, board):
+def update_imu(state):
     """刷新日志用的「上一段平均角速度 / 时长」。
 
     航向积分已经由后台线程连续完成，这里不再积分——保留这个函数只是为了不动主循环
@@ -581,7 +568,7 @@ def move_one_chunk(ik, move, forward):
         ik.back(ik.initial_pos, 2, m, MOVE_SPEED, 1)
 
 
-def move_straight_fusion(ik, board, detector, imu_state, tracker, distance_mm,
+def move_straight_fusion(ik, board, detector, tracker, distance_mm,
                          fusion, ctrl, marker_range_mm, marker_size_mm, cam_state,
                          color_enabled=True):
     """融合模式的直线段：相机写状态、IMU 管执行，单一控制器先航向后横向。
@@ -695,7 +682,7 @@ def imu_turn(ik, board, imu_state, delta_deg):
         time.sleep(0.08)
 
     time.sleep(0.2)   # 等机身晃动静下来；积分由后台线程连续做，不用再手动补采
-    update_imu(imu_state, board)
+    update_imu(imu_state)
 
     err = angle_error(imu_state['yaw'], target)
     print('转弯完成 yaw=%.1f target=%.1f error=%+.1f'
@@ -758,7 +745,7 @@ def reacquire(board, model_det, y24, pick_count, step):
     return None, y24
 
 
-def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
+def do_pick(board, model_det, depth, rotate, pick_count, pulses,
             pull_up_pulse=None, no_depth=False, manual=False, s24_now=None,
             stop_dist=None, reach_extra=None):
     """执行第 1/2 次夹取。默认全自动：转 21 观测 → 靠近夹取 / 固定夹取。
@@ -1177,7 +1164,6 @@ def main():
     ik.stand(ik.initial_pos, t=500)
     time.sleep(0.5)
 
-    target_yaw = 0.0
     pending_forward = 0
     pick_count = 0
     place_count = 0
@@ -1196,14 +1182,13 @@ def main():
 
         if pending_forward:
             print('%d/%d 直行 %dmm' % (i, len(actions), pending_forward), flush=True)
-            target_yaw = imu_state['yaw']
             dist_mm = pending_forward
             # 长直行才算「真直线」，重新开启颜色识别；弯道里的小直行保持关闭
             if abs(pending_forward) >= STRAIGHT_MIN_MM:
                 color_enabled = True
             # 融合导航：相机写状态、IMU 管执行，状态不归零；丢帧卡尔曼自己扛得住
             marker_range = move_straight_fusion(
-                ik, board, detector, imu_state, imu_state['tracker'],
+                ik, board, detector, imu_state['tracker'],
                 pending_forward, fusion, ctrl, marker_range, args.marker_size_mm,
                 cam_state, color_enabled)
             pending_forward = 0
@@ -1219,8 +1204,7 @@ def main():
             imu_turn(ik, board, imu_state, angle)
             feed_turn_to_fusion(imu_state, imu_state['tracker'],
                                 fusion, yaw_before, -angle)
-            reset_imu(board, imu_state, reset_yaw=False)
-            target_yaw = imu_state['yaw']
+            reset_imu(imu_state, reset_yaw=False)
             color_enabled = False   # 进入弯道，关闭颜色识别
             report(heading_deg=norm_heading(imu_state['yaw']),
                    message='左转 %d°' % angle)
@@ -1231,8 +1215,7 @@ def main():
             imu_turn(ik, board, imu_state, -angle)
             feed_turn_to_fusion(imu_state, imu_state['tracker'],
                                 fusion, yaw_before, angle)
-            reset_imu(board, imu_state, reset_yaw=False)
-            target_yaw = imu_state['yaw']
+            reset_imu(imu_state, reset_yaw=False)
             color_enabled = False   # 进入弯道，关闭颜色识别
             report(heading_deg=norm_heading(imu_state['yaw']),
                    message='右转 %d°' % angle)
@@ -1241,7 +1224,7 @@ def main():
             print('%d/%d pick%d' % (i, len(actions), pick_count), flush=True)
             log_battery(board, tag='夹取前')   # 只记录分析，不参与控制
             pulses = {int(k): int(v) for k, v in act.get('pulses', {}).items()} if act.get('pulses') else None
-            do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
+            do_pick(board, model_det, depth, rotate, pick_count, pulses,
                     pull_up_pulse=args.pull_up, no_depth=args.no_depth,
                     manual=args.manual, s24_now=cam_state['pulse'],
                     stop_dist=args.stop_dist, reach_extra=args.reach_extra)
@@ -1268,12 +1251,11 @@ def main():
             ik.stand(ik.initial_pos, t=500)
 
     if pending_forward:
-        target_yaw = imu_state['yaw']
         dist_mm = pending_forward
         if abs(pending_forward) >= STRAIGHT_MIN_MM:
             color_enabled = True
         move_straight_fusion(
-            ik, board, detector, imu_state, imu_state['tracker'],
+            ik, board, detector, imu_state['tracker'],
             pending_forward, fusion, ctrl, marker_range, args.marker_size_mm,
             cam_state, color_enabled)
         advance_pose(pose, imu_state['yaw'], dist_mm)
