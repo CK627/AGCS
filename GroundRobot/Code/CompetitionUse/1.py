@@ -104,11 +104,16 @@ REACH_EXTRA_PICK2_MAX = 60         # pick2 单独收窄：它的 JSON 已经是 
                                    # 再按 pick1 的 80 加会到 580，手臂可能伸过头
 GRAB_HOLD = 3                      # 判据要连续 N 帧成立才夹（单帧检测抖一下不能夹）
 OBSERVE_TIMEOUT_S = 3.0            # 转 21 后观测目标的最长时间（秒）
-# ---------- 目标丢失 = 「已经贴脸」的信号（盲走收尾） ----------
+# ---------- 目标丢失：远处=识别抽风，近处=「贴脸」信号（两种待遇） ----------
 # 模型是远距离样本训的，近到 12~13cm 就认不出来了（现场实测每次都在这个距离丢）。
-# 所以「丢目标」不是故障，是「够近了」的信号：那一刻把估距和角度**锁定**住，
-# 不再试图重新识别，按当时的角度把剩下的距离（锁定估距 - STOP_DIST_CM）走完就夹。
-LOST_CONFIRM = 3                   # 连续丢 N 帧才算真丢（单帧抖动不算）
+# 近处丢目标不是故障、是「够近了」：锁定估距/角度，盲走完剩下的路就夹。
+# 但**远处**（>LOST_NEAR_CM）丢目标不是「够近」，多半是树莓派上识别帧率不稳、conf 又
+# 贴着阈值（现场 25~27cm 时 conf 才 0.80~0.85），单帧抖一两下很正常——19-06/19-07 就是
+# 被 3 帧判丢、摆 24 找回又找回、退回固定脉宽，结果在 25~27cm 夹了个空。所以远处要多
+# 等几帧再判丢。
+LOST_CONFIRM = 3                   # 近处「贴脸」判据：连续丢 N 帧就算真丢
+LOST_CONFIRM_FAR = 12              # 远处丢帧的确认次数：多等几帧，给不稳的识别恢复的机会
+REACQUIRE_TRIES = 3                # 摆 24 找回时，每个试探位连试几帧（树莓派帧率不稳，单帧易漏）
 LOST_NEAR_CM = 15.0                # 丢目标时锁定估距已 ≤ 它 → 判「近到认不出」，走盲走收尾
 BLIND_MIN_STEPS = 2                # 盲走收尾最少步数
 BLIND_MAX_STEPS = 25               # 盲走收尾最多步数（护栏，速率估飞了也不会一直走）
@@ -736,7 +741,11 @@ def reacquire(board, model_det, y24, pick_count, step):
         p = _clamp24(y24 + d)
         board.bus_servo_set_position(0.25, [[24, p]])
         time.sleep(0.25)
-        det = model_det.detect()
+        det = None
+        for _ in range(REACQUIRE_TRIES):   # 每个位连试几帧：树莓派帧率不稳，单帧很容易漏
+            det = model_det.detect()
+            if det is not None:
+                break
         print('pick%d 靠近 #%d 目标丢失，找目标 %d/4（24=%d）%s'
               % (pick_count, step, k + 1, p, '找到了' if det is not None else ''),
               flush=True)
@@ -866,10 +875,13 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
             det = model_det.detect()
             if det is None:
                 miss += 1
-                if miss < LOST_CONFIRM:
-                    # 单帧抖动：原地等一帧，不伸也不扫（摸黑伸出去只会越走越瞎）
+                # 近处/远处用不同的确认次数：近处模型本就认不出（LOST_CONFIRM 帧够了）；
+                # 远处丢帧多半是树莓派帧率不稳、conf 贴着阈值，多等几帧给模型恢复，别急着判丢。
+                need = LOST_CONFIRM if (mem_cm is not None and mem_cm <= LOST_NEAR_CM) \
+                    else LOST_CONFIRM_FAR
+                if miss < need:
                     print('pick%d 靠近 #%d 目标丢失 %d/%d，先等一帧'
-                          % (pick_count, step, miss, LOST_CONFIRM), flush=True)
+                          % (pick_count, step, miss, need), flush=True)
                     time.sleep(APPROACH_SLEEP)
                     continue
                 if mem_cm is not None and mem_cm <= LOST_NEAR_CM:
