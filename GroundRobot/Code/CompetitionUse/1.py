@@ -8,9 +8,10 @@
 夹取（pick）：路线把机身开到定点后，先只转 21 观测目标；观测到 → 靠近夹取：22/23 渐进前伸，
 21 水平居中，24 不锁 JSON 角度、每步把目标往画面中间拉（保证目标一直看得见）；
 **认不到就原地摆动 24 找回来，找回来才继续伸**（摸黑伸只会越走越瞎）。
-判「够近」：目标中心到夹爪像素 (GRIP_PX, GRIP_PY) 的距离 ≤GRAB_PX 且 bbox 面积够大
-（或深度 ≤STOP_DEPTH_CM，Astra Pro 近端是盲区一般不触发）；都不满足就一直伸到
-JSON 夹取位 +REACH_EXTRA 那个标定位姿再夹。观测不到 → 摆 22/23/24 固定脉宽夹取（兜底）。
+判距和 AutonomousCrawling 同一套：用 bbox 框高估前方距离（焦距 × 目标高度 ÷ 框高），
+估到 ≤STOP_DIST_CM 就夹（深度 ≤STOP_DEPTH_CM 也算，但 Astra Pro 近端 0.6m 是盲区，基本不触发）；
+一直估不到够近就伸到 JSON 夹取位 +REACH_EXTRA 那个标定位姿再夹。
+观测不到 → 摆 22/23/24 固定脉宽夹取（兜底）。
 place 仍读 json1.json 固定脉宽。全程默认全自动，无 input 阻塞。
 """
 
@@ -76,11 +77,18 @@ PICK1_RESTORE_24 = 260  # 第一次夹取结束后恢复时 24 号腕俯仰的�
 # ---------- YOLO + 深度夹取（pick 用，走路部分不碰） ----------
 DEFAULT_MODEL = 'models/v8n.onnx'  # YOLO 模型路径（相对 spiderpi 根目录）
 MODEL_CONF = 0.8                   # 置信度阈值
-STOP_DEPTH_CM = 5.0                # 深度 ≤ N cm 判「夹爪够到目标」（Astra Pro 近端有盲区，基本不触发）
-REACH_EXTRA = 20                   # 22/23 在 JSON 夹取位上额外前伸的量（判不到够近时的兜底终点）
-CLOSE_AREA = 60000                 # bbox w×h ≥ N 才算「够近」，提前刹车用（调小=更早停）
-                                   # 正常靠近会一直伸到 JSON 夹取位（+REACH_EXTRA）那个标定位姿，
-                                   # 这个数只是「目标比预期大得多」时的提前刹车，别当主判据
+# 距离判定：和 AutonomousCrawling 同一套 —— 用 bbox 框高按针孔模型估前方距离
+#   dist_cm = 焦距 × 目标物理高度 ÷ 框高
+# 目标高度取固定值（虫子/虫子模型按 5cm 算），框高随靠近变大、估出的距离就变小，
+# 小于阈值就夹。不用 bbox 面积。
+DIST_F_PX = 838.0                  # 640 分辨率下的焦距像素（同 AutonomousCrawling 的 F_PX）
+BUG_HEIGHT_CM = 5.0                # 目标物理高度（cm），目标换了要跟着改
+STOP_DIST_CM = 8.0                 # 估距 ≤ N cm 就夹（同 AutonomousCrawling 的 8.0；调小=更近）
+                                   # 注意估距下限：框最高只能到 480px，838×5/480≈8.7cm，
+                                   # 想让它真按距离停住，先看日志里夹取位那一帧的「距离=」再定这个数
+RELIABLE_MAX_H = 450               # 框高超过它=框被裁了，距离不可靠，这帧不算数
+STOP_DEPTH_CM = 5.0                # 深度 ≤ N cm 也算够近（Astra Pro 近端 0.6m 内是盲区，基本不触发）
+REACH_EXTRA = 20                   # 22/23 在 JSON 夹取位上额外前伸的量（估距一直不够近时的兜底终点）
 GRAB_HOLD = 3                      # 判据要连续 N 帧成立才夹（单帧检测抖一下不能夹）
 OBSERVE_TIMEOUT_S = 3.0            # 转 21 后观测目标的最长时间（秒）
 # ---------- 靠近夹取（22/23 渐进前伸，21 水平居中，24 只管把目标留在画面里） ----------
@@ -99,12 +107,6 @@ CAM24_STEP = 6                     # 丢目标后找回时每次摆动的脉宽
 CAM24_AIM_CY = 240                 # 24 把目标往画面这一行拉（480 行的中间）
 CAM24_DEAD_Y = 40                  # 俯仰死区（像素）：目标在中间 ±40 内不动 24
 CAM24_P = 0.06                     # 俯仰 P 增益（像素→脉宽），越大跟得越急
-# 目标中心 → 夹爪 的距离：夹爪和相机同装在 24 号腕上、相对相机固定，所以「夹爪正下方
-# 那个点」在画面里也是固定像素。22/23 前伸时目标中心就朝这个像素靠，落到它附近 = 夹爪
-# 已经对准目标 → 夹。GRIP_PX/GRIP_PY 现场按日志调（先看一次实跑打印的 cx/cy/dpx）。
-GRIP_PX = 320                      # 夹爪在画面里的像素 x
-GRIP_PY = 390                      # 夹爪在画面里的像素 y（画面偏下）
-GRAB_PX = 60                       # 目标中心到夹爪像素距离 ≤ N 像素 就夹（越小越贴近）
 MOVE_SPEED = 50      # 六足直线前进/后退的速度，越大走得越快
 TURN_SPEED = 30      # 六足左转/右转的速度，越大转得越快
 STRIDE_SCALE = 0.95   # 前进/后退名义步幅的缩放系数；现场实测 0.946 短一点、0.96 又过了，0.95 折中
@@ -703,8 +705,8 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
     """执行第 1/2 次夹取。默认全自动：转 21 观测 → 靠近夹取 / 固定夹取。
 
     先只转 21 号到夹取方向再观测（不动 22/23/24）：
-    - 观测到目标 → 靠近夹取（22/23 渐进前伸到 JSON 夹取位，21 水平居中，24 每步把目标
-      往画面中间拉；中途认不到就原地摆动 24 找回来，找不回才退回固定脉宽夹取）；
+    - 观测到目标 → 靠近夹取（22/23 渐进前伸，21 水平居中，24 每步把目标往画面中间拉；
+      框高估距 ≤STOP_DIST_CM 就夹；中途认不到就原地摆动 24 找回来，找不回才退回固定脉宽夹取）；
     - 观测不到 → 摆 22/23/24 到 JSON 固定脉宽夹取（兜底）。
     --manual 退回原来的手动回车微调。
     """
@@ -766,19 +768,19 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
                 continue
             cx = det['x'] + det['w'] / 2.0
             cy = det['y'] + det['h'] / 2.0
-            area = det['w'] * det['h']
-            d_px = math.hypot(cx - GRIP_PX, cy - GRIP_PY)   # 目标中心 → 夹爪 的像素距离
-            dist_cm = None if (no_depth or depth is None) else depth_cm_at(depth, cx, cy, rotate)
-            # 「中心对准夹爪」+「框够大（真的离得近）」两个条件同时成立才算够近：
-            # 只看 d_px 会被小框骗（框一小中心就往下飘，正好飘到夹爪像素上）。
-            close = (dist_cm is not None and dist_cm < STOP_DEPTH_CM) or \
-                    (d_px <= GRAB_PX and area >= CLOSE_AREA)
+            box_h = det['h']
+            # 距离：焦距 × 目标高度 ÷ 框高（同 AutonomousCrawling）。框被裁了就不算数。
+            est_cm = (DIST_F_PX * BUG_HEIGHT_CM / box_h) if 0 < box_h < RELIABLE_MAX_H else None
+            dep_cm = None if (no_depth or depth is None) else depth_cm_at(depth, cx, cy, rotate)
+            close = (est_cm is not None and est_cm <= STOP_DIST_CM) or \
+                    (dep_cm is not None and dep_cm < STOP_DEPTH_CM)
             hit = hit + 1 if close else 0
-            print('pick%d 靠近 #%d conf=%.2f 中心=(%.0f,%.0f) d=%.0fpx dist=%s area=%d 22=%d 23=%d 24=%d%s'
-                  % (pick_count, step, det['conf'], cx, cy, d_px,
-                     '%.1fcm' % dist_cm if dist_cm is not None else 'None',
-                     area, w22, z23, y24,
-                     ' -> 够近 %d/%d' % (hit, GRAB_HOLD) if close else ''), flush=True)
+            print('pick%d 靠近 #%d conf=%.2f 中心=(%.0f,%.0f) 框=%dx%d 距离=%s 深度=%s 22=%d 23=%d 24=%d%s'
+                  % (pick_count, step, det['conf'], cx, cy, det['w'], box_h,
+                     '%.1fcm' % est_cm if est_cm is not None else '--',
+                     '%.1fcm' % dep_cm if dep_cm is not None else '--',
+                     w22, z23, y24,
+                     ' -> 到距离 %d/%d' % (hit, GRAB_HOLD) if close else ''), flush=True)
             if hit >= GRAB_HOLD:
                 break
             # 21：水平跟踪，把目标拉回画面中心
