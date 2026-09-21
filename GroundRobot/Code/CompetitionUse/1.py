@@ -6,10 +6,11 @@
 （--fusion reference 可换 ReferenceFusion）。颜色检测只用于导航「保证不跑歪」。
 
 夹取（pick）：路线把机身开到定点后，先只转 21 观测目标；观测到 → 靠近夹取：22/23 渐进前伸，
-21 水平居中，24 不锁 JSON 角度、只在目标快出画面时抬/压（保证目标一直在画面里）；
-判「够近」看 YOLO 目标中心到夹爪像素 (GRIP_PX, GRIP_PY) 的距离（≤GRAB_PX 就夹），
-深度 ≤STOP_DEPTH_CM 作为附加判据（Astra Pro 近端是盲区，一般不触发）。
-观测不到 → 摆 22/23/24 固定脉宽夹取（兜底）。--manual 退回手动回车微调。
+21 水平居中，24 不锁 JSON 角度、每步把目标往画面中间拉（保证目标一直看得见）；
+**认不到就原地摆动 24 找回来，找回来才继续伸**（摸黑伸只会越走越瞎）。
+判「够近」：目标中心到夹爪像素 (GRIP_PX, GRIP_PY) 的距离 ≤GRAB_PX 且 bbox 面积够大
+（或深度 ≤STOP_DEPTH_CM，Astra Pro 近端是盲区一般不触发）；都不满足就一直伸到
+JSON 夹取位 +REACH_EXTRA 那个标定位姿再夹。观测不到 → 摆 22/23/24 固定脉宽夹取（兜底）。
 place 仍读 json1.json 固定脉宽。全程默认全自动，无 input 阻塞。
 """
 
@@ -77,23 +78,27 @@ DEFAULT_MODEL = 'models/v8n.onnx'  # YOLO 模型路径（相对 spiderpi 根目�
 MODEL_CONF = 0.8                   # 置信度阈值
 STOP_DEPTH_CM = 5.0                # 深度 ≤ N cm 判「夹爪够到目标」（Astra Pro 近端有盲区，基本不触发）
 REACH_EXTRA = 20                   # 22/23 在 JSON 夹取位上额外前伸的量（判不到够近时的兜底终点）
-CLOSE_AREA = 20000                 # bbox w×h ≥ N 才算「离得够近」（和 d_px 一起判，挡掉小框误判）
+CLOSE_AREA = 60000                 # bbox w×h ≥ N 才算「够近」，提前刹车用（调小=更早停）
+                                   # 正常靠近会一直伸到 JSON 夹取位（+REACH_EXTRA）那个标定位姿，
+                                   # 这个数只是「目标比预期大得多」时的提前刹车，别当主判据
 GRAB_HOLD = 3                      # 判据要连续 N 帧成立才夹（单帧检测抖一下不能夹）
 OBSERVE_TIMEOUT_S = 3.0            # 转 21 后观测目标的最长时间（秒）
-# ---------- 靠近夹取（22/23 渐进前伸，21 水平居中，24 只保证目标不丢） ----------
-APPROACH_D = 6                     # 每步 22/23 朝目标脉宽靠近的最大量
-APPROACH_STEPS = 60                # 靠近最多步数
-APPROACH_SLEEP = 0.12              # 每步间隔（秒）
+# ---------- 靠近夹取（22/23 渐进前伸，21 水平居中，24 只管把目标留在画面里） ----------
+APPROACH_D = 5                     # 每步 22/23 朝目标脉宽靠近的最大量（越小越稳）
+APPROACH_STEPS = 90                # 靠近最多步数
+APPROACH_SLEEP = 0.15              # 每步间隔（秒），要留够一次识别的时间
 IMG_CX = 320                       # 画面中心 x（640×480），21 水平跟踪用
 TRACK_P = 0.1                      # 21 跟踪 P 增益
 TRACK_DEAD_X = 40                  # 21 水平死区（像素）
-# 24 号靠近时**不锁 JSON 角度**，只保证目标一直在画面里（同走路段的 CAM_TRACK_* 思路）
+# 24 号靠近时**不锁 JSON 角度**，只跟着目标走，保证它一直在画面里。
+# 22/23 前伸会把相机整个甩出去，24 不跟的话目标一步就飘出画面 → 后面再也认不到，
+# 所以这里必须每步都跟（P 控制），而不是只在画面边缘才动手。
 CAM24_MIN = 160                    # 24 下限（再小=太朝下，会照到自己的夹爪）
 CAM24_MAX = 360                    # 24 上限（再大=太朝上，目标跑出画面底部）
-CAM24_STEP = 6                     # 每次俯仰调整的脉宽
-CAM24_CY_LOW = 400                 # 目标中心 cy 超过它（快出画面底部）→ 24 往下压
-CAM24_CY_HIGH = 80                 # 目标中心 cy 低于它（快出画面顶部）→ 24 往上抬
-                                   # 只在画面边缘动手，正常靠近时 24 基本不动（画面高 480）
+CAM24_STEP = 6                     # 丢目标后找回时每次摆动的脉宽
+CAM24_AIM_CY = 240                 # 24 把目标往画面这一行拉（480 行的中间）
+CAM24_DEAD_Y = 40                  # 俯仰死区（像素）：目标在中间 ±40 内不动 24
+CAM24_P = 0.06                     # 俯仰 P 增益（像素→脉宽），越大跟得越急
 # 目标中心 → 夹爪 的距离：夹爪和相机同装在 24 号腕上、相对相机固定，所以「夹爪正下方
 # 那个点」在画面里也是固定像素。22/23 前伸时目标中心就朝这个像素靠，落到它附近 = 夹爪
 # 已经对准目标 → 夹。GRIP_PX/GRIP_PY 现场按日志调（先看一次实跑打印的 cx/cy/dpx）。
@@ -664,13 +669,42 @@ def _step_toward(cur, target, step):
     return cur
 
 
+def _clamp24(pulse):
+    """把 24 号脉宽夹到靠近时可用的范围内。"""
+    return max(CAM24_MIN, min(CAM24_MAX, clamp_pulse(pulse)))
+
+
+def reacquire(board, model_det, y24, pick_count, step):
+    """靠近途中目标丢了：先停住别伸，小幅摆动 24 把它找回来。
+
+    22/23 一伸，目标就从画面里滑出去；不找回来越伸越瞎，所以丢帧时宁可原地
+    上下扫几下。试探位是相对当前值的 -1/-2/+1/+2 个 CAM24_STEP（都在原位附近），
+    找到就停在找到的角度；四个都试过还没有就摆回原位、返回 None。
+
+    返回 (det, y24)。
+    """
+    for k, d in enumerate((-CAM24_STEP, -2 * CAM24_STEP, CAM24_STEP, 2 * CAM24_STEP)):
+        p = _clamp24(y24 + d)
+        board.bus_servo_set_position(0.25, [[24, p]])
+        time.sleep(0.25)
+        det = model_det.detect()
+        print('pick%d 靠近 #%d 目标丢失，找目标 %d/4（24=%d）%s'
+              % (pick_count, step, k + 1, p, '找到了' if det is not None else ''),
+              flush=True)
+        if det is not None:
+            return det, p
+    board.bus_servo_set_position(0.25, [[24, y24]])
+    time.sleep(0.25)
+    return None, y24
+
+
 def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
             pull_up_pulse=None, no_depth=False, manual=False):
     """执行第 1/2 次夹取。默认全自动：转 21 观测 → 靠近夹取 / 固定夹取。
 
     先只转 21 号到夹取方向再观测（不动 22/23/24）：
-    - 观测到目标 → 靠近夹取（22/23 渐进前伸到 JSON 夹取位，21 水平居中，24 只保证目标
-      不跑出画面，判「够近」= 目标中心到夹爪像素的距离 ≤ GRAB_PX）；
+    - 观测到目标 → 靠近夹取（22/23 渐进前伸到 JSON 夹取位，21 水平居中，24 每步把目标
+      往画面中间拉；中途认不到就原地摆动 24 找回来，找不回才退回固定脉宽夹取）；
     - 观测不到 → 摆 22/23/24 到 JSON 固定脉宽夹取（兜底）。
     --manual 退回原来的手动回车微调。
     """
@@ -708,8 +742,8 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
             set_servos(board, state, [24])
         cur_22 = state[22]
     else:
-        # 2b. 观测到了 → 靠近夹取：22/23 渐进前伸，21 水平居中，24 只管「目标别跑出画面」，
-        #     判「够近」用 YOLO 目标中心到夹爪像素的距离（深度近端是盲区，只当附加判据）。
+        # 2b. 观测到了 → 靠近夹取：22/23 渐进前伸，21 水平居中，24 每步把目标拉回画面中间
+        #     （22/23 一伸相机就甩出去，24 不跟目标一步就飘没了）。丢帧先找回来再继续伸。
         print('pick%d 观测到目标，进入靠近夹取' % pick_count, flush=True)
         w22 = OFFICIAL_ARM[22]   # 705
         z23 = OFFICIAL_ARM[23]   # 90
@@ -720,36 +754,40 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
         hit = 0   # 判据连续成立的帧数
         for step in range(APPROACH_STEPS):
             det = model_det.detect()
-            if det is not None:
-                cx = det['x'] + det['w'] / 2.0
-                cy = det['y'] + det['h'] / 2.0
-                area = det['w'] * det['h']
-                d_px = math.hypot(cx - GRIP_PX, cy - GRIP_PY)   # 目标中心 → 夹爪 的像素距离
-                dist_cm = None if (no_depth or depth is None) else depth_cm_at(depth, cx, cy, rotate)
-                # 「中心对准夹爪」+「框够大（真的离得近）」两个条件同时成立才算够近：
-                # 只看 d_px 会被小框骗（框一小中心就往下飘，正好飘到夹爪像素上）。
-                close = (dist_cm is not None and dist_cm < STOP_DEPTH_CM) or \
-                        (d_px <= GRAB_PX and area >= CLOSE_AREA)
-                hit = hit + 1 if close else 0
-                print('pick%d 靠近 #%d conf=%.2f 中心=(%.0f,%.0f) d=%.0fpx dist=%s area=%d 22=%d 23=%d 24=%d%s'
-                      % (pick_count, step, det['conf'], cx, cy, d_px,
-                         '%.1fcm' % dist_cm if dist_cm is not None else 'None',
-                         area, w22, z23, y24,
-                         ' -> 够近 %d/%d' % (hit, GRAB_HOLD) if close else ''), flush=True)
-                if hit >= GRAB_HOLD:
+            if det is None:
+                # 目标丢了 → 原地找回来，这一步**不伸**（摸黑伸出去只会越走越瞎）
+                det, y24 = reacquire(board, model_det, y24, pick_count, step)
+                if det is None:
+                    print('pick%d 靠近中目标丢失且找不回，改用 JSON 固定脉宽夹取'
+                          % pick_count, flush=True)
+                    set_servos(board, state, [22, 23, 24])
+                    w22 = state[22]
                     break
-                # 21：水平跟踪，把目标拉回画面中心
-                if abs(cx - IMG_CX) >= TRACK_DEAD_X:
-                    s21 = clamp_pulse(s21 + int(TRACK_P * (IMG_CX - cx)))
-                    board.bus_servo_set_position(0.02, [[21, s21]])
-                # 24：不锁 JSON 角度，只在目标快出画面时抬/压，保证它一直在画面里
-                if cy > CAM24_CY_LOW:
-                    y24 = max(CAM24_MIN, y24 - CAM24_STEP)
-                elif cy < CAM24_CY_HIGH:
-                    y24 = min(CAM24_MAX, y24 + CAM24_STEP)
-            else:
-                print('pick%d 靠近 #%d 目标丢失（22=%d 23=%d 24=%d）'
-                      % (pick_count, step, w22, z23, y24), flush=True)
+                continue
+            cx = det['x'] + det['w'] / 2.0
+            cy = det['y'] + det['h'] / 2.0
+            area = det['w'] * det['h']
+            d_px = math.hypot(cx - GRIP_PX, cy - GRIP_PY)   # 目标中心 → 夹爪 的像素距离
+            dist_cm = None if (no_depth or depth is None) else depth_cm_at(depth, cx, cy, rotate)
+            # 「中心对准夹爪」+「框够大（真的离得近）」两个条件同时成立才算够近：
+            # 只看 d_px 会被小框骗（框一小中心就往下飘，正好飘到夹爪像素上）。
+            close = (dist_cm is not None and dist_cm < STOP_DEPTH_CM) or \
+                    (d_px <= GRAB_PX and area >= CLOSE_AREA)
+            hit = hit + 1 if close else 0
+            print('pick%d 靠近 #%d conf=%.2f 中心=(%.0f,%.0f) d=%.0fpx dist=%s area=%d 22=%d 23=%d 24=%d%s'
+                  % (pick_count, step, det['conf'], cx, cy, d_px,
+                     '%.1fcm' % dist_cm if dist_cm is not None else 'None',
+                     area, w22, z23, y24,
+                     ' -> 够近 %d/%d' % (hit, GRAB_HOLD) if close else ''), flush=True)
+            if hit >= GRAB_HOLD:
+                break
+            # 21：水平跟踪，把目标拉回画面中心
+            if abs(cx - IMG_CX) >= TRACK_DEAD_X:
+                s21 = clamp_pulse(s21 + int(TRACK_P * (IMG_CX - cx)))
+                board.bus_servo_set_position(0.02, [[21, s21]])
+            # 24：不锁 JSON 角度，每步都把目标往画面中间拉（保证它一直在画面里）
+            if abs(cy - CAM24_AIM_CY) >= CAM24_DEAD_Y:
+                y24 = _clamp24(y24 + int(CAM24_P * (CAM24_AIM_CY - cy)))
             # 22/23 朝终点前伸一步（不越过终点）
             w22 = _step_toward(w22, t22, APPROACH_D)
             z23 = _step_toward(z23, t23, APPROACH_D)
