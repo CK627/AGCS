@@ -6,15 +6,13 @@
 （--fusion reference 可换 ReferenceFusion）。颜色检测只用于导航「保证不跑歪」。
 
 夹取（pick）：路线把机身开到定点后，先只转 21 观测目标；观测到 → 靠近夹取：22/23 渐进前伸，
-21 水平居中，24 不锁 JSON 角度、每步把目标往画面这一行（CAM24_AIM_CY，默认 150）拉。
-相机装在夹爪**下面**，居中目标的话夹爪会落在目标上方夹不到，所以目标要压在画面**偏上**。
+21 水平居中，24 不锁 JSON 角度、每步把目标往画面中间拉（保证目标一直看得见）。
 判距和 AutonomousCrawling 同一套：用 bbox 框高估前方距离（焦距 × 目标高度 ÷ 框高），
 估到 ≤STOP_DIST_CM 就夹（深度 ≤STOP_DEPTH_CM 也算，但 Astra Pro 近端 0.6m 是盲区，基本不触发）；
 一直估不到够近就伸到 JSON 夹取位 +REACH_EXTRA 那个标定位姿再夹。
-**认不到就先原地摆动 24 找回来**（摸黑伸只会越走越瞎）；找不回就是贴到跟前、模型认不出了
-（训练集都是远距离的，这是常态），此时按「记忆里最后一次可靠估距 + 实测下降速率」算还要伸
-几步，摸黑伸完这几步再夹（时间法，见 BLIND_MIN_RATE_CM / BLIND_MAX_STEPS）；
-连可靠估距都没有才退回 JSON 固定脉宽瞬摆。
+**近到 12~13cm 模型就认不出了（远距离样本训的），这不是故障而是「贴脸」信号**：
+那一刻锁定记忆的估距和当时的 21 角度，按实测速率把剩下的距离盲走完就夹（见 LOST_CONFIRM）；
+只有还在远处就丢目标才算真丢，才原地摆动 24 找回、找不回退回固定脉宽。
 观测不到 → 摆 22/23/24 固定脉宽夹取（兜底）。
 place 仍读 json1.json 固定脉宽。全程默认全自动，无 input 阻塞。
 """
@@ -91,14 +89,19 @@ STOP_DIST_CM = 9.0                 # 估距 ≤ N cm 就夹（调小=更近）
                                    # 估距下限：框最高只能到 480px，838×5/480≈8.7cm，所以 9 基本
                                    # 就是「框快占满画面」；框被画面裁掉时按速率外推（同 AutonomousCrawling）
 RELIABLE_MAX_H = 450               # 框高超过它=框被裁了，距离不可靠，改用速率外推
-# 目标贴到跟前时模型基本认不出来（训练集都是远距离的），这时候不能靠画面了，
-# 改用「记忆里最后一次可靠估距 + 实测下降速率」算还要伸几步，摸黑伸完再夹。
-BLIND_MIN_RATE_CM = 0.15           # 盲走时每步的兜底下降速率（cm/步），实测速率太小/为 0 时用它
-BLIND_MAX_STEPS = 25               # 盲走最多再伸多少步（安全上限，算法算出一大截也不许冲）
 STOP_DEPTH_CM = 5.0                # 深度 ≤ N cm 也算够近（Astra Pro 近端 0.6m 内是盲区，基本不触发）
 REACH_EXTRA = 20                   # 22/23 在 JSON 夹取位上额外前伸的量（估距一直不够近时的兜底终点）
 GRAB_HOLD = 3                      # 判据要连续 N 帧成立才夹（单帧检测抖一下不能夹）
 OBSERVE_TIMEOUT_S = 3.0            # 转 21 后观测目标的最长时间（秒）
+# ---------- 目标丢失 = 「已经贴脸」的信号（盲走收尾） ----------
+# 模型是远距离样本训的，近到 12~13cm 就认不出来了（现场实测每次都在这个距离丢）。
+# 所以「丢目标」不是故障，是「够近了」的信号：那一刻把估距和角度**锁定**住，
+# 不再试图重新识别，按当时的角度把剩下的距离（锁定估距 - STOP_DIST_CM）走完就夹。
+LOST_CONFIRM = 3                   # 连续丢 N 帧才算真丢（单帧抖动不算）
+LOST_NEAR_CM = 15.0                # 丢目标时锁定估距已 ≤ 它 → 判「近到认不出」，走盲走收尾
+BLIND_MIN_STEPS = 2                # 盲走收尾最少步数
+BLIND_MAX_STEPS = 25               # 盲走收尾最多步数（护栏，速率估飞了也不会一直走）
+CM_PER_STEP_FALLBACK = 0.25        # 盲走速率还没测出来时的兜底（cm/步）
 # ---------- 靠近夹取（22/23 渐进前伸，21 水平居中，24 只管把目标留在画面里） ----------
 APPROACH_D = 5                     # 每步 22/23 朝目标脉宽靠近的最大量（越小越稳）
 APPROACH_STEPS = 90                # 靠近最多步数
@@ -109,13 +112,11 @@ TRACK_DEAD_X = 40                  # 21 水平死区（像素）
 # 24 号靠近时**不锁 JSON 角度**，只跟着目标走，保证它一直在画面里。
 # 22/23 前伸会把相机整个甩出去，24 不跟的话目标一步就飘出画面 → 后面再也认不到，
 # 所以这里必须每步都跟（P 控制），而不是只在画面边缘才动手。
-CAM24_MIN = 130                    # 24 下限（再小=太朝下，会照到自己的夹爪）
+CAM24_MIN = 160                    # 24 下限（再小=太朝下，会照到自己的夹爪）
 CAM24_MAX = 360                    # 24 上限（再大=太朝上，目标跑出画面底部）
 CAM24_STEP = 6                     # 丢目标后找回时每次摆动的脉宽
-CAM24_AIM_CY = 150                 # 24 把目标往画面这一行拉。相机装在夹爪**下面**，相机一旦居中
-                                   # 目标，夹爪其实落在目标上方（就差这一点，夹不到），得让相机
-                                   # 略朝下看：目标压到画面偏上，夹爪才正对目标。所以这一行要比
-                                   # 画面正中（240）靠上。夹到目标上方就往小调（--aim-cy）
+CAM24_AIM_CY = 190                 # 24 把目标往画面这一行拉。相机装在夹爪**上面**，看的是
+                                   # 目标偏上的位置，所以这一行要比画面正中（240）更靠上
 CAM24_DEAD_Y = 40                  # 俯仰死区（像素）：目标在中间 ±40 内不动 24
 CAM24_P = 0.06                     # 俯仰 P 增益（像素→脉宽），越大跟得越急
 MOVE_SPEED = 50      # 六足直线前进/后退的速度，越大走得越快
@@ -717,7 +718,8 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
 
     先只转 21 号到夹取方向再观测（不动 22/23/24）：
     - 观测到目标 → 靠近夹取（22/23 渐进前伸，21 水平居中，24 每步把目标往画面中间拉；
-      框高估距 ≤STOP_DIST_CM 就夹；中途认不到就原地摆动 24 找回来，找不回才退回固定脉宽夹取）；
+      框高估距 ≤STOP_DIST_CM 就夹；近到模型认不出（≈12~13cm）就锁定记忆目标盲走收尾；
+      还在远处丢目标才摆 24 找回，找不回则退回固定脉宽夹取）；
     - 观测不到 → 摆 22/23/24 到 JSON 固定脉宽夹取（兜底）。
     --manual 退回原来的手动回车微调。
     """
@@ -768,44 +770,62 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
         t22 = state[22] - REACH_EXTRA   # 22 终点：比 JSON 更低、更前伸
         t23 = state[23] + REACH_EXTRA   # 23 终点：比 JSON 更伸展
         hit = 0            # 判据连续成立的帧数
+        miss = 0           # 连续丢帧数
         last_dist = None   # 最近一次可靠估距（cm）
+        mem_cm = None      # 记忆距离：上一帧算出来的估距（含外推），丢目标那一刻就是它
+        mem_cx = None      # 记忆横向：最后一次看到目标时的中心 x
+        sticky = False     # 进过外推区：之后不许估距再「变远」（框重新变完整≠真的变远）
         dist_rate = 0.0    # 每步距离下降速率（cm/步），实测自适应
         since_rel = 0      # 距上次可靠估距过了多少步
         for step in range(APPROACH_STEPS):
             det = model_det.detect()
             if det is None:
-                # 目标丢了 → 原地找回来，这一步**不伸**（摸黑伸出去只会越走越瞎）
+                miss += 1
+                if miss < LOST_CONFIRM:
+                    # 单帧抖动：原地等一帧，不伸也不扫（摸黑伸出去只会越走越瞎）
+                    print('pick%d 靠近 #%d 目标丢失 %d/%d，先等一帧'
+                          % (pick_count, step, miss, LOST_CONFIRM), flush=True)
+                    time.sleep(APPROACH_SLEEP)
+                    continue
+                if mem_cm is not None and mem_cm <= LOST_NEAR_CM:
+                    # 近到模型认不出 —— 这是信号不是故障：锁定记忆目标，按当时的角度盲走收尾
+                    rate = dist_rate if dist_rate > 0.05 else CM_PER_STEP_FALLBACK
+                    need_cm = max(0.0, mem_cm - STOP_DIST_CM)
+                    n_blind = min(BLIND_MAX_STEPS, max(BLIND_MIN_STEPS, int(need_cm / rate) + 1))
+                    print('pick%d 靠近 #%d 目标丢失（模型只在远处训练过，%.1fcm 认不出）= 已贴脸，'
+                          '锁定记忆目标盲走收尾：估距 %.1fcm → %.1fcm，剩 %.1fcm，'
+                          '按 %.2fcm/步 走 %d 步'
+                          % (pick_count, step, mem_cm, mem_cm, STOP_DIST_CM, need_cm, rate, n_blind),
+                          flush=True)
+                    # 按丢目标前最后一眼的角度对正；偏差在死区内就别动，保持当时角度直着走
+                    if mem_cx is not None and abs(mem_cx - IMG_CX) >= TRACK_DEAD_X:
+                        s21 = clamp_pulse(s21 + int(TRACK_P * (IMG_CX - mem_cx)))
+                        board.bus_servo_set_position(0.3, [[21, s21]])
+                        time.sleep(0.3)
+                    for _k in range(n_blind):
+                        w22 = _step_toward(w22, t22, APPROACH_D)
+                        z23 = _step_toward(z23, t23, APPROACH_D)
+                        board.bus_servo_set_position(APPROACH_SLEEP, [[22, w22], [23, z23], [24, y24]])
+                        time.sleep(APPROACH_SLEEP)
+                        if w22 == t22 and z23 == t23:
+                            print('pick%d 盲走收尾：22/23 已到路线 JSON 终点（%d/%d 步），'
+                                  '手臂伸不动了，就地闭夹爪' % (pick_count, _k + 1, n_blind), flush=True)
+                            break
+                    print('pick%d 盲走收尾结束 21=%d 22=%d 23=%d 24=%d，闭夹爪'
+                          % (pick_count, s21, w22, z23, y24), flush=True)
+                    break
+                # 还在远处就丢，那才是真丢 → 原地摆 24 找回来
                 det, y24 = reacquire(board, model_det, y24, pick_count, step)
                 if det is None:
-                    # 找不回就不再靠画面了：模型是远距离训的，贴到跟前反而认不出，
-                    # 这是常态不是故障。按「记忆里最后一次可靠估距 + 实测下降速率」
-                    # 算还要伸几步，摸黑把这几步伸完再夹（时间法），不再瞬摆到 JSON 位姿。
-                    if last_dist is not None and dist_rate > 0:
-                        step_cm = max(dist_rate, BLIND_MIN_RATE_CM)
-                        need = int(math.ceil((last_dist - STOP_DIST_CM) / step_cm))
-                        need = max(1, min(need, BLIND_MAX_STEPS))
-                        print('pick%d 靠近 #%d 目标丢失且找不回：按记忆距离 %.1fcm、每步降 '
-                              '%.2fcm，再摸黑伸 %d 步就夹'
-                              % (pick_count, step, last_dist, step_cm, need), flush=True)
-                        for k in range(need):
-                            w22 = _step_toward(w22, t22, APPROACH_D)
-                            z23 = _step_toward(z23, t23, APPROACH_D)
-                            board.bus_servo_set_position(APPROACH_SLEEP,
-                                                         [[22, w22], [23, z23], [24, y24]])
-                            time.sleep(APPROACH_SLEEP)
-                            print('pick%d 盲走 %d/%d 22=%d 23=%d 24=%d'
-                                  % (pick_count, k + 1, need, w22, z23, y24), flush=True)
-                            if w22 == t22 and z23 == t23:
-                                print('pick%d 盲走中 22/23 已到 JSON 夹取位，停' % pick_count,
-                                      flush=True)
-                                break
-                    else:
-                        print('pick%d 靠近中目标丢失且找不回，也没有可靠估距可推算，'
-                              '改用 JSON 固定脉宽夹取' % pick_count, flush=True)
-                        set_servos(board, state, [22, 23, 24])
-                        w22 = state[22]
+                    print('pick%d 靠近中目标丢失且找不回（锁定估距 %s），改用 JSON 固定脉宽夹取'
+                          % (pick_count, '%.1fcm' % mem_cm if mem_cm is not None else '--'),
+                          flush=True)
+                    set_servos(board, state, [22, 23, 24])
+                    w22 = state[22]
                     break
+                miss = 0
                 continue
+            miss = 0
             cx = det['x'] + det['w'] / 2.0
             cy = det['y'] + det['h'] / 2.0
             box_h = det['h']
@@ -814,17 +834,25 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
             # 距离：焦距 × 目标高度 ÷ 框高（同 AutonomousCrawling）
             if not clipped and 0 < box_h < RELIABLE_MAX_H:
                 est_cm = DIST_F_PX * BUG_HEIGHT_CM / box_h
-                if last_dist is not None and est_cm < last_dist:
-                    rate = last_dist - est_cm
-                    dist_rate = rate if dist_rate <= 0 else 0.7 * dist_rate + 0.3 * rate
-                last_dist = est_cm
-                since_rel = 0
                 cur_cm = est_cm
+                if sticky and mem_cm is not None:
+                    # 只许越来越近：进过外推区之后再看到「又变远了」的读数（框重新变完整，
+                    # 其实识别质量已经掉了），不能让它把估计值拉回去、把判据计数清零
+                    cur_cm = min(cur_cm, mem_cm)
+                if last_dist is not None and cur_cm < last_dist:
+                    rate = last_dist - cur_cm
+                    dist_rate = rate if dist_rate <= 0 else 0.7 * dist_rate + 0.3 * rate
+                last_dist = cur_cm
+                since_rel = 0
             else:
                 # 框被裁：按前面测到的下降速率外推，别让距离卡住不降（同 AutonomousCrawling）
                 since_rel += 1
+                sticky = True
                 est_cm = None
                 cur_cm = None if last_dist is None else max(0.0, last_dist - dist_rate * since_rel)
+            if cur_cm is not None:
+                mem_cm = cur_cm      # 记忆距离：丢目标那一刻就按它算剩下的路
+            mem_cx = cx              # 记忆横向：最后一次看到目标的位置
             dep_cm = None if (no_depth or depth is None) else depth_cm_at(depth, cx, cy, rotate)
             close = (cur_cm is not None and cur_cm <= STOP_DIST_CM) or \
                     (dep_cm is not None and dep_cm < STOP_DEPTH_CM)
@@ -832,7 +860,7 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
             print('pick%d 靠近 #%d conf=%.2f 中心=(%.0f,%.0f) 框=%dx%d 距离=%s%s 深度=%s 22=%d 23=%d 24=%d%s'
                   % (pick_count, step, det['conf'], cx, cy, det['w'], box_h,
                      '%.1fcm' % cur_cm if cur_cm is not None else '--',
-                     '(外推)' if est_cm is None else '',
+                     '(外推)' if est_cm is None else ('(锁定)' if sticky else ''),
                      '%.1fcm' % dep_cm if dep_cm is not None else '--',
                      w22, z23, y24,
                      ' -> 到距离 %d/%d' % (hit, GRAB_HOLD) if close else ''), flush=True)
@@ -940,7 +968,7 @@ def start_run_log():
 
 def main():
     """主流程：按 JSON 调用移动、转弯、夹取和放下。"""
-    global STRIDE_SCALE, CAM24_AIM_CY
+    global STRIDE_SCALE
     parser = argparse.ArgumentParser(description='融合导航 + JSON 路线运行')
     parser.add_argument('--color', default='red',
                         choices=['red', 'green', 'blue', 'yellow', 'cz1'])
@@ -972,11 +1000,6 @@ def main():
                              'reference=按路线走、方块当参照（B 方案，试验中）')
     parser.add_argument('--model', default=DEFAULT_MODEL, help='YOLO 模型路径（pick 用）')
     parser.add_argument('--conf', type=float, default=MODEL_CONF, help='YOLO 置信度阈值')
-    parser.add_argument('--aim-cy', type=float, default=CAM24_AIM_CY,
-                        help='靠近时把目标压到画面这一行（默认 %.0f）。相机在夹爪**下面**，'
-                             '居中目标时夹爪其实在目标上方夹不到，所以目标要压在画面偏上'
-                             '（比正中 240 小）。夹到目标上方/夹空就往小调，夹到下方就往大调'
-                             % CAM24_AIM_CY)
     parser.add_argument('--classes', default='', help='YOLO 目标类别，逗号分隔；留空=接受所有')
     parser.add_argument('--no-depth', action='store_true',
                         help='关掉深度相机，只用「目标中心→夹爪像素」判够近')
@@ -985,7 +1008,6 @@ def main():
     args = parser.parse_args()
 
     STRIDE_SCALE = args.stride_scale
-    CAM24_AIM_CY = args.aim_cy
 
     log_file = start_run_log()
 
