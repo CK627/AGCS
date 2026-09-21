@@ -1,11 +1,13 @@
 #!/usr/bin/python3
 # coding=utf8
-"""1.py —— 融合导航 + JSON 路线（独立脚本，不依赖 NO6/NO7）。
+"""1.py —— 融合导航 + JSON 路线 + YOLO/深度夹取（独立脚本，只依赖 agcs_lib）。
 
-直线段走融合导航（相机写状态、IMU 管执行、先航向后横向）。默认用 ReferenceFusion
-（B 方案：按路线走、方块当固定参照，纠正漂移但不被方块吸过去）；--fusion lane
-可退回旧的 LaneFusion(cx0 hack)。夹取/放下/路线读 json1.json 的固定脉宽，不碰 YOLO。
-YOLO 夹取那套在 2.py。
+走路：直线段走融合导航（相机写状态、IMU 管执行、先航向后横向）。默认 LaneFusion
+（--fusion reference 可换 ReferenceFusion）。颜色检测只用于导航「保证不跑歪」。
+
+夹取（pick）：路线把机身开到定点（目标在机身左侧）后，YOLO 认目标 + 深度判距（≤8cm 就夹）→ 闭合夹爪 → 拔起 → 复位；
+不够近就机体左移微调（限 --max-approach 步），认不到则兜底照常夹（路线可信）。
+--manual 退回手动回车微调。place 仍读 json1.json 固定脉宽。全程默认全自动，无 input 阻塞。
 """
 
 import argparse
@@ -19,6 +21,7 @@ import threading
 import time
 
 import cv2
+import numpy as np
 
 _PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PKG_ROOT not in sys.path:
@@ -42,6 +45,7 @@ from agcs_lib.heading_fusion import (
     ReferenceFusion,
     range_from_radius_px,
 )
+from agcs_lib.depth import DepthCamera
 
 try:
     from communication import task_server
@@ -63,6 +67,13 @@ GRIPPER_OPEN = 400   # 放下时 25 号夹爪打开的脉宽，越小张得越�
 PULL_UP_22 = 450
 PICK1_RESTORE_24 = 260  # 第一次夹取结束后恢复时 24 号腕俯仰的脉宽（不是复位位 330）；
                         # 160 太低（相机朝下看不到目标、还可能照到夹爪里的方块），现场改 260。
+# ---------- YOLO + 深度夹取（pick 用，走路部分不碰） ----------
+DEFAULT_MODEL = 'models/v8n.onnx'  # YOLO 模型路径（相对 spiderpi 根目录）
+MODEL_CONF = 0.8                   # 置信度阈值
+STOP_DEPTH_CM = 8.0                # 目标距离 ≤ N cm 就夹（定点夹取，固定值）
+CLOSE_AREA = 20000                 # bbox w×h ≥ N 判「够近」（读不到深度时的兜底）
+PICK_STEP_MM = 30                  # 不够近时每次左移 mm（目标在机身左侧）
+PICK_MAX_APPROACH = 3              # 不够近时最多左移几步
 MOVE_SPEED = 50      # 六足直线前进/后退的速度，越大走得越快
 TURN_SPEED = 30      # 六足左转/右转的速度，越大转得越快
 STRIDE_SCALE = 0.95   # 前进/后退名义步幅的缩放系数；现场实测 0.946 短一点、0.96 又过了，0.95 折中
@@ -261,19 +272,34 @@ def place1_prepare(board, pulses=None):
 
 
 def open_vision(color, min_area):
-    """打开摄像头，返回 (cam, detector)。detector 负责检测和推流。"""
+    """打开摄像头，返回 (cam, read_frame, detector, publish)。
+
+    read_frame：读一帧并去畸变（颜色导航和 YOLO 共用这一路，只开一个 /dev/video0）。
+    detector：颜色检测（融合导航用），内部调 read_frame + 推流。
+    publish：推流（YOLO 检测也用它推标注画面）。
+    """
     params = load_params()
     rotate = params['vision'].get('camera_rotate', 0)
     lab = load_lab_data()
     mapx, mapy = load_undistort_maps()
     cam = open_camera()
 
-    def detector():
+    def read_frame():
         with camera_lock:
             f = capture(cam)
         if f is None:
             return None
-        frame = cv2.remap(correct_camera(f, rotate), mapx, mapy, cv2.INTER_LINEAR)
+        return cv2.remap(correct_camera(f, rotate), mapx, mapy, cv2.INTER_LINEAR)
+
+    def publish(frame):
+        if task_server is not None:
+            task_server.publish_frame(frame, max_fps=10.0)
+            task_server.publish_lab_frame(lab_view(frame, lab, color), max_fps=10.0)
+
+    def detector():
+        frame = read_frame()
+        if frame is None:
+            return None
         result = detect_color(frame, lab, color, min_area=min_area)
         if result is not None:
             x, y, w, h = cv2.boundingRect(result['contour'])
@@ -283,12 +309,108 @@ def open_vision(color, min_area):
             cv2.circle(frame, (cx, cy), int(result.get('radius', 20)), (0, 255, 0), 2)
             cv2.putText(frame, color, (cx - 20, cy - 20),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        if task_server is not None:
-            task_server.publish_frame(frame, max_fps=10.0)
-            task_server.publish_lab_frame(lab_view(frame, lab, color), max_fps=10.0)
+        publish(frame)
         return result
 
-    return cam, detector
+    return cam, read_frame, detector, publish
+
+
+def depth_cm_at(depth, cx, cy, rotate):
+    """读深度相机在彩色像素 (cx,cy) 处的距离(cm)；无有效读数返回 None。"""
+    try:
+        d = depth.read_depth(timeout_ms=200)
+        if d is None:
+            return None
+        if rotate:
+            d = correct_camera(d, rotate)
+        h, w = d.shape
+        dx = min(w - 1, max(0, int(round(cx))))
+        dy = min(h - 1, max(0, int(round(cy))))
+        z_mm = int(d[dy, dx])
+        if z_mm <= 0:
+            return None
+        return z_mm / 10.0
+    except Exception:
+        return None
+
+
+class ModelDetector:
+    """ONNX YOLO 检测器（onnxruntime 本地推理），detect() 返回 {'x','y','w','h','conf'} 或 None。
+
+    从 Auto-capture-1.py 拷过来，让 1.py 独立自包含（只依赖 agcs_lib），将来好直接顶替 NO6/NO7。
+    """
+
+    NAME = 'fake bug'  # 目标类别名
+
+    def __init__(self, model_path, conf, classes, read_frame, publish):
+        import onnxruntime as ort
+        opts = ort.SessionOptions()
+        opts.intra_op_num_threads = 4  # Pi5 四核并行
+        self.sess = ort.InferenceSession(model_path, opts, providers=['CPUExecutionProvider'])
+        self.input_name = self.sess.get_inputs()[0].name
+        self.output_name = self.sess.get_outputs()[0].name
+        self.conf = conf
+        self.classes = set(classes) if classes else None
+        self.read_frame = read_frame
+        self.publish = publish
+        shp = self.sess.get_inputs()[0].shape
+        self.in_h, self.in_w = int(shp[2]), int(shp[3])
+
+    def _letterbox(self, img):
+        """等比缩放到模型输入尺寸补灰边，返回 (画布, 缩放比, pad_x, pad_y)。"""
+        h0, w0 = img.shape[:2]
+        ih, iw = self.in_h, self.in_w
+        r = min(iw / w0, ih / h0)
+        new_w, new_h = int(round(w0 * r)), int(round(h0 * r))
+        pad_x, pad_y = (iw - new_w) // 2, (ih - new_h) // 2
+        canvas = np.full((ih, iw, 3), 114, dtype=np.uint8)
+        canvas[pad_y:pad_y + new_h, pad_x:pad_x + new_w] = cv2.resize(img, (new_w, new_h))
+        return canvas, r, pad_x, pad_y
+
+    def detect(self):
+        """检测一帧，返回 {'x','y','w','h','conf','name'} 或 None，并推流标注画面。"""
+        if self.classes and self.NAME not in self.classes:
+            return None
+        frame = self.read_frame()
+        if frame is None:
+            return None
+        h0, w0 = frame.shape[:2]
+        canvas, r, pad_x, pad_y = self._letterbox(frame)
+        blob = canvas[:, :, ::-1].transpose(2, 0, 1)[None].astype(np.float32) / 255.0
+        out = self.sess.run([self.output_name], {self.input_name: blob})[0][0]  # [4+nc, 8400]
+
+        nc = out.shape[0] - 4   # 类别数（单类=1，多类=16）
+        best = None  # (x1, y1, x2, y2, score)
+        for i in range(out.shape[1]):
+            scores = out[4:4 + nc, i]
+            cls = int(scores.argmax())
+            score = float(scores[cls])
+            if score < self.conf:
+                continue
+            cx, cy, w, h = out[0, i], out[1, i], out[2, i], out[3, i]
+            x1 = (cx - w / 2 - pad_x) / r
+            y1 = (cy - h / 2 - pad_y) / r
+            x2 = (cx + w / 2 - pad_x) / r
+            y2 = (cy + h / 2 - pad_y) / r
+            x1 = max(0, min(w0, x1))
+            y1 = max(0, min(h0, y1))
+            x2 = max(0, min(w0, x2))
+            y2 = max(0, min(h0, y2))
+            if x2 - x1 < 2 or y2 - y1 < 2:
+                continue
+            if best is None or score > best[4]:
+                best = (x1, y1, x2, y2, score)
+
+        result = None
+        if best is not None:
+            x1, y1, x2, y2, score = best
+            result = {'x': int(x1), 'y': int(y1), 'w': int(x2 - x1), 'h': int(y2 - y1),
+                      'conf': float(score), 'name': self.NAME}
+            cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 2)
+            cv2.putText(frame, '%s %.2f' % (self.NAME, score), (int(x1), int(y1) - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+        self.publish(frame)
+        return result
 
 
 def video_loop(detector, stop_event):
@@ -506,19 +628,63 @@ def imu_turn(ik, board, imu_state, delta_deg):
         print('转弯后修正 %+d°（当前误差 %+.1f°）' % (step, err), flush=True)
 
 
-def do_pick(board, pick_count, pulses=None, pull_up_pulse=None):
-    """执行第 1/2 次夹取。第一次夹取后 24 号恢复到 160（不是复位位 330）。"""
+def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
+            pull_up_pulse=None, no_depth=False, manual=False):
+    """执行第 1/2 次夹取。默认全自动：摆臂 → YOLO 认目标 + 深度判距 → 闭合夹爪 → 拔起 → 复位。
+
+    路线把机身开到定点（目标在机身左侧）。目标距离 ≤ STOP_DEPTH_CM（8cm）就夹；
+    不够近就机体左移一小步再判（限 PICK_MAX_APPROACH 步）；连续认不到就兜底用 JSON 固定脉宽夹。
+    --manual 退回原来的手动回车微调。
+    """
     if pick_count == 1:
         state = pick1_prepare(board, pulses)
     else:
         state = pick2_prepare(board, pulses)
-    arm_fine_tune(board, state, 'pick', pull_up=(pick_count == 1),
-                  pull_up_pulse=pull_up_pulse,
-                  restore_s24=(PICK1_RESTORE_24 if pick_count == 1 else None))
+    if manual:
+        arm_fine_tune(board, state, 'pick', pull_up=(pick_count == 1),
+                      pull_up_pulse=pull_up_pulse,
+                      restore_s24=(PICK1_RESTORE_24 if pick_count == 1 else None))
+        return
+
+    for step in range(PICK_MAX_APPROACH + 1):
+        det = model_det.detect()
+        if det is None:
+            print('pick%d YOLO 未识别到目标（第 %d/%d 次，不左移）'
+                  % (pick_count, step + 1, PICK_MAX_APPROACH + 1), flush=True)
+            time.sleep(0.3)
+            continue
+        cx = det['x'] + det['w'] / 2.0
+        cy = det['y'] + det['h'] / 2.0
+        area = det['w'] * det['h']
+        dist_cm = None if (no_depth or depth is None) else depth_cm_at(depth, cx, cy, rotate)
+        close = (dist_cm is not None and dist_cm < STOP_DEPTH_CM) or \
+                (dist_cm is None and (no_depth or depth is None) and area >= CLOSE_AREA)
+        print('pick%d YOLO conf=%.2f bbox=%dx%d dist=%s%s'
+              % (pick_count, det['conf'], det['w'], det['h'],
+                 '%.1fcm' % dist_cm if dist_cm is not None else 'None',
+                 ' -> 够近，夹取' if close else ''), flush=True)
+        if close:
+            break
+        # 不够近：左移（目标在机身左侧，笔直走来的）
+        if step < PICK_MAX_APPROACH:
+            ik.left_move(ik.initial_pos, 2, PICK_STEP_MM, MOVE_SPEED, 1)
+            time.sleep(0.1)
+
+    board.bus_servo_set_position(2.0, [[25, GRIPPER_CLOSE]])
+    time.sleep(2.0)
+    time.sleep(0.5)
+    if pick_count == 1:
+        pulse = PULL_UP_22 if pull_up_pulse is None else clamp_pulse(pull_up_pulse)
+        print('拔起：22 号肩舵机 %d → %d（抬升 %+d）'
+              % (state[22], pulse, pulse - state[22]), flush=True)
+        board.bus_servo_set_position(1.0, [[22, pulse]])
+        time.sleep(1.0)
+    restore_travel(board, GRIPPER_CLOSE,
+                   s24=(PICK1_RESTORE_24 if pick_count == 1 else None))
 
 
-def do_place(board, place_count, pulses=None):
-    """执行第 1/2 次放下。"""
+def do_place(board, place_count, pulses=None, manual=False):
+    """执行第 1/2 次放下。默认全自动，--manual 退回手动回车微调。"""
     if place_count == 1:
         state = place1_prepare(board, pulses)
     else:
@@ -526,7 +692,13 @@ def do_place(board, place_count, pulses=None):
         print('place2：使用记录的 21-24 放下脉宽', flush=True)
         set_servos(board, p, [21, 22, 23, 24])
         state = dict(p)
-    arm_fine_tune(board, state, 'place')
+    if manual:
+        arm_fine_tune(board, state, 'place')
+        return
+    board.bus_servo_set_position(2.0, [[25, GRIPPER_OPEN]])
+    time.sleep(2.0)
+    time.sleep(0.5)
+    restore_travel(board, GRIPPER_OPEN)
 
 
 class _Tee(object):
@@ -577,7 +749,7 @@ def start_run_log():
 
 def main():
     """主流程：按 JSON 调用移动、转弯、夹取和放下。"""
-    global STRIDE_SCALE
+    global STRIDE_SCALE, CLOSE_AREA, PICK_STEP_MM, PICK_MAX_APPROACH
     parser = argparse.ArgumentParser(description='融合导航 + JSON 路线运行')
     parser.add_argument('--color', default='red',
                         choices=['red', 'green', 'blue', 'yellow', 'cz1'])
@@ -607,9 +779,24 @@ def main():
     parser.add_argument('--fusion', default='lane', choices=['lane', 'reference'],
                         help='直线段融合算法：lane=旧的 LaneFusion（默认，稳定），'
                              'reference=按路线走、方块当参照（B 方案，试验中）')
+    parser.add_argument('--model', default=DEFAULT_MODEL, help='YOLO 模型路径（pick 用）')
+    parser.add_argument('--conf', type=float, default=MODEL_CONF, help='YOLO 置信度阈值')
+    parser.add_argument('--classes', default='', help='YOLO 目标类别，逗号分隔；留空=接受所有')
+    parser.add_argument('--no-depth', action='store_true', help='关掉深度相机，退回 bbox 面积判近')
+    parser.add_argument('--close-area', type=int, default=CLOSE_AREA,
+                        help='bbox w×h ≥ N 判「够近」（读不到深度时的兜底）')
+    parser.add_argument('--step-mm', type=int, default=PICK_STEP_MM,
+                        help='pick 不够近时每次左移 mm（目标在机身左侧）')
+    parser.add_argument('--max-approach', type=int, default=PICK_MAX_APPROACH,
+                        help='pick 不够近时最多左移几步')
+    parser.add_argument('--manual', action='store_true',
+                        help='夹取/放下恢复手动回车微调（调试用）')
     args = parser.parse_args()
 
     STRIDE_SCALE = args.stride_scale
+    CLOSE_AREA = args.close_area
+    PICK_STEP_MM = args.step_mm
+    PICK_MAX_APPROACH = args.max_approach
 
     log_file = start_run_log()
 
@@ -619,8 +806,26 @@ def main():
     board = make_board()
     ik = make_ik(board)
     imu_state = init_imu(board)
-    cam, detector = open_vision(args.color, args.min_area)
+    cam, read_frame, detector, publish = open_vision(args.color, args.min_area)
     log_battery(board, tag='启动')   # 只记录分析，不参与控制
+
+    # YOLO 检测器（pick 用）：独立自包含，跟颜色导航共用 read_frame/publish
+    model_path = args.model if os.path.isabs(args.model) else os.path.join(_PKG_ROOT, args.model)
+    classes = [c.strip() for c in args.classes.split(',') if c.strip()]
+    model_det = ModelDetector(model_path, args.conf, classes, read_frame, publish)
+
+    # 深度相机（pick 判够近用）：Astra Pro，走 OpenNI2
+    depth = None
+    if not args.no_depth:
+        try:
+            depth = DepthCamera()
+            depth.open()
+            depth.start_depth()
+            print('深度相机已打开', flush=True)
+        except Exception as e:
+            print('深度相机打开失败（%s），退回 bbox 面积判近' % e, flush=True)
+            depth = None
+    rotate = load_params()['vision'].get('camera_rotate', 0)
 
     video_stop = threading.Event()
     video_thread = threading.Thread(
@@ -720,7 +925,9 @@ def main():
             print('%d/%d pick%d' % (i, len(actions), pick_count), flush=True)
             log_battery(board, tag='夹取前')   # 只记录分析，不参与控制
             pulses = {int(k): int(v) for k, v in act.get('pulses', {}).items()} if act.get('pulses') else None
-            do_pick(board, pick_count, pulses, pull_up_pulse=args.pull_up)
+            do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
+                    pull_up_pulse=args.pull_up, no_depth=args.no_depth,
+                    manual=args.manual)
             picked_count += 1
             report(picked_count=picked_count,
                    message='第 %d 次夹取完成' % picked_count)
@@ -734,7 +941,7 @@ def main():
             place_count += 1
             print('%d/%d place%d' % (i, len(actions), place_count), flush=True)
             pulses = {int(k): int(v) for k, v in act.get('pulses', {}).items()} if act.get('pulses') else None
-            do_place(board, place_count, pulses)
+            do_place(board, place_count, pulses, manual=args.manual)
             report(message='第 %d 次放下完成' % place_count)
             imu_state['tracker'].since_last()
             if isinstance(fusion, ReferenceFusion):
@@ -756,6 +963,11 @@ def main():
 
     video_stop.set()
     cam.camera_close()
+    if depth is not None:
+        try:
+            depth.close()
+        except Exception:
+            pass
     tracker = imu_state.get('tracker')
     if tracker is not None:
         tracker.stop()
