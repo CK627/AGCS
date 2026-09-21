@@ -6,11 +6,15 @@
 （--fusion reference 可换 ReferenceFusion）。颜色检测只用于导航「保证不跑歪」。
 
 夹取（pick）：路线把机身开到定点后，先只转 21 观测目标；观测到 → 靠近夹取：22/23 渐进前伸，
-21 水平居中，24 不锁 JSON 角度、每步把目标往画面中间拉（保证目标一直看得见）；
-**认不到就原地摆动 24 找回来，找回来才继续伸**（摸黑伸只会越走越瞎）。
+21 水平居中，24 不锁 JSON 角度、每步把目标往画面这一行（CAM24_AIM_CY，默认 150）拉。
+相机装在夹爪**下面**，居中目标的话夹爪会落在目标上方夹不到，所以目标要压在画面**偏上**。
 判距和 AutonomousCrawling 同一套：用 bbox 框高估前方距离（焦距 × 目标高度 ÷ 框高），
 估到 ≤STOP_DIST_CM 就夹（深度 ≤STOP_DEPTH_CM 也算，但 Astra Pro 近端 0.6m 是盲区，基本不触发）；
 一直估不到够近就伸到 JSON 夹取位 +REACH_EXTRA 那个标定位姿再夹。
+**认不到就先原地摆动 24 找回来**（摸黑伸只会越走越瞎）；找不回就是贴到跟前、模型认不出了
+（训练集都是远距离的，这是常态），此时按「记忆里最后一次可靠估距 + 实测下降速率」算还要伸
+几步，摸黑伸完这几步再夹（时间法，见 BLIND_MIN_RATE_CM / BLIND_MAX_STEPS）；
+连可靠估距都没有才退回 JSON 固定脉宽瞬摆。
 观测不到 → 摆 22/23/24 固定脉宽夹取（兜底）。
 place 仍读 json1.json 固定脉宽。全程默认全自动，无 input 阻塞。
 """
@@ -87,6 +91,10 @@ STOP_DIST_CM = 9.0                 # 估距 ≤ N cm 就夹（调小=更近）
                                    # 估距下限：框最高只能到 480px，838×5/480≈8.7cm，所以 9 基本
                                    # 就是「框快占满画面」；框被画面裁掉时按速率外推（同 AutonomousCrawling）
 RELIABLE_MAX_H = 450               # 框高超过它=框被裁了，距离不可靠，改用速率外推
+# 目标贴到跟前时模型基本认不出来（训练集都是远距离的），这时候不能靠画面了，
+# 改用「记忆里最后一次可靠估距 + 实测下降速率」算还要伸几步，摸黑伸完再夹。
+BLIND_MIN_RATE_CM = 0.15           # 盲走时每步的兜底下降速率（cm/步），实测速率太小/为 0 时用它
+BLIND_MAX_STEPS = 25               # 盲走最多再伸多少步（安全上限，算法算出一大截也不许冲）
 STOP_DEPTH_CM = 5.0                # 深度 ≤ N cm 也算够近（Astra Pro 近端 0.6m 内是盲区，基本不触发）
 REACH_EXTRA = 20                   # 22/23 在 JSON 夹取位上额外前伸的量（估距一直不够近时的兜底终点）
 GRAB_HOLD = 3                      # 判据要连续 N 帧成立才夹（单帧检测抖一下不能夹）
@@ -101,11 +109,13 @@ TRACK_DEAD_X = 40                  # 21 水平死区（像素）
 # 24 号靠近时**不锁 JSON 角度**，只跟着目标走，保证它一直在画面里。
 # 22/23 前伸会把相机整个甩出去，24 不跟的话目标一步就飘出画面 → 后面再也认不到，
 # 所以这里必须每步都跟（P 控制），而不是只在画面边缘才动手。
-CAM24_MIN = 160                    # 24 下限（再小=太朝下，会照到自己的夹爪）
+CAM24_MIN = 130                    # 24 下限（再小=太朝下，会照到自己的夹爪）
 CAM24_MAX = 360                    # 24 上限（再大=太朝上，目标跑出画面底部）
 CAM24_STEP = 6                     # 丢目标后找回时每次摆动的脉宽
-CAM24_AIM_CY = 190                 # 24 把目标往画面这一行拉。相机装在夹爪**上面**，看的是
-                                   # 目标偏上的位置，所以这一行要比画面正中（240）更靠上
+CAM24_AIM_CY = 150                 # 24 把目标往画面这一行拉。相机装在夹爪**下面**，相机一旦居中
+                                   # 目标，夹爪其实落在目标上方（就差这一点，夹不到），得让相机
+                                   # 略朝下看：目标压到画面偏上，夹爪才正对目标。所以这一行要比
+                                   # 画面正中（240）靠上。夹到目标上方就往小调（--aim-cy）
 CAM24_DEAD_Y = 40                  # 俯仰死区（像素）：目标在中间 ±40 内不动 24
 CAM24_P = 0.06                     # 俯仰 P 增益（像素→脉宽），越大跟得越急
 MOVE_SPEED = 50      # 六足直线前进/后退的速度，越大走得越快
@@ -767,10 +777,33 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
                 # 目标丢了 → 原地找回来，这一步**不伸**（摸黑伸出去只会越走越瞎）
                 det, y24 = reacquire(board, model_det, y24, pick_count, step)
                 if det is None:
-                    print('pick%d 靠近中目标丢失且找不回，改用 JSON 固定脉宽夹取'
-                          % pick_count, flush=True)
-                    set_servos(board, state, [22, 23, 24])
-                    w22 = state[22]
+                    # 找不回就不再靠画面了：模型是远距离训的，贴到跟前反而认不出，
+                    # 这是常态不是故障。按「记忆里最后一次可靠估距 + 实测下降速率」
+                    # 算还要伸几步，摸黑把这几步伸完再夹（时间法），不再瞬摆到 JSON 位姿。
+                    if last_dist is not None and dist_rate > 0:
+                        step_cm = max(dist_rate, BLIND_MIN_RATE_CM)
+                        need = int(math.ceil((last_dist - STOP_DIST_CM) / step_cm))
+                        need = max(1, min(need, BLIND_MAX_STEPS))
+                        print('pick%d 靠近 #%d 目标丢失且找不回：按记忆距离 %.1fcm、每步降 '
+                              '%.2fcm，再摸黑伸 %d 步就夹'
+                              % (pick_count, step, last_dist, step_cm, need), flush=True)
+                        for k in range(need):
+                            w22 = _step_toward(w22, t22, APPROACH_D)
+                            z23 = _step_toward(z23, t23, APPROACH_D)
+                            board.bus_servo_set_position(APPROACH_SLEEP,
+                                                         [[22, w22], [23, z23], [24, y24]])
+                            time.sleep(APPROACH_SLEEP)
+                            print('pick%d 盲走 %d/%d 22=%d 23=%d 24=%d'
+                                  % (pick_count, k + 1, need, w22, z23, y24), flush=True)
+                            if w22 == t22 and z23 == t23:
+                                print('pick%d 盲走中 22/23 已到 JSON 夹取位，停' % pick_count,
+                                      flush=True)
+                                break
+                    else:
+                        print('pick%d 靠近中目标丢失且找不回，也没有可靠估距可推算，'
+                              '改用 JSON 固定脉宽夹取' % pick_count, flush=True)
+                        set_servos(board, state, [22, 23, 24])
+                        w22 = state[22]
                     break
                 continue
             cx = det['x'] + det['w'] / 2.0
@@ -907,7 +940,7 @@ def start_run_log():
 
 def main():
     """主流程：按 JSON 调用移动、转弯、夹取和放下。"""
-    global STRIDE_SCALE
+    global STRIDE_SCALE, CAM24_AIM_CY
     parser = argparse.ArgumentParser(description='融合导航 + JSON 路线运行')
     parser.add_argument('--color', default='red',
                         choices=['red', 'green', 'blue', 'yellow', 'cz1'])
@@ -939,6 +972,11 @@ def main():
                              'reference=按路线走、方块当参照（B 方案，试验中）')
     parser.add_argument('--model', default=DEFAULT_MODEL, help='YOLO 模型路径（pick 用）')
     parser.add_argument('--conf', type=float, default=MODEL_CONF, help='YOLO 置信度阈值')
+    parser.add_argument('--aim-cy', type=float, default=CAM24_AIM_CY,
+                        help='靠近时把目标压到画面这一行（默认 %.0f）。相机在夹爪**下面**，'
+                             '居中目标时夹爪其实在目标上方夹不到，所以目标要压在画面偏上'
+                             '（比正中 240 小）。夹到目标上方/夹空就往小调，夹到下方就往大调'
+                             % CAM24_AIM_CY)
     parser.add_argument('--classes', default='', help='YOLO 目标类别，逗号分隔；留空=接受所有')
     parser.add_argument('--no-depth', action='store_true',
                         help='关掉深度相机，只用「目标中心→夹爪像素」判够近')
@@ -947,6 +985,7 @@ def main():
     args = parser.parse_args()
 
     STRIDE_SCALE = args.stride_scale
+    CAM24_AIM_CY = args.aim_cy
 
     log_file = start_run_log()
 
