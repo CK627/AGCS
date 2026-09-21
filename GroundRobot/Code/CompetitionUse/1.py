@@ -94,10 +94,14 @@ STOP_DIST_CM = 9.0                 # 估距 ≤ N cm 就夹（调小=更近）
                                    # 就是「框快占满画面」；框被画面裁掉时按速率外推（同 AutonomousCrawling）
 RELIABLE_MAX_H = 450               # 框高超过它=框被裁了，距离不可靠，改用速率外推
 STOP_DEPTH_CM = 5.0                # 深度 ≤ N cm 也算够近（Astra Pro 近端 0.6m 内是盲区，基本不触发）
-REACH_EXTRA = 45                   # 22/23 在 JSON 夹取位上额外前伸的量（--reach-extra 可调）
-REACH_EXTRA_MAX = 90               # --reach-extra 的硬上限：再往前手臂太低，夹爪会杵到地面
+REACH_EXTRA = 80                   # 22/23 在 JSON 夹取位上额外前伸的量（--reach-extra 可调）
                                    # 现场轨迹：20（收尾后停在 22=410）→「差一点夹到」→ 45
-                                   # 注意：这个值同时是收尾盲走的终点，估距不够近时靠它兜底
+                                   # → 60（18-19，仍差一点）→ 80（2026-09-21 现场改）
+REACH_EXTRA_MAX = 120              # --reach-extra 的硬上限。原来卡 90 的理由是「再往前手臂
+                                   # 太低，夹爪会杵到地面」，但现场是「向下不够」（够不到，
+                                   # 不是杵到），所以放宽到 120 让现场试；真杵到地面就往回收
+REACH_EXTRA_PICK2_MAX = 60         # pick2 单独收窄：它的 JSON 已经是 23=500 的极限伸展位，
+                                   # 再按 pick1 的 80 加会到 580，手臂可能伸过头
 GRAB_HOLD = 3                      # 判据要连续 N 帧成立才夹（单帧检测抖一下不能夹）
 OBSERVE_TIMEOUT_S = 3.0            # 转 21 后观测目标的最长时间（秒）
 # ---------- 目标丢失 = 「已经贴脸」的信号（盲走收尾） ----------
@@ -127,10 +131,12 @@ STICKY_TOL_CM = 0.5                # 「只许越来越近」的容差（cm）�
 #   · 11.4cm 时框顶 28 也还认得出（conf 0.90），又被框顶判成收尾。
 # 所以收尾只留一条：模型真的认不出（丢目标且锁定估距 ≤LOST_NEAR_CM）。
 # 另外两个出口是正常夹取、不算收尾：估距真到 STOP_DIST_CM；手臂伸到终点。
-FINISH_EXTRA_CM = 2.0              # 收尾盲走**多走**这么多（现场「差一点夹到，再伸过去一点」：
-                                   # 1cm 还差一点，2026-09-21 加到 2cm）。注意它受 22/23 终点
-                                   # 限制：终点不够前时会被终点截住，这时要调 --reach-extra
-                                   # 把终点推出去，光加这个数没用
+FINISH_EXTRA_CM = 4.0              # 收尾盲走**多走**这么多（现场「差一点夹到，再伸过去一点」：
+                                   # 1cm → 2cm → 4cm，2026-09-21 现场一路加上来的）。
+                                   # **注意它受 22/23 终点限制**：终点不够前时会被终点截住，
+                                   # 现场日志里那句「22/23 已到路线 JSON 终点（2/11 步），
+                                   # 手臂伸不动了」就是这个 —— 加这个数一点用都没有，
+                                   # 要加的是 REACH_EXTRA / --reach-extra 把终点推出去
 # ---------- 靠近夹取（22/23 渐进前伸，21 水平居中，24 只管把目标留在画面里） ----------
 APPROACH_D = 5                     # 每步 22/23 朝目标脉宽靠近的最大量（越小越稳）
 APPROACH_STEPS = 90                # 靠近最多步数
@@ -772,8 +778,10 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
 
     state = dict(pulses)
     stop_cm = STOP_DIST_CM if stop_dist is None else float(stop_dist)
-    reach = REACH_EXTRA if reach_extra is None else int(reach_extra)
-    reach = max(0, min(REACH_EXTRA_MAX, reach))     # 硬上限：再往前夹爪会杵到地面
+    # 前伸量的上限 pick1/pick2 分开（pick2 的 JSON 已经是极限伸展位，见 REACH_EXTRA_PICK2_MAX）
+    reach_cap = REACH_EXTRA_MAX if pick_count == 1 else REACH_EXTRA_PICK2_MAX
+    reach = min(REACH_EXTRA, reach_cap) if reach_extra is None else int(reach_extra)
+    reach = max(0, min(reach_cap, reach))
     # 1. 先只转 21 到夹取方向（不动 22/23/24），再观测目标（给足时间让模型识别）
     board.bus_servo_set_position(1.0, [[21, state[21]]])
     time.sleep(1.0)
