@@ -5,7 +5,10 @@
 走路：直线段走融合导航（相机写状态、IMU 管执行、先航向后横向）。默认 LaneFusion
 （--fusion reference 可换 ReferenceFusion）。颜色检测只用于导航「保证不跑歪」。
 
-夹取（pick）：路线把机身开到定点后，先只转 21 观测目标；观测到 → 22/23 渐进展开+24 联动保持水平（同 AutonomousCrawling）+ 深度判距（≤8cm 就夹）；
+夹取（pick）：路线把机身开到定点后，先只转 21 观测目标；观测到 → 靠近夹取：22/23 渐进前伸，
+21 水平居中，24 不锁 JSON 角度、只在目标快出画面时抬/压（保证目标一直在画面里）；
+判「够近」看 YOLO 目标中心到夹爪像素 (GRIP_PX, GRIP_PY) 的距离（≤GRAB_PX 就夹），
+深度 ≤STOP_DEPTH_CM 作为附加判据（Astra Pro 近端是盲区，一般不触发）。
 观测不到 → 摆 22/23/24 固定脉宽夹取（兜底）。--manual 退回手动回车微调。
 place 仍读 json1.json 固定脉宽。全程默认全自动，无 input 阻塞。
 """
@@ -70,16 +73,28 @@ PICK1_RESTORE_24 = 260  # 第一次夹取结束后恢复时 24 号腕俯仰的�
 # ---------- YOLO + 深度夹取（pick 用，走路部分不碰） ----------
 DEFAULT_MODEL = 'models/v8n.onnx'  # YOLO 模型路径（相对 spiderpi 根目录）
 MODEL_CONF = 0.8                   # 置信度阈值
-STOP_DEPTH_CM = 8.0                # 目标距离 ≤ N cm 就夹（定点夹取，固定值）
-CLOSE_AREA = 20000                 # bbox w×h ≥ N 判「够近」（读不到深度时的兜底）
+STOP_DEPTH_CM = 5.0                # 深度 ≤ N cm 判「夹爪够到目标」（Astra Pro 近端有盲区，基本不触发）
+REACH_EXTRA = 20                   # 22/23 在 JSON 夹取位上额外前伸的量（判不到够近时的兜底终点）
 OBSERVE_TIMEOUT_S = 3.0            # 转 21 后观测目标的最长时间（秒）
-# ---------- 靠近夹取（22/23/24 渐进插值到 JSON 夹取位，21 保持居中） ----------
-APPROACH_D = 6                     # 每步每个舵机朝 JSON 夹取位靠近的最大量
+# ---------- 靠近夹取（22/23 渐进前伸，21 水平居中，24 只保证目标不丢） ----------
+APPROACH_D = 6                     # 每步 22/23 朝目标脉宽靠近的最大量
 APPROACH_STEPS = 60                # 靠近最多步数
 APPROACH_SLEEP = 0.12              # 每步间隔（秒）
 IMG_CX = 320                       # 画面中心 x（640×480），21 水平跟踪用
 TRACK_P = 0.1                      # 21 跟踪 P 增益
 TRACK_DEAD_X = 40                  # 21 水平死区（像素）
+# 24 号靠近时**不锁 JSON 角度**，只保证目标一直在画面里（同走路段的 CAM_TRACK_* 思路）
+CAM24_MIN = 160                    # 24 下限（再小=太朝下，会照到自己的夹爪）
+CAM24_MAX = 360                    # 24 上限（再大=太朝上，目标跑出画面底部）
+CAM24_STEP = 6                     # 每次俯仰调整的脉宽
+CAM24_CY_LOW = 190                 # 目标中心 cy 超过它（快出画面底部）→ 24 往下压
+CAM24_CY_HIGH = 60                 # 目标中心 cy 低于它（快出画面顶部）→ 24 往上抬
+# 目标中心 → 夹爪 的距离：夹爪和相机同装在 24 号腕上、相对相机固定，所以「夹爪正下方
+# 那个点」在画面里也是固定像素。22/23 前伸时目标中心就朝这个像素靠，落到它附近 = 夹爪
+# 已经对准目标 → 夹。GRIP_PX/GRIP_PY 现场按日志调（先看一次实跑打印的 cx/cy/dpx）。
+GRIP_PX = 320                      # 夹爪在画面里的像素 x
+GRIP_PY = 390                      # 夹爪在画面里的像素 y（画面偏下）
+GRAB_PX = 60                       # 目标中心到夹爪像素距离 ≤ N 像素 就夹（越小越贴近）
 MOVE_SPEED = 50      # 六足直线前进/后退的速度，越大走得越快
 TURN_SPEED = 30      # 六足左转/右转的速度，越大转得越快
 STRIDE_SCALE = 0.95   # 前进/后退名义步幅的缩放系数；现场实测 0.946 短一点、0.96 又过了，0.95 折中
@@ -649,7 +664,8 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
     """执行第 1/2 次夹取。默认全自动：转 21 观测 → 靠近夹取 / 固定夹取。
 
     先只转 21 号到夹取方向再观测（不动 22/23/24）：
-    - 观测到目标 → 靠近夹取（22/23/24 渐进插值到 JSON 夹取位，21 保持居中，深度/面积判距）；
+    - 观测到目标 → 靠近夹取（22/23 渐进前伸到 JSON 夹取位，21 水平居中，24 只保证目标
+      不跑出画面，判「够近」= 目标中心到夹爪像素的距离 ≤ GRAB_PX）；
     - 观测不到 → 摆 22/23/24 到 JSON 固定脉宽夹取（兜底）。
     --manual 退回原来的手动回车微调。
     """
@@ -687,38 +703,48 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
             set_servos(board, state, [24])
         cur_22 = state[22]
     else:
-        # 2b. 观测到了 → 靠近夹取：22/23 渐进展开、24 联动保持水平（同 AutonomousCrawling），深度判距
+        # 2b. 观测到了 → 靠近夹取：22/23 渐进前伸，21 水平居中，24 只管「目标别跑出画面」，
+        #     判「够近」用 YOLO 目标中心到夹爪像素的距离（深度近端是盲区，只当附加判据）。
         print('pick%d 观测到目标，进入靠近夹取' % pick_count, flush=True)
         w22 = OFFICIAL_ARM[22]   # 705
         z23 = OFFICIAL_ARM[23]   # 90
-        y24 = OFFICIAL_ARM[24]   # 330
+        y24 = OFFICIAL_ARM[24]   # 330（起点，之后只按「目标别丢」微调）
         s21 = state[21]          # 21 跟踪起点（转 21 后的实际值）
+        t22 = state[22] - REACH_EXTRA   # 22 终点：比 JSON 更低、更前伸
+        t23 = state[23] + REACH_EXTRA   # 23 终点：比 JSON 更伸展
         for step in range(APPROACH_STEPS):
             det = model_det.detect()
             if det is not None:
                 cx = det['x'] + det['w'] / 2.0
                 cy = det['y'] + det['h'] / 2.0
                 area = det['w'] * det['h']
+                d_px = math.hypot(cx - GRIP_PX, cy - GRIP_PY)   # 目标中心 → 夹爪 的像素距离
                 dist_cm = None if (no_depth or depth is None) else depth_cm_at(depth, cx, cy, rotate)
-                close = (dist_cm is not None and dist_cm < STOP_DEPTH_CM) or \
-                        (dist_cm is None and area >= CLOSE_AREA)
-                print('pick%d 靠近 #%d conf=%.2f dist=%s 21=%d%s'
-                      % (pick_count, step, det['conf'],
-                         '%.1fcm' % dist_cm if dist_cm is not None else 'None', s21,
-                         ' -> 够近' if close else ''), flush=True)
+                close = (dist_cm is not None and dist_cm < STOP_DEPTH_CM) or d_px <= GRAB_PX
+                print('pick%d 靠近 #%d conf=%.2f 中心=(%.0f,%.0f) d=%.0fpx dist=%s area=%d 21=%d 24=%d%s'
+                      % (pick_count, step, det['conf'], cx, cy, d_px,
+                         '%.1fcm' % dist_cm if dist_cm is not None else 'None',
+                         area, s21, y24, ' -> 对准夹爪' if close else ''), flush=True)
                 if close:
                     break
-                # 保持居中：21 水平跟踪，把目标拉回画面中心
+                # 21：水平跟踪，把目标拉回画面中心
                 if abs(cx - IMG_CX) >= TRACK_DEAD_X:
                     s21 = clamp_pulse(s21 + int(TRACK_P * (IMG_CX - cx)))
                     board.bus_servo_set_position(0.02, [[21, s21]])
-            # 向 JSON 夹取位插值一步（22/23/24 各自靠近目标脉宽）
-            w22 = _step_toward(w22, state[22], APPROACH_D)
-            z23 = _step_toward(z23, state[23], APPROACH_D)
-            y24 = _step_toward(y24, state[24], APPROACH_D)
+                # 24：不锁 JSON 角度，只在目标快出画面时抬/压，保证它一直在画面里
+                if cy > CAM24_CY_LOW:
+                    y24 = max(CAM24_MIN, y24 - CAM24_STEP)
+                elif cy < CAM24_CY_HIGH:
+                    y24 = min(CAM24_MAX, y24 + CAM24_STEP)
+            else:
+                print('pick%d 靠近 #%d 目标丢失（22=%d 23=%d 24=%d）'
+                      % (pick_count, step, w22, z23, y24), flush=True)
+            # 22/23 朝终点前伸一步（不越过终点）
+            w22 = _step_toward(w22, t22, APPROACH_D)
+            z23 = _step_toward(z23, t23, APPROACH_D)
             board.bus_servo_set_position(APPROACH_SLEEP, [[22, w22], [23, z23], [24, y24]])
             time.sleep(APPROACH_SLEEP)
-            if w22 == state[22] and z23 == state[23] and y24 == state[24]:
+            if w22 == t22 and z23 == t23:
                 break
         cur_22 = w22
 
@@ -802,7 +828,7 @@ def start_run_log():
 
 def main():
     """主流程：按 JSON 调用移动、转弯、夹取和放下。"""
-    global STRIDE_SCALE, CLOSE_AREA
+    global STRIDE_SCALE
     parser = argparse.ArgumentParser(description='融合导航 + JSON 路线运行')
     parser.add_argument('--color', default='red',
                         choices=['red', 'green', 'blue', 'yellow', 'cz1'])
@@ -835,15 +861,13 @@ def main():
     parser.add_argument('--model', default=DEFAULT_MODEL, help='YOLO 模型路径（pick 用）')
     parser.add_argument('--conf', type=float, default=MODEL_CONF, help='YOLO 置信度阈值')
     parser.add_argument('--classes', default='', help='YOLO 目标类别，逗号分隔；留空=接受所有')
-    parser.add_argument('--no-depth', action='store_true', help='关掉深度相机，退回 bbox 面积判近')
-    parser.add_argument('--close-area', type=int, default=CLOSE_AREA,
-                        help='bbox w×h ≥ N 判「够近」（读不到深度时的兜底）')
+    parser.add_argument('--no-depth', action='store_true',
+                        help='关掉深度相机，只用「目标中心→夹爪像素」判够近')
     parser.add_argument('--manual', action='store_true',
                         help='夹取/放下恢复手动回车微调（调试用）')
     args = parser.parse_args()
 
     STRIDE_SCALE = args.stride_scale
-    CLOSE_AREA = args.close_area
 
     log_file = start_run_log()
 
