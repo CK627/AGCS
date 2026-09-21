@@ -105,6 +105,11 @@ LOST_NEAR_CM = 15.0                # 丢目标时锁定估距已 ≤ 它 → 判
 BLIND_MIN_STEPS = 2                # 盲走收尾最少步数
 BLIND_MAX_STEPS = 25               # 盲走收尾最多步数（护栏，速率估飞了也不会一直走）
 CM_PER_STEP_FALLBACK = 0.25        # 盲走速率还没测出来时的兜底（cm/步）
+CM_PER_STEP_MAX = 0.6              # 每步距离下降速率的上限（cm/步）。实测健康值 0.15~0.35；
+                                   # 逼近末段框高抖动会把速率带飞（现场飘到 1.09），
+                                   # 速率虚高 → 外推冲过头 → 盲走收尾算出来是 0 步
+STICKY_TOL_CM = 0.5                # 「只许越来越近」的容差（cm）：框高抖 ±10px 就是 ±0.3cm
+                                   # 的假波动，卡太死会把噪声一路棘轮下去
 # ---------- 靠近夹取（22/23 渐进前伸，21 水平居中，24 只管把目标留在画面里） ----------
 APPROACH_D = 5                     # 每步 22/23 朝目标脉宽靠近的最大量（越小越稳）
 APPROACH_STEPS = 90                # 靠近最多步数
@@ -117,10 +122,17 @@ TRACK_DEAD_X = 40                  # 21 水平死区（像素）
 # 所以这里必须每步都跟（P 控制），而不是只在画面边缘才动手。
 CAM24_MIN = 160                    # 24 下限（再小=太朝下，会照到自己的夹爪）
 CAM24_MAX = 360                    # 24 上限（再大=太朝上，目标跑出画面底部）
+# 靠近到最后目标框会长到 300~400px 高，还一味按「框中心对 190」往下压 24，框顶就顶出
+# 画面上边（框被裁 → 模型认不出 → 现场丢目标就是这么来的）。所以瞄准行加个下限：
+# 框顶至少留 CAM24_TOP_MARGIN 像素，框越大瞄准行自动越低，24 就不会一直往下推。
+CAM24_TOP_MARGIN = 40              # 框顶离画面上边至少留这么多像素（再小就顶出去了）
 CAM24_STEP = 6                     # 丢目标后找回时每次摆动的脉宽
-CAM24_AIM_CY = 190                 # 24 把目标往画面这一行拉。相机装在夹爪**上面**，看的是
-                                   # 目标偏上的位置，所以这一行要比画面正中（240）更靠上
-CAM24_DEAD_Y = 40                  # 俯仰死区（像素）：目标在中间 ±40 内不动 24
+CAM24_AIM_CY = 190                 # 24 把目标**框中心**往画面这一行拉（越靠上=相机越朝下）。
+                                   # 相机装在夹爪**上面**，看的是目标偏上的位置，所以这一行
+                                   # 要比画面正中（240）更靠上。实际瞄准行会被框高顶下去
+                                   # （见 CAM24_TOP_MARGIN），框越大越接近画面中部
+CAM24_DEAD_Y = 25                  # 俯仰死区（像素）：目标在瞄准行 ±25 内不动 24
+                                   # （靠近末段框长得快，死区大了跟不上，框顶就顶出去了）
 CAM24_P = 0.06                     # 俯仰 P 增益（像素→脉宽），越大跟得越急
 MOVE_SPEED = 50      # 六足直线前进/后退的速度，越大走得越快
 TURN_SPEED = 30      # 六足左转/右转的速度，越大转得越快
@@ -837,16 +849,19 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
             box_h = det['h']
             # 框碰到画面上下边 = 被画面裁了，这帧框高不可信（靠近到最后目标会长到出画）
             clipped = det['y'] <= 1 or (det['y'] + box_h) >= 479
+            # 24 的瞄准行：框小的时候是偏上的那一行；框长大到快顶出画面上边就让开
+            aim_cy = max(CAM24_AIM_CY, CAM24_TOP_MARGIN + box_h / 2.0)
             # 距离：焦距 × 目标高度 ÷ 框高（同 AutonomousCrawling）
             if not clipped and 0 < box_h < RELIABLE_MAX_H:
                 est_cm = DIST_F_PX * BUG_HEIGHT_CM / box_h
                 cur_cm = est_cm
-                if sticky and mem_cm is not None:
-                    # 只许越来越近：进过外推区之后再看到「又变远了」的读数（框重新变完整，
-                    # 其实识别质量已经掉了），不能让它把估计值拉回去、把判据计数清零
-                    cur_cm = min(cur_cm, mem_cm)
+                if sticky and mem_cm is not None and est_cm > mem_cm + STICKY_TOL_CM:
+                    # 只许越来越近：进过外推区之后再看到「又变远了一大截」的读数（框重新
+                    # 变完整，其实识别质量已经掉了），不能让它把估计值拉回去、把判据清零。
+                    # 容差留着放框高抖动，不然噪声会被一路棘轮往下推。
+                    cur_cm = mem_cm
                 if last_dist is not None and cur_cm < last_dist:
-                    rate = last_dist - cur_cm
+                    rate = min(last_dist - cur_cm, CM_PER_STEP_MAX)
                     dist_rate = rate if dist_rate <= 0 else 0.7 * dist_rate + 0.3 * rate
                 last_dist = cur_cm
                 since_rel = 0
@@ -863,8 +878,8 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
             close = (cur_cm is not None and cur_cm <= stop_cm) or \
                     (dep_cm is not None and dep_cm < STOP_DEPTH_CM)
             hit = hit + 1 if close else 0
-            print('pick%d 靠近 #%d conf=%.2f 中心=(%.0f,%.0f) 框=%dx%d 距离=%s%s 深度=%s 22=%d 23=%d 24=%d%s'
-                  % (pick_count, step, det['conf'], cx, cy, det['w'], box_h,
+            print('pick%d 靠近 #%d conf=%.2f 中心=(%.0f,%.0f) 框=%dx%d 框顶=%d 瞄准=%.0f 距离=%s%s 深度=%s 22=%d 23=%d 24=%d%s'
+                  % (pick_count, step, det['conf'], cx, cy, det['w'], box_h, det['y'], aim_cy,
                      '%.1fcm' % cur_cm if cur_cm is not None else '--',
                      '(外推)' if est_cm is None else ('(锁定)' if sticky else ''),
                      '%.1fcm' % dep_cm if dep_cm is not None else '--',
@@ -876,9 +891,12 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
             if abs(cx - IMG_CX) >= TRACK_DEAD_X:
                 s21 = clamp_pulse(s21 + int(TRACK_P * (IMG_CX - cx)))
                 board.bus_servo_set_position(0.02, [[21, s21]])
-            # 24：不锁 JSON 角度，每步都把目标往画面中间拉（保证它一直在画面里）
-            if abs(cy - CAM24_AIM_CY) >= CAM24_DEAD_Y:
-                y24 = _clamp24(y24 + int(CAM24_P * (CAM24_AIM_CY - cy)))
+            # 24：不锁 JSON 角度，每步把目标往画面偏上拉（保证它一直在画面里）。
+            # 瞄准行 = max(偏上的那一行, 框顶留够边距时框中心能到的最高行)：
+            # 框小的时候就是 190（偏上），框长到 300~400px 后自动往下让，
+            # 免得框顶被画面上边裁掉——一裁模型就认不出，那就是现场丢目标的原因。
+            if abs(cy - aim_cy) >= CAM24_DEAD_Y:
+                y24 = _clamp24(y24 + int(CAM24_P * (aim_cy - cy)))
             # 22/23 朝终点前伸一步（不越过终点）
             w22 = _step_toward(w22, t22, APPROACH_D)
             z23 = _step_toward(z23, t23, APPROACH_D)
