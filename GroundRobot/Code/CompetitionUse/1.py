@@ -5,7 +5,7 @@
 走路：直线段走融合导航（相机写状态、IMU 管执行、先航向后横向）。默认 LaneFusion
 （--fusion reference 可换 ReferenceFusion）。颜色检测只用于导航「保证不跑歪」。
 
-夹取（pick）：路线把机身开到定点后，先只转 21 观测目标；观测到 → 摆 22/23/24 + 深度判距（≤8cm 就夹）+ 左移逼近；
+夹取（pick）：路线把机身开到定点后，先只转 21 观测目标；观测到 → 22/23 渐进展开+24 联动保持水平（同 AutonomousCrawling）+ 深度判距（≤8cm 就夹）；
 观测不到 → 摆 22/23/24 固定脉宽夹取（兜底）。--manual 退回手动回车微调。
 place 仍读 json1.json 固定脉宽。全程默认全自动，无 input 阻塞。
 """
@@ -72,9 +72,16 @@ DEFAULT_MODEL = 'models/v8n.onnx'  # YOLO 模型路径（相对 spiderpi 根目�
 MODEL_CONF = 0.8                   # 置信度阈值
 STOP_DEPTH_CM = 8.0                # 目标距离 ≤ N cm 就夹（定点夹取，固定值）
 CLOSE_AREA = 20000                 # bbox w×h ≥ N 判「够近」（读不到深度时的兜底）
-PICK_STEP_MM = 30                  # 不够近时每次左移 mm（目标在机身左侧）
-PICK_MAX_APPROACH = 3              # 不够近时最多左移几步
-OBSERVE_TRIES = 3                  # 转 21 后观测目标的帧数
+OBSERVE_TIMEOUT_S = 3.0            # 转 21 后观测目标的最长时间（秒）
+# ---------- 靠近夹取（同 AutonomousCrawling.py 阶段二：22/23 展开、24 联动保持水平） ----------
+LEVEL_SUM = 1125                   # 夹爪水平时 22+23+24 = 1125
+APPROACH_D22 = 6                   # 每步 22（肩）展开量
+APPROACH_D23 = 6                   # 每步 23（肘）展开量
+APPROACH_STEPS = 60                # 靠近最多步数
+APPROACH_SLEEP = 0.12              # 每步间隔（秒）
+IMG_CX = 320                       # 画面中心 x（640×480），21 水平跟踪用
+TRACK_P = 0.1                      # 21 跟踪 P 增益
+TRACK_DEAD_X = 40                  # 21 水平死区（像素）
 MOVE_SPEED = 50      # 六足直线前进/后退的速度，越大走得越快
 TURN_SPEED = 30      # 六足左转/右转的速度，越大转得越快
 STRIDE_SCALE = 0.95   # 前进/后退名义步幅的缩放系数；现场实测 0.946 短一点、0.96 又过了，0.95 折中
@@ -414,10 +421,11 @@ class ModelDetector:
         return result
 
 
-def video_loop(detector, stop_event):
-    """后台持续取帧推流，保证视频始终有画面。"""
+def video_loop(detectors, stop_event):
+    """后台持续取帧推流：颜色 + YOLO 都叠加推流显示（同 Auto-capture-1.py）。"""
     while not stop_event.is_set():
-        detector()
+        for d in detectors:
+            d()
         time.sleep(0.1)
 
 
@@ -631,11 +639,11 @@ def imu_turn(ik, board, imu_state, delta_deg):
 
 def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
             pull_up_pulse=None, no_depth=False, manual=False):
-    """执行第 1/2 次夹取。默认全自动：先转 21 观测 → 摆 22/23/24 → 深度判距夹取 / 固定夹取。
+    """执行第 1/2 次夹取。默认全自动：转 21 观测 → 靠近夹取 / 固定夹取。
 
     先只转 21 号到夹取方向再观测（不动 22/23/24）：
-    - 观测到目标 → 摆 22/23/24 到夹取位，进入独立靠近夹取（深度判距 + 左移逼近，≤STOP_DEPTH_CM 就夹）；
-    - 观测不到 → 摆 22/23/24 到夹取位，直接用 JSON 固定脉宽夹取（兜底）。
+    - 观测到目标 → 靠近夹取（同 AutonomousCrawling.py 阶段二：22/23 渐进展开、24 联动保持水平，深度 ≤ STOP_DEPTH_CM 就夹）；
+    - 观测不到 → 摆 22/23/24 到 JSON 固定脉宽夹取（兜底）。
     --manual 退回原来的手动回车微调。
     """
     if manual:
@@ -649,61 +657,69 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
         return
 
     state = dict(pulses)
-    # 1. 先只转 21 到夹取方向（不动 22/23/24），再观测目标
-    board.bus_servo_set_position(0.8, [[21, state[21]]])
-    time.sleep(0.8)
+    # 1. 先只转 21 到夹取方向（不动 22/23/24），再观测目标（给足时间让模型识别）
+    board.bus_servo_set_position(1.0, [[21, state[21]]])
+    time.sleep(1.0)
     observed = False
-    for i in range(OBSERVE_TRIES):
+    deadline = time.time() + OBSERVE_TIMEOUT_S
+    while time.time() < deadline:
         if model_det.detect() is not None:
             observed = True
             break
         time.sleep(0.2)
 
-    # 2. 摆 22/23/24 到夹取位（pick1/pick2 顺序不同）
-    if pick_count == 1:
-        set_servos(board, state, [22, 23, 24])
-    else:
-        set_servos(board, state, [22, 23])
-        board.bus_servo_set_position(2.2, [[24, 500]])
-        time.sleep(2.2)
-        set_servos(board, state, [24])
-
-    # 3. 观测到了 → 独立靠近夹取（深度判距 + 左移逼近）
-    if observed:
-        print('pick%d 观测到目标，进入靠近夹取' % pick_count, flush=True)
-        for step in range(PICK_MAX_APPROACH + 1):
-            det = model_det.detect()
-            if det is None:
-                print('pick%d 目标丢失（第 %d/%d 次，不左移）'
-                      % (pick_count, step + 1, PICK_MAX_APPROACH + 1), flush=True)
-                time.sleep(0.3)
-                continue
-            cx = det['x'] + det['w'] / 2.0
-            cy = det['y'] + det['h'] / 2.0
-            area = det['w'] * det['h']
-            dist_cm = None if (no_depth or depth is None) else depth_cm_at(depth, cx, cy, rotate)
-            close = (dist_cm is not None and dist_cm < STOP_DEPTH_CM) or \
-                    (dist_cm is None and (no_depth or depth is None) and area >= CLOSE_AREA)
-            print('pick%d YOLO conf=%.2f bbox=%dx%d dist=%s%s'
-                  % (pick_count, det['conf'], det['w'], det['h'],
-                     '%.1fcm' % dist_cm if dist_cm is not None else 'None',
-                     ' -> 够近，夹取' if close else ''), flush=True)
-            if close:
-                break
-            if step < PICK_MAX_APPROACH:
-                ik.left_move(ik.initial_pos, 2, PICK_STEP_MM, MOVE_SPEED, 1)
-                time.sleep(0.1)
-    else:
+    if not observed:
+        # 2a. 观测不到 → 固定夹取：摆 22/23/24 到 JSON 位
         print('pick%d 观测不到目标，固定夹取' % pick_count, flush=True)
+        if pick_count == 1:
+            set_servos(board, state, [22, 23, 24])
+        else:
+            set_servos(board, state, [22, 23])
+            board.bus_servo_set_position(2.2, [[24, 500]])
+            time.sleep(2.2)
+            set_servos(board, state, [24])
+        cur_22 = state[22]
+    else:
+        # 2b. 观测到了 → 靠近夹取：22/23 渐进展开、24 联动保持水平（同 AutonomousCrawling），深度判距
+        print('pick%d 观测到目标，进入靠近夹取' % pick_count, flush=True)
+        w22 = OFFICIAL_ARM[22]   # 705
+        z23 = OFFICIAL_ARM[23]   # 90
+        s21 = state[21]          # 21 跟踪起点（转 21 后的实际值）
+        for step in range(APPROACH_STEPS):
+            det = model_det.detect()
+            if det is not None:
+                cx = det['x'] + det['w'] / 2.0
+                cy = det['y'] + det['h'] / 2.0
+                area = det['w'] * det['h']
+                dist_cm = None if (no_depth or depth is None) else depth_cm_at(depth, cx, cy, rotate)
+                close = (dist_cm is not None and dist_cm < STOP_DEPTH_CM) or \
+                        (dist_cm is None and (no_depth or depth is None) and area >= CLOSE_AREA)
+                print('pick%d 靠近 #%d conf=%.2f dist=%s 21=%d%s'
+                      % (pick_count, step, det['conf'],
+                         '%.1fcm' % dist_cm if dist_cm is not None else 'None', s21,
+                         ' -> 够近' if close else ''), flush=True)
+                if close:
+                    break
+                # 保持居中：21 水平跟踪，把目标拉回画面中心
+                if abs(cx - IMG_CX) >= TRACK_DEAD_X:
+                    s21 = clamp_pulse(s21 + int(TRACK_P * (IMG_CX - cx)))
+                    board.bus_servo_set_position(0.02, [[21, s21]])
+            # 目标丢失也照常渐进靠近（同 AutonomousCrawling 的一致速度外推）
+            w22 = max(0, min(1000, int(w22 - APPROACH_D22)))
+            z23 = max(0, min(1000, int(z23 + APPROACH_D23)))
+            y24 = max(0, min(1000, int(LEVEL_SUM - w22 - z23)))
+            board.bus_servo_set_position(APPROACH_SLEEP, [[22, w22], [23, z23], [24, y24]])
+            time.sleep(APPROACH_SLEEP)
+        cur_22 = w22
 
-    # 4. 夹取：闭 25 + 抬 22（仅第一次）+ 复位
+    # 3. 夹取：闭 25 + 抬 22（仅第一次）+ 复位
     board.bus_servo_set_position(2.0, [[25, GRIPPER_CLOSE]])
     time.sleep(2.0)
     time.sleep(0.5)
     if pick_count == 1:
         pulse = PULL_UP_22 if pull_up_pulse is None else clamp_pulse(pull_up_pulse)
         print('拔起：22 号肩舵机 %d → %d（抬升 %+d）'
-              % (state[22], pulse, pulse - state[22]), flush=True)
+              % (cur_22, pulse, pulse - cur_22), flush=True)
         board.bus_servo_set_position(1.0, [[22, pulse]])
         time.sleep(1.0)
     restore_travel(board, GRIPPER_CLOSE,
@@ -776,7 +792,7 @@ def start_run_log():
 
 def main():
     """主流程：按 JSON 调用移动、转弯、夹取和放下。"""
-    global STRIDE_SCALE, CLOSE_AREA, PICK_STEP_MM, PICK_MAX_APPROACH
+    global STRIDE_SCALE, CLOSE_AREA
     parser = argparse.ArgumentParser(description='融合导航 + JSON 路线运行')
     parser.add_argument('--color', default='red',
                         choices=['red', 'green', 'blue', 'yellow', 'cz1'])
@@ -812,18 +828,12 @@ def main():
     parser.add_argument('--no-depth', action='store_true', help='关掉深度相机，退回 bbox 面积判近')
     parser.add_argument('--close-area', type=int, default=CLOSE_AREA,
                         help='bbox w×h ≥ N 判「够近」（读不到深度时的兜底）')
-    parser.add_argument('--step-mm', type=int, default=PICK_STEP_MM,
-                        help='pick 不够近时每次左移 mm（目标在机身左侧）')
-    parser.add_argument('--max-approach', type=int, default=PICK_MAX_APPROACH,
-                        help='pick 不够近时最多左移几步')
     parser.add_argument('--manual', action='store_true',
                         help='夹取/放下恢复手动回车微调（调试用）')
     args = parser.parse_args()
 
     STRIDE_SCALE = args.stride_scale
     CLOSE_AREA = args.close_area
-    PICK_STEP_MM = args.step_mm
-    PICK_MAX_APPROACH = args.max_approach
 
     log_file = start_run_log()
 
@@ -856,7 +866,7 @@ def main():
 
     video_stop = threading.Event()
     video_thread = threading.Thread(
-        target=video_loop, args=(detector, video_stop), daemon=True)
+        target=video_loop, args=([detector, model_det.detect], video_stop), daemon=True)
     video_thread.start()
 
     if task_server is not None:
