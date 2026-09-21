@@ -11,8 +11,10 @@
 估到 ≤STOP_DIST_CM 就夹（深度 ≤STOP_DEPTH_CM 也算，但 Astra Pro 近端 0.6m 是盲区，基本不触发）；
 一直估不到够近就伸到 JSON 夹取位 +REACH_EXTRA 那个标定位姿再夹。
 **近到 12~13cm 模型就认不出了（远距离样本训的），这不是故障而是「贴脸」信号**：
-那一刻锁定记忆的估距和当时的 21 角度，按实测速率把剩下的距离盲走完就夹（见 LOST_CONFIRM）；
-只有还在远处就丢目标才算真丢，才原地摆动 24 找回、找不回退回固定脉宽。
+估距一到收尾距离（默认 14cm）或框顶快被画面上边裁掉，24 就交还给路线 JSON 的夹取角
+（24 和夹爪同轴，一路跟着目标走会把夹爪带歪 → 夹不到），22/23 按锁定的估距盲走完
+剩下的路再夹（见 FINISH_CM / finish_blind）；只有还在远处就丢目标才算真丢，
+才原地摆动 24 找回、找不回退回固定脉宽。
 观测不到 → 摆 22/23/24 固定脉宽夹取（兜底）。
 place 仍读 json1.json 固定脉宽。全程默认全自动，无 input 阻塞。
 """
@@ -110,6 +112,11 @@ CM_PER_STEP_MAX = 0.6              # 每步距离下降速率的上限（cm/步�
                                    # 速率虚高 → 外推冲过头 → 盲走收尾算出来是 0 步
 STICKY_TOL_CM = 0.5                # 「只许越来越近」的容差（cm）：框高抖 ±10px 就是 ±0.3cm
                                    # 的假波动，卡太死会把噪声一路棘轮下去
+# ---------- 收尾：24 交还给路线 JSON 的夹取角 ----------
+# 24 和夹爪装在同一块（同轴），靠近时靠它把目标留在画面里，但这一跟就把夹爪的俯仰角
+# 一起带跑了：现场 24 一路 270 → 174，比路线 JSON 的夹取角 290 低了 116，
+# 夹爪是歪着伸过去的，所以「看不到也夹不到」。估距一到收尾距离就把 24 还给 JSON。
+FINISH_CM = 14.0                   # 估距 ≤ 它（或框顶快被画面裁掉）→ 进入收尾，24 回 JSON
 # ---------- 靠近夹取（22/23 渐进前伸，21 水平居中，24 只管把目标留在画面里） ----------
 APPROACH_D = 5                     # 每步 22/23 朝目标脉宽靠近的最大量（越小越稳）
 APPROACH_STEPS = 90                # 靠近最多步数
@@ -775,8 +782,9 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
             set_servos(board, state, [24])
         cur_22 = state[22]
     else:
-        # 2b. 观测到了 → 靠近夹取：22/23 渐进前伸，21 水平居中，24 每步把目标拉回画面中间
-        #     （22/23 一伸相机就甩出去，24 不跟目标一步就飘没了）。丢帧先找回来再继续伸。
+        # 2b. 观测到了 → 靠近夹取：22/23 渐进前伸，21 水平居中，24 跟目标（保证它一直在画面里）。
+        #     估距到了收尾距离（或框顶快被画面裁掉 / 目标认不出）就收尾：24 交还给 JSON 夹取角，
+        #     22/23 按锁定的估距盲走完剩下的路再夹。
         print('pick%d 观测到目标，进入靠近夹取' % pick_count, flush=True)
         w22 = OFFICIAL_ARM[22]   # 705
         z23 = OFFICIAL_ARM[23]   # 90
@@ -790,11 +798,54 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
         hit = 0            # 判据连续成立的帧数
         miss = 0           # 连续丢帧数
         last_dist = None   # 最近一次可靠估距（cm）
-        mem_cm = None      # 记忆距离：上一帧算出来的估距（含外推），丢目标那一刻就是它
+        mem_cm = None      # 记忆距离：上一帧算出来的估距（含外推），收尾那一刻就是它
         mem_cx = None      # 记忆横向：最后一次看到目标时的中心 x
         sticky = False     # 进过外推区：之后不许估距再「变远」（框重新变完整≠真的变远）
         dist_rate = 0.0    # 每步距离下降速率（cm/步），实测自适应
         since_rel = 0      # 距上次可靠估距过了多少步
+        finish_cm = max(stop_cm + 2.0, FINISH_CM)   # 收尾距离
+
+        def finish_blind(reason, mem_cm, s21, w22, z23, y24):
+            """收尾：24 交还给路线 JSON 的夹取角，22/23 按锁定的估距盲走完剩下的路再夹。
+
+            24 是相机的眼睛（找目标、量距离），可它和夹爪同轴，一路跟着目标走会把
+            夹爪的俯仰角一起带跑——现场 24 从 270 一路收到 174，比路线 JSON 的夹取角
+            290 低了 116，夹爪是歪着伸过去夹的，所以夹不到。进了收尾 24 就还给 JSON，
+            后面只靠「锁定的估距 + 最后一眼的 21 角度」，相机的活到此为止。
+            """
+            y24 = clamp_pulse(state[24])
+            board.bus_servo_set_position(0.6, [[24, y24]])
+            time.sleep(0.6)
+            if mem_cm is None:
+                rate, need_cm, n_blind = 0.0, 0.0, BLIND_MIN_STEPS
+            else:
+                rate = min(dist_rate if dist_rate > 0.05 else CM_PER_STEP_FALLBACK,
+                           CM_PER_STEP_MAX)
+                need_cm = max(0.0, mem_cm - stop_cm)
+                n_blind = min(BLIND_MAX_STEPS, max(BLIND_MIN_STEPS, int(need_cm / rate) + 1))
+            print('pick%d 收尾（%s）：24 回路线 JSON 夹取角 %d（再跟着目标走夹爪会歪），'
+                  '锁定估距 %s → %.1fcm，剩 %.1fcm，按 %.2fcm/步 走 %d 步'
+                  % (pick_count, reason, y24,
+                     '%.1fcm' % mem_cm if mem_cm is not None else '--',
+                     stop_cm, need_cm, rate, n_blind), flush=True)
+            # 按最后一眼的横向偏差对正 21；在死区内就别动，保持当时的角度直着走
+            if mem_cx is not None and abs(mem_cx - IMG_CX) >= TRACK_DEAD_X:
+                s21 = clamp_pulse(s21 + int(TRACK_P * (IMG_CX - mem_cx)))
+                board.bus_servo_set_position(0.3, [[21, s21]])
+                time.sleep(0.3)
+            for _k in range(n_blind):
+                w22 = _step_toward(w22, t22, APPROACH_D)
+                z23 = _step_toward(z23, t23, APPROACH_D)
+                board.bus_servo_set_position(APPROACH_SLEEP, [[22, w22], [23, z23], [24, y24]])
+                time.sleep(APPROACH_SLEEP)
+                if w22 == t22 and z23 == t23:
+                    print('pick%d 收尾：22/23 已到路线 JSON 终点（%d/%d 步），手臂伸不动了，'
+                          '就地闭夹爪' % (pick_count, _k + 1, n_blind), flush=True)
+                    break
+            print('pick%d 收尾结束 21=%d 22=%d 23=%d 24=%d，闭夹爪'
+                  % (pick_count, s21, w22, z23, y24), flush=True)
+            return s21, w22, z23, y24
+
         for step in range(APPROACH_STEPS):
             det = model_det.detect()
             if det is None:
@@ -806,31 +857,11 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
                     time.sleep(APPROACH_SLEEP)
                     continue
                 if mem_cm is not None and mem_cm <= LOST_NEAR_CM:
-                    # 近到模型认不出 —— 这是信号不是故障：锁定记忆目标，按当时的角度盲走收尾
-                    rate = dist_rate if dist_rate > 0.05 else CM_PER_STEP_FALLBACK
-                    need_cm = max(0.0, mem_cm - stop_cm)
-                    n_blind = min(BLIND_MAX_STEPS, max(BLIND_MIN_STEPS, int(need_cm / rate) + 1))
-                    print('pick%d 靠近 #%d 目标丢失（模型只在远处训练过，%.1fcm 认不出）= 已贴脸，'
-                          '锁定记忆目标盲走收尾：估距 %.1fcm → %.1fcm，剩 %.1fcm，'
-                          '按 %.2fcm/步 走 %d 步'
-                          % (pick_count, step, mem_cm, mem_cm, stop_cm, need_cm, rate, n_blind),
-                          flush=True)
-                    # 按丢目标前最后一眼的角度对正；偏差在死区内就别动，保持当时角度直着走
-                    if mem_cx is not None and abs(mem_cx - IMG_CX) >= TRACK_DEAD_X:
-                        s21 = clamp_pulse(s21 + int(TRACK_P * (IMG_CX - mem_cx)))
-                        board.bus_servo_set_position(0.3, [[21, s21]])
-                        time.sleep(0.3)
-                    for _k in range(n_blind):
-                        w22 = _step_toward(w22, t22, APPROACH_D)
-                        z23 = _step_toward(z23, t23, APPROACH_D)
-                        board.bus_servo_set_position(APPROACH_SLEEP, [[22, w22], [23, z23], [24, y24]])
-                        time.sleep(APPROACH_SLEEP)
-                        if w22 == t22 and z23 == t23:
-                            print('pick%d 盲走收尾：22/23 已到路线 JSON 终点（%d/%d 步），'
-                                  '手臂伸不动了，就地闭夹爪' % (pick_count, _k + 1, n_blind), flush=True)
-                            break
-                    print('pick%d 盲走收尾结束 21=%d 22=%d 23=%d 24=%d，闭夹爪'
-                          % (pick_count, s21, w22, z23, y24), flush=True)
+                    # 近到模型认不出 —— 这是信号不是故障，直接收尾
+                    print('pick%d 靠近 #%d 目标丢失（模型只在远处训练过，%.1fcm 认不出）= 已贴脸'
+                          % (pick_count, step, mem_cm), flush=True)
+                    s21, w22, z23, y24 = finish_blind(
+                        '目标认不出（锁定 %.1fcm）' % mem_cm, mem_cm, s21, w22, z23, y24)
                     break
                 # 还在远处就丢，那才是真丢 → 原地摆 24 找回来
                 det, y24 = reacquire(board, model_det, y24, pick_count, step)
@@ -887,6 +918,17 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
                      ' -> 到距离 %d/%d' % (hit, GRAB_HOLD) if close else ''), flush=True)
             if hit >= GRAB_HOLD:
                 break
+            # 收尾触发①：估距已经够近 → 24 还给 JSON 夹取角，剩下的路盲走
+            if cur_cm is not None and cur_cm <= finish_cm:
+                s21, w22, z23, y24 = finish_blind(
+                    '估距 %.1fcm 够近' % cur_cm, cur_cm, s21, w22, z23, y24)
+                break
+            # 收尾触发②：框顶快贴到画面上边了 —— 再跟下去就要被裁掉、模型认不出
+            if det['y'] <= CAM24_TOP_MARGIN:
+                s21, w22, z23, y24 = finish_blind(
+                    '框顶 %d 快被画面上边裁掉' % det['y'],
+                    cur_cm if cur_cm is not None else mem_cm, s21, w22, z23, y24)
+                break
             # 21：水平跟踪，把目标拉回画面中心
             if abs(cx - IMG_CX) >= TRACK_DEAD_X:
                 s21 = clamp_pulse(s21 + int(TRACK_P * (IMG_CX - cx)))
@@ -904,6 +946,14 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
             time.sleep(APPROACH_SLEEP)
             if w22 == t22 and z23 == t23:
                 break
+        # 一次收尾都没触发就到了终点（手臂伸到头）/ 步数用尽：24 也还给 JSON 夹取角。
+        # 24 和夹爪同轴，夹之前必须把它掰回标定过的角度，否则夹爪是歪的。
+        if abs(y24 - state[24]) >= 10:
+            y24 = clamp_pulse(state[24])
+            board.bus_servo_set_position(0.6, [[24, y24]])
+            time.sleep(0.6)
+            print('pick%d 靠近结束（没触发收尾）：24 回路线 JSON 夹取角 %d，21=%d 22=%d 23=%d'
+                  % (pick_count, y24, s21, w22, z23), flush=True)
         cur_22 = w22
 
     # 3. 夹取：闭 25 + 抬 22（仅第一次）+ 复位
