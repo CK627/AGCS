@@ -144,29 +144,16 @@ APPROACH_SLEEP = 0.15              # 每步间隔（秒），要留够一次识�
 IMG_CX = 320                       # 画面中心 x（640×480），21 水平跟踪用
 TRACK_P = 0.1                      # 21 跟踪 P 增益
 TRACK_DEAD_X = 40                  # 21 水平死区（像素）
-# 24 号靠近时**不锁 JSON 角度**，只跟着目标走，保证它一直在画面里。
-# 22/23 前伸会把相机整个甩出去，24 不跟的话目标一步就飘出画面 → 后面再也认不到，
-# 所以这里必须每步都跟（P 控制），而不是只在画面边缘才动手。
+# 24 号靠近时**不锁 JSON 角度、也不锁固定瞄准行**，只管把目标留在画面里——跟走路段的
+# 颜色跟踪一个道理（那边用中心阈值、这里用框边，因为靠近时框会长到出画）。目标快出
+# 画面上边才往上抬 24（目标往下退）、快出画面下边才往下压 24（目标往上退），中间大片
+# 区域不动。这样 24 不会被一路往下压（现场按「框中心对 190」一路压到 160 到底，相机
+# 越看越朝下，框顶 120→0，目标被画面上边裁掉——18-19 就是这么丢的）。
 CAM24_MIN = 160                    # 24 下限（再小=太朝下，会照到自己的夹爪）
 CAM24_MAX = 360                    # 24 上限（再大=太朝上，目标跑出画面底部）
-# 靠近时 24 **最多比路线 JSON 的夹取角低**这么多。原来只有 CAM24_MIN=160 兜底，可 160
-# 比 pick1 的夹取角 290 低了 130 —— 现场 24 从 210 被一路压到 160，相机越看越朝下，
-# 框顶跟着顶出画面上边（18-19：24 一路 210→160，同时 框顶 120→0，目标被裁）。
-# 24 的活只是「把目标留在画面里」，不需要看那么低，所以再按夹取角收一道：
-# pick1 不低于 290−60=230、pick2 不低于 320−60=260。
-CAM24_DOWN_MAX = 60                # 24 相对夹取角最多往下压这么多脉宽
-# 靠近到最后目标框会长到 300~400px 高，还一味按「框中心对 190」往下压 24，框顶就顶出
-# 画面上边（框被裁 → 模型认不出 → 现场丢目标就是这么来的）。所以瞄准行加个下限：
-# 框顶至少留 CAM24_TOP_MARGIN 像素，框越大瞄准行自动越低，24 就不会一直往下推。
-CAM24_TOP_MARGIN = 40              # 框顶离画面上边至少留这么多像素（再小就顶出去了）
-CAM24_STEP = 6                     # 丢目标后找回时每次摆动的脉宽
-CAM24_AIM_CY = 190                 # 24 把目标**框中心**往画面这一行拉（越靠上=相机越朝下）。
-                                   # 相机装在夹爪**上面**，看的是目标偏上的位置，所以这一行
-                                   # 要比画面正中（240）更靠上。实际瞄准行会被框高顶下去
-                                   # （见 CAM24_TOP_MARGIN），框越大越接近画面中部
-CAM24_DEAD_Y = 25                  # 俯仰死区（像素）：目标在瞄准行 ±25 内不动 24
-                                   # （靠近末段框长得快，死区大了跟不上，框顶就顶出去了）
-CAM24_P = 0.06                     # 俯仰 P 增益（像素→脉宽），越大跟得越急
+CAM24_TOP_MARGIN = 40              # 框顶 ≤ 它 → 往上抬 24（目标往下退，别被上边裁）
+CAM24_BOTTOM_MARGIN = 40           # 框底 ≥ 480−它 → 往下压 24（目标往上退，别被下边裁）
+CAM24_STEP = 6                     # 边界触发时每次摆动的脉宽（丢目标找回也用这个步长）
 MOVE_SPEED = 50      # 六足直线前进/后退的速度，越大走得越快
 TURN_SPEED = 30      # 六足左转/右转的速度，越大转得越快
 STRIDE_SCALE = 0.95   # 前进/后退名义步幅的缩放系数；现场实测 0.946 短一点、0.96 又过了，0.95 折中
@@ -821,11 +808,7 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
         # 24 从**当前实际值**起步，不要拉回复位位 330：走路段的颜色跟踪会把 24 压低
         # （CAM_TRACK_MIN_24=160），这里一拉回 330 相机就猛地往上翘一下，然后才开始
         # 靠近——现场看到的就是这个「翘一下」。观测阶段只动 21，所以 24 还在走路留下的位置。
-        # 24 的「不许比夹取角低太多」下限（见 CAM24_DOWN_MAX）：24 和夹爪同轴，
-        # 一路往低压=相机一路朝下看，框顶很快顶出画面上边 → 目标被裁、认不出。
-        y24_floor = max(CAM24_MIN, clamp_pulse(state[24] - CAM24_DOWN_MAX))
-        y24 = max(y24_floor,
-                  _clamp24(OFFICIAL_ARM[24] if s24_now is None else s24_now))
+        y24 = _clamp24(OFFICIAL_ARM[24] if s24_now is None else s24_now)
         s21 = state[21]          # 21 跟踪起点（转 21 后的实际值）
         t22 = state[22] - reach        # 22 终点：比 JSON 更低、更前伸
         t23 = state[23] + reach        # 23 终点：比 JSON 更伸展
@@ -913,8 +896,6 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
             box_h = det['h']
             # 框碰到画面上下边 = 被画面裁了，这帧框高不可信（靠近到最后目标会长到出画）
             clipped = det['y'] <= 1 or (det['y'] + box_h) >= 479
-            # 24 的瞄准行：框小的时候是偏上的那一行；框长大到快顶出画面上边就让开
-            aim_cy = max(CAM24_AIM_CY, CAM24_TOP_MARGIN + box_h / 2.0)
             # 距离：焦距 × 目标高度 ÷ 框高（同 AutonomousCrawling）
             if not clipped and 0 < box_h < RELIABLE_MAX_H:
                 est_cm = DIST_F_PX * BUG_HEIGHT_CM / box_h
@@ -942,8 +923,8 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
             close = (cur_cm is not None and cur_cm <= stop_cm) or \
                     (dep_cm is not None and dep_cm < STOP_DEPTH_CM)
             hit = hit + 1 if close else 0
-            print('pick%d 靠近 #%d conf=%.2f 中心=(%.0f,%.0f) 框=%dx%d 框顶=%d 瞄准=%.0f 距离=%s%s 深度=%s 22=%d 23=%d 24=%d%s'
-                  % (pick_count, step, det['conf'], cx, cy, det['w'], box_h, det['y'], aim_cy,
+            print('pick%d 靠近 #%d conf=%.2f 中心=(%.0f,%.0f) 框=%dx%d 框顶=%d 距离=%s%s 深度=%s 22=%d 23=%d 24=%d%s'
+                  % (pick_count, step, det['conf'], cx, cy, det['w'], box_h, det['y'],
                      '%.1fcm' % cur_cm if cur_cm is not None else '--',
                      '(外推)' if est_cm is None else ('(锁定)' if sticky else ''),
                      '%.1fcm' % dep_cm if dep_cm is not None else '--',
@@ -960,14 +941,13 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
             if abs(cx - IMG_CX) >= TRACK_DEAD_X:
                 s21 = clamp_pulse(s21 + int(TRACK_P * (IMG_CX - cx)))
                 board.bus_servo_set_position(0.02, [[21, s21]])
-            # 24：不锁 JSON 角度，每步把目标往画面偏上拉（保证它一直在画面里）。
-            # 瞄准行 = max(偏上的那一行, 框顶留够边距时框中心能到的最高行)：
-            # 框小的时候就是 190（偏上），框长到 300~400px 后自动往下让，
-            # 免得框顶被画面上边裁掉——一裁模型就认不出，那就是现场丢目标的原因。
-            # 往下压到 y24_floor（比夹取角低 CAM24_DOWN_MAX）就顶住不动：18-19 现场
-            # 一路压到 CAM24_MIN=160，相机太朝下，框顶 120→0，目标直接被画面上边裁掉。
-            if abs(cy - aim_cy) >= CAM24_DEAD_Y:
-                y24 = max(y24_floor, _clamp24(y24 + int(CAM24_P * (aim_cy - cy))))
+            # 24：不锁 JSON 角度、也不锁固定瞄准行，只管把目标留在画面里（跟走路段的
+            # 颜色跟踪一个道理）。目标快出画面上边就往上抬 24（目标往下退）、快出画面
+            # 下边才往下压 24（目标往上退），中间不动。这样 24 不会被一路往下压。
+            if det['y'] <= CAM24_TOP_MARGIN:
+                y24 = _clamp24(y24 + CAM24_STEP)      # 往上抬 → 目标往下退
+            elif det['y'] + box_h >= 480 - CAM24_BOTTOM_MARGIN:
+                y24 = _clamp24(y24 - CAM24_STEP)      # 往下压 → 目标往上退
             # 22/23 朝终点前伸一步（不越过终点）
             w22 = _step_toward(w22, t22, APPROACH_D)
             z23 = _step_toward(z23, t23, APPROACH_D)
