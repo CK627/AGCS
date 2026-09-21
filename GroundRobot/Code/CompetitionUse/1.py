@@ -92,10 +92,10 @@ STOP_DIST_CM = 9.0                 # 估距 ≤ N cm 就夹（调小=更近）
                                    # 就是「框快占满画面」；框被画面裁掉时按速率外推（同 AutonomousCrawling）
 RELIABLE_MAX_H = 450               # 框高超过它=框被裁了，距离不可靠，改用速率外推
 STOP_DEPTH_CM = 5.0                # 深度 ≤ N cm 也算够近（Astra Pro 近端 0.6m 内是盲区，基本不触发）
-REACH_EXTRA = 20                   # 22/23 在 JSON 夹取位上额外前伸的量（--reach-extra 可调）
-                                   # 注意：手臂伸到头（22 到 state[22]-REACH_EXTRA）差不多就是
-                                   # 模型丢目标的距离，所以「最后几步」靠它只能再走一点点；
-                                   # 真要紧贴就得把这个值调大（代价是夹爪更低、可能低头碰地）
+REACH_EXTRA = 45                   # 22/23 在 JSON 夹取位上额外前伸的量（--reach-extra 可调）
+REACH_EXTRA_MAX = 90               # --reach-extra 的硬上限：再往前手臂太低，夹爪会杵到地面
+                                   # 现场轨迹：20（收尾后停在 22=410）→「差一点夹到」→ 45
+                                   # 注意：这个值同时是收尾盲走的终点，估距不够近时靠它兜底
 GRAB_HOLD = 3                      # 判据要连续 N 帧成立才夹（单帧检测抖一下不能夹）
 OBSERVE_TIMEOUT_S = 3.0            # 转 21 后观测目标的最长时间（秒）
 # ---------- 目标丢失 = 「已经贴脸」的信号（盲走收尾） ----------
@@ -107,9 +107,10 @@ LOST_NEAR_CM = 15.0                # 丢目标时锁定估距已 ≤ 它 → 判
 BLIND_MIN_STEPS = 2                # 盲走收尾最少步数
 BLIND_MAX_STEPS = 25               # 盲走收尾最多步数（护栏，速率估飞了也不会一直走）
 CM_PER_STEP_FALLBACK = 0.25        # 盲走速率还没测出来时的兜底（cm/步）
-CM_PER_STEP_MAX = 0.6              # 每步距离下降速率的上限（cm/步）。实测健康值 0.15~0.35；
-                                   # 逼近末段框高抖动会把速率带飞（现场飘到 1.09），
-                                   # 速率虚高 → 外推冲过头 → 盲走收尾算出来是 0 步
+CM_PER_STEP_MAX = 0.35             # 每步距离下降速率的上限（cm/步）。实测健康值 0.15~0.25
+                                   # （22 走 5 脉宽 ≈ 0.18cm），框高噪声会把速率带飞
+                                   # （现场飘到 0.51、1.09），速率虚高 → 收尾盲走的步数算少
+                                   # → 手臂没伸到位就停了（现场「差一点夹到」就是这么来的）
 STICKY_TOL_CM = 0.5                # 「只许越来越近」的容差（cm）：框高抖 ±10px 就是 ±0.3cm
                                    # 的假波动，卡太死会把噪声一路棘轮下去
 # ---------- 收尾：24 交还给路线 JSON 的夹取角 ----------
@@ -759,6 +760,7 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
     state = dict(pulses)
     stop_cm = STOP_DIST_CM if stop_dist is None else float(stop_dist)
     reach = REACH_EXTRA if reach_extra is None else int(reach_extra)
+    reach = max(0, min(REACH_EXTRA_MAX, reach))     # 硬上限：再往前夹爪会杵到地面
     # 1. 先只转 21 到夹取方向（不动 22/23/24），再观测目标（给足时间让模型识别）
     board.bus_servo_set_position(1.0, [[21, state[21]]])
     time.sleep(1.0)
@@ -1080,9 +1082,9 @@ def main():
     parser.add_argument('--stop-dist', type=float, default=STOP_DIST_CM,
                         help='框高估距 ≤ N cm 就夹（默认 %(default)s）')
     parser.add_argument('--reach-extra', type=int, default=REACH_EXTRA,
-                        help='22/23 越过路线 JSON 夹取位再前伸的脉宽（默认 %(default)d）。'
-                             '手臂伸到头还差一点才够近时，调大它把夹取点往前推；'
-                             '太大会让夹爪低头碰地面')
+                        help='22/23 越过路线 JSON 夹取位再前伸的脉宽（默认 %(default)d，'
+                             '上限 %d）。夹不到、差一点就把它调大；太大会让夹爪杵到地面'
+                             % REACH_EXTRA_MAX)
     parser.add_argument('--manual', action='store_true',
                         help='夹取/放下恢复手动回车微调（调试用）')
     args = parser.parse_args()
