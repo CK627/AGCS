@@ -68,6 +68,8 @@ GRIPPER_OPEN = 400   # 放下时 25 号夹爪打开的脉宽，越小张得越�
 # 所以「往上抬」= 把 22 调到比夹取位大。现场实测 785 抬得太高（395→785，+390），
 # 450 是小幅抬（395→450，+55）。命令行传 --pull-up N 试值，不用改代码。
 PULL_UP_22 = 450
+PULL_UP_MAX_DELTA = 80  # 拔起时 22 相对**实际夹取位**最多动这么多（判早了也不会一撸到底）
+                        # 判据正常收敛时实际夹取位≈405，450-405=+45，在这个上限内
 PICK1_RESTORE_24 = 260  # 第一次夹取结束后恢复时 24 号腕俯仰的脉宽（不是复位位 330）；
                         # 160 太低（相机朝下看不到目标、还可能照到夹爪里的方块），现场改 260。
 # ---------- YOLO + 深度夹取（pick 用，走路部分不碰） ----------
@@ -75,6 +77,8 @@ DEFAULT_MODEL = 'models/v8n.onnx'  # YOLO 模型路径（相对 spiderpi 根目�
 MODEL_CONF = 0.8                   # 置信度阈值
 STOP_DEPTH_CM = 5.0                # 深度 ≤ N cm 判「夹爪够到目标」（Astra Pro 近端有盲区，基本不触发）
 REACH_EXTRA = 20                   # 22/23 在 JSON 夹取位上额外前伸的量（判不到够近时的兜底终点）
+CLOSE_AREA = 20000                 # bbox w×h ≥ N 才算「离得够近」（和 d_px 一起判，挡掉小框误判）
+GRAB_HOLD = 3                      # 判据要连续 N 帧成立才夹（单帧检测抖一下不能夹）
 OBSERVE_TIMEOUT_S = 3.0            # 转 21 后观测目标的最长时间（秒）
 # ---------- 靠近夹取（22/23 渐进前伸，21 水平居中，24 只保证目标不丢） ----------
 APPROACH_D = 6                     # 每步 22/23 朝目标脉宽靠近的最大量
@@ -87,8 +91,9 @@ TRACK_DEAD_X = 40                  # 21 水平死区（像素）
 CAM24_MIN = 160                    # 24 下限（再小=太朝下，会照到自己的夹爪）
 CAM24_MAX = 360                    # 24 上限（再大=太朝上，目标跑出画面底部）
 CAM24_STEP = 6                     # 每次俯仰调整的脉宽
-CAM24_CY_LOW = 190                 # 目标中心 cy 超过它（快出画面底部）→ 24 往下压
-CAM24_CY_HIGH = 60                 # 目标中心 cy 低于它（快出画面顶部）→ 24 往上抬
+CAM24_CY_LOW = 400                 # 目标中心 cy 超过它（快出画面底部）→ 24 往下压
+CAM24_CY_HIGH = 80                 # 目标中心 cy 低于它（快出画面顶部）→ 24 往上抬
+                                   # 只在画面边缘动手，正常靠近时 24 基本不动（画面高 480）
 # 目标中心 → 夹爪 的距离：夹爪和相机同装在 24 号腕上、相对相机固定，所以「夹爪正下方
 # 那个点」在画面里也是固定像素。22/23 前伸时目标中心就朝这个像素靠，落到它附近 = 夹爪
 # 已经对准目标 → 夹。GRIP_PX/GRIP_PY 现场按日志调（先看一次实跑打印的 cx/cy/dpx）。
@@ -712,6 +717,7 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
         s21 = state[21]          # 21 跟踪起点（转 21 后的实际值）
         t22 = state[22] - REACH_EXTRA   # 22 终点：比 JSON 更低、更前伸
         t23 = state[23] + REACH_EXTRA   # 23 终点：比 JSON 更伸展
+        hit = 0   # 判据连续成立的帧数
         for step in range(APPROACH_STEPS):
             det = model_det.detect()
             if det is not None:
@@ -720,12 +726,17 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
                 area = det['w'] * det['h']
                 d_px = math.hypot(cx - GRIP_PX, cy - GRIP_PY)   # 目标中心 → 夹爪 的像素距离
                 dist_cm = None if (no_depth or depth is None) else depth_cm_at(depth, cx, cy, rotate)
-                close = (dist_cm is not None and dist_cm < STOP_DEPTH_CM) or d_px <= GRAB_PX
-                print('pick%d 靠近 #%d conf=%.2f 中心=(%.0f,%.0f) d=%.0fpx dist=%s area=%d 21=%d 24=%d%s'
+                # 「中心对准夹爪」+「框够大（真的离得近）」两个条件同时成立才算够近：
+                # 只看 d_px 会被小框骗（框一小中心就往下飘，正好飘到夹爪像素上）。
+                close = (dist_cm is not None and dist_cm < STOP_DEPTH_CM) or \
+                        (d_px <= GRAB_PX and area >= CLOSE_AREA)
+                hit = hit + 1 if close else 0
+                print('pick%d 靠近 #%d conf=%.2f 中心=(%.0f,%.0f) d=%.0fpx dist=%s area=%d 22=%d 23=%d 24=%d%s'
                       % (pick_count, step, det['conf'], cx, cy, d_px,
                          '%.1fcm' % dist_cm if dist_cm is not None else 'None',
-                         area, s21, y24, ' -> 对准夹爪' if close else ''), flush=True)
-                if close:
+                         area, w22, z23, y24,
+                         ' -> 够近 %d/%d' % (hit, GRAB_HOLD) if close else ''), flush=True)
+                if hit >= GRAB_HOLD:
                     break
                 # 21：水平跟踪，把目标拉回画面中心
                 if abs(cx - IMG_CX) >= TRACK_DEAD_X:
@@ -754,8 +765,14 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
     time.sleep(0.5)
     if pick_count == 1:
         pulse = PULL_UP_22 if pull_up_pulse is None else clamp_pulse(pull_up_pulse)
-        print('拔起：22 号肩舵机 %d → %d（抬升 %+d）'
-              % (cur_22, pulse, pulse - cur_22), flush=True)
+        # 上限保护：pulse 是按「正常夹取位≈405」定的绝对值，判早了（22 还很高）直接跳过去
+        # 会一撸到底。这里限制相对**实际夹取位**最多动 PULL_UP_MAX_DELTA。
+        pulse = clamp_pulse(max(cur_22 - PULL_UP_MAX_DELTA,
+                                min(cur_22 + PULL_UP_MAX_DELTA, pulse)))
+        print('拔起：22 号肩舵机 %d → %d（抬升 %+d）%s'
+              % (cur_22, pulse, pulse - cur_22,
+                 '（已限幅 ±%d）' % PULL_UP_MAX_DELTA if abs(pulse - cur_22) >= PULL_UP_MAX_DELTA else ''),
+              flush=True)
         board.bus_servo_set_position(1.0, [[22, pulse]])
         time.sleep(1.0)
     restore_travel(board, GRIPPER_CLOSE,
