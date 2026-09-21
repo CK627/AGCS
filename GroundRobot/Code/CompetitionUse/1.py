@@ -83,10 +83,10 @@ MODEL_CONF = 0.8                   # 置信度阈值
 # 小于阈值就夹。不用 bbox 面积。
 DIST_F_PX = 838.0                  # 640 分辨率下的焦距像素（同 AutonomousCrawling 的 F_PX）
 BUG_HEIGHT_CM = 5.0                # 目标物理高度（cm），目标换了要跟着改
-STOP_DIST_CM = 8.0                 # 估距 ≤ N cm 就夹（同 AutonomousCrawling 的 8.0；调小=更近）
-                                   # 注意估距下限：框最高只能到 480px，838×5/480≈8.7cm，
-                                   # 想让它真按距离停住，先看日志里夹取位那一帧的「距离=」再定这个数
-RELIABLE_MAX_H = 450               # 框高超过它=框被裁了，距离不可靠，这帧不算数
+STOP_DIST_CM = 9.0                 # 估距 ≤ N cm 就夹（调小=更近）
+                                   # 估距下限：框最高只能到 480px，838×5/480≈8.7cm，所以 9 基本
+                                   # 就是「框快占满画面」；框被画面裁掉时按速率外推（同 AutonomousCrawling）
+RELIABLE_MAX_H = 450               # 框高超过它=框被裁了，距离不可靠，改用速率外推
 STOP_DEPTH_CM = 5.0                # 深度 ≤ N cm 也算够近（Astra Pro 近端 0.6m 内是盲区，基本不触发）
 REACH_EXTRA = 20                   # 22/23 在 JSON 夹取位上额外前伸的量（估距一直不够近时的兜底终点）
 GRAB_HOLD = 3                      # 判据要连续 N 帧成立才夹（单帧检测抖一下不能夹）
@@ -104,7 +104,8 @@ TRACK_DEAD_X = 40                  # 21 水平死区（像素）
 CAM24_MIN = 160                    # 24 下限（再小=太朝下，会照到自己的夹爪）
 CAM24_MAX = 360                    # 24 上限（再大=太朝上，目标跑出画面底部）
 CAM24_STEP = 6                     # 丢目标后找回时每次摆动的脉宽
-CAM24_AIM_CY = 240                 # 24 把目标往画面这一行拉（480 行的中间）
+CAM24_AIM_CY = 190                 # 24 把目标往画面这一行拉。相机装在夹爪**上面**，看的是
+                                   # 目标偏上的位置，所以这一行要比画面正中（240）更靠上
 CAM24_DEAD_Y = 40                  # 俯仰死区（像素）：目标在中间 ±40 内不动 24
 CAM24_P = 0.06                     # 俯仰 P 增益（像素→脉宽），越大跟得越急
 MOVE_SPEED = 50      # 六足直线前进/后退的速度，越大走得越快
@@ -701,7 +702,7 @@ def reacquire(board, model_det, y24, pick_count, step):
 
 
 def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
-            pull_up_pulse=None, no_depth=False, manual=False):
+            pull_up_pulse=None, no_depth=False, manual=False, s24_now=None):
     """执行第 1/2 次夹取。默认全自动：转 21 观测 → 靠近夹取 / 固定夹取。
 
     先只转 21 号到夹取方向再观测（不动 22/23/24）：
@@ -749,11 +750,17 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
         print('pick%d 观测到目标，进入靠近夹取' % pick_count, flush=True)
         w22 = OFFICIAL_ARM[22]   # 705
         z23 = OFFICIAL_ARM[23]   # 90
-        y24 = OFFICIAL_ARM[24]   # 330（起点，之后只按「目标别丢」微调）
+        # 24 从**当前实际值**起步，不要拉回复位位 330：走路段的颜色跟踪会把 24 压低
+        # （CAM_TRACK_MIN_24=160），这里一拉回 330 相机就猛地往上翘一下，然后才开始
+        # 靠近——现场看到的就是这个「翘一下」。观测阶段只动 21，所以 24 还在走路留下的位置。
+        y24 = _clamp24(OFFICIAL_ARM[24] if s24_now is None else s24_now)
         s21 = state[21]          # 21 跟踪起点（转 21 后的实际值）
         t22 = state[22] - REACH_EXTRA   # 22 终点：比 JSON 更低、更前伸
         t23 = state[23] + REACH_EXTRA   # 23 终点：比 JSON 更伸展
-        hit = 0   # 判据连续成立的帧数
+        hit = 0            # 判据连续成立的帧数
+        last_dist = None   # 最近一次可靠估距（cm）
+        dist_rate = 0.0    # 每步距离下降速率（cm/步），实测自适应
+        since_rel = 0      # 距上次可靠估距过了多少步
         for step in range(APPROACH_STEPS):
             det = model_det.detect()
             if det is None:
@@ -769,15 +776,30 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
             cx = det['x'] + det['w'] / 2.0
             cy = det['y'] + det['h'] / 2.0
             box_h = det['h']
-            # 距离：焦距 × 目标高度 ÷ 框高（同 AutonomousCrawling）。框被裁了就不算数。
-            est_cm = (DIST_F_PX * BUG_HEIGHT_CM / box_h) if 0 < box_h < RELIABLE_MAX_H else None
+            # 框碰到画面上下边 = 被画面裁了，这帧框高不可信（靠近到最后目标会长到出画）
+            clipped = det['y'] <= 1 or (det['y'] + box_h) >= 479
+            # 距离：焦距 × 目标高度 ÷ 框高（同 AutonomousCrawling）
+            if not clipped and 0 < box_h < RELIABLE_MAX_H:
+                est_cm = DIST_F_PX * BUG_HEIGHT_CM / box_h
+                if last_dist is not None and est_cm < last_dist:
+                    rate = last_dist - est_cm
+                    dist_rate = rate if dist_rate <= 0 else 0.7 * dist_rate + 0.3 * rate
+                last_dist = est_cm
+                since_rel = 0
+                cur_cm = est_cm
+            else:
+                # 框被裁：按前面测到的下降速率外推，别让距离卡住不降（同 AutonomousCrawling）
+                since_rel += 1
+                est_cm = None
+                cur_cm = None if last_dist is None else max(0.0, last_dist - dist_rate * since_rel)
             dep_cm = None if (no_depth or depth is None) else depth_cm_at(depth, cx, cy, rotate)
-            close = (est_cm is not None and est_cm <= STOP_DIST_CM) or \
+            close = (cur_cm is not None and cur_cm <= STOP_DIST_CM) or \
                     (dep_cm is not None and dep_cm < STOP_DEPTH_CM)
             hit = hit + 1 if close else 0
-            print('pick%d 靠近 #%d conf=%.2f 中心=(%.0f,%.0f) 框=%dx%d 距离=%s 深度=%s 22=%d 23=%d 24=%d%s'
+            print('pick%d 靠近 #%d conf=%.2f 中心=(%.0f,%.0f) 框=%dx%d 距离=%s%s 深度=%s 22=%d 23=%d 24=%d%s'
                   % (pick_count, step, det['conf'], cx, cy, det['w'], box_h,
-                     '%.1fcm' % est_cm if est_cm is not None else '--',
+                     '%.1fcm' % cur_cm if cur_cm is not None else '--',
+                     '(外推)' if est_cm is None else '',
                      '%.1fcm' % dep_cm if dep_cm is not None else '--',
                      w22, z23, y24,
                      ' -> 到距离 %d/%d' % (hit, GRAB_HOLD) if close else ''), flush=True)
@@ -1055,7 +1077,7 @@ def main():
             pulses = {int(k): int(v) for k, v in act.get('pulses', {}).items()} if act.get('pulses') else None
             do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
                     pull_up_pulse=args.pull_up, no_depth=args.no_depth,
-                    manual=args.manual)
+                    manual=args.manual, s24_now=cam_state['pulse'])
             picked_count += 1
             report(picked_count=picked_count,
                    message='第 %d 次夹取完成' % picked_count)
