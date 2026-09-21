@@ -73,10 +73,8 @@ MODEL_CONF = 0.8                   # 置信度阈值
 STOP_DEPTH_CM = 8.0                # 目标距离 ≤ N cm 就夹（定点夹取，固定值）
 CLOSE_AREA = 20000                 # bbox w×h ≥ N 判「够近」（读不到深度时的兜底）
 OBSERVE_TIMEOUT_S = 3.0            # 转 21 后观测目标的最长时间（秒）
-# ---------- 靠近夹取（同 AutonomousCrawling.py 阶段二：22/23 展开、24 联动保持水平） ----------
-LEVEL_SUM = 1125                   # 夹爪水平时 22+23+24 = 1125
-APPROACH_D22 = 6                   # 每步 22（肩）展开量
-APPROACH_D23 = 6                   # 每步 23（肘）展开量
+# ---------- 靠近夹取（22/23/24 渐进插值到 JSON 夹取位，21 保持居中） ----------
+APPROACH_D = 6                     # 每步每个舵机朝 JSON 夹取位靠近的最大量
 APPROACH_STEPS = 60                # 靠近最多步数
 APPROACH_SLEEP = 0.12              # 每步间隔（秒）
 IMG_CX = 320                       # 画面中心 x（640×480），21 水平跟踪用
@@ -637,12 +635,21 @@ def imu_turn(ik, board, imu_state, delta_deg):
         print('转弯后修正 %+d°（当前误差 %+.1f°）' % (step, err), flush=True)
 
 
+def _step_toward(cur, target, step):
+    """把 cur 朝 target 移动一步（最多 step），不越过 target。"""
+    if cur < target:
+        return min(target, cur + step)
+    if cur > target:
+        return max(target, cur - step)
+    return cur
+
+
 def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
             pull_up_pulse=None, no_depth=False, manual=False):
     """执行第 1/2 次夹取。默认全自动：转 21 观测 → 靠近夹取 / 固定夹取。
 
     先只转 21 号到夹取方向再观测（不动 22/23/24）：
-    - 观测到目标 → 靠近夹取（同 AutonomousCrawling.py 阶段二：22/23 渐进展开、24 联动保持水平，深度 ≤ STOP_DEPTH_CM 就夹）；
+    - 观测到目标 → 靠近夹取（22/23/24 渐进插值到 JSON 夹取位，21 保持居中，深度/面积判距）；
     - 观测不到 → 摆 22/23/24 到 JSON 固定脉宽夹取（兜底）。
     --manual 退回原来的手动回车微调。
     """
@@ -684,6 +691,7 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
         print('pick%d 观测到目标，进入靠近夹取' % pick_count, flush=True)
         w22 = OFFICIAL_ARM[22]   # 705
         z23 = OFFICIAL_ARM[23]   # 90
+        y24 = OFFICIAL_ARM[24]   # 330
         s21 = state[21]          # 21 跟踪起点（转 21 后的实际值）
         for step in range(APPROACH_STEPS):
             det = model_det.detect()
@@ -693,7 +701,7 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
                 area = det['w'] * det['h']
                 dist_cm = None if (no_depth or depth is None) else depth_cm_at(depth, cx, cy, rotate)
                 close = (dist_cm is not None and dist_cm < STOP_DEPTH_CM) or \
-                        (dist_cm is None and (no_depth or depth is None) and area >= CLOSE_AREA)
+                        (dist_cm is None and area >= CLOSE_AREA)
                 print('pick%d 靠近 #%d conf=%.2f dist=%s 21=%d%s'
                       % (pick_count, step, det['conf'],
                          '%.1fcm' % dist_cm if dist_cm is not None else 'None', s21,
@@ -704,12 +712,14 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
                 if abs(cx - IMG_CX) >= TRACK_DEAD_X:
                     s21 = clamp_pulse(s21 + int(TRACK_P * (IMG_CX - cx)))
                     board.bus_servo_set_position(0.02, [[21, s21]])
-            # 目标丢失也照常渐进靠近（同 AutonomousCrawling 的一致速度外推）
-            w22 = max(0, min(1000, int(w22 - APPROACH_D22)))
-            z23 = max(0, min(1000, int(z23 + APPROACH_D23)))
-            y24 = max(0, min(1000, int(LEVEL_SUM - w22 - z23)))
+            # 向 JSON 夹取位插值一步（22/23/24 各自靠近目标脉宽）
+            w22 = _step_toward(w22, state[22], APPROACH_D)
+            z23 = _step_toward(z23, state[23], APPROACH_D)
+            y24 = _step_toward(y24, state[24], APPROACH_D)
             board.bus_servo_set_position(APPROACH_SLEEP, [[22, w22], [23, z23], [24, y24]])
             time.sleep(APPROACH_SLEEP)
+            if w22 == state[22] and z23 == state[23] and y24 == state[24]:
+                break
         cur_22 = w22
 
     # 3. 夹取：闭 25 + 抬 22（仅第一次）+ 复位
