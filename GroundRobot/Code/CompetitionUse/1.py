@@ -1085,9 +1085,11 @@ def main():
     parser.add_argument('--stop-dist', type=float, default=STOP_DIST_CM,
                         help='框高估距 ≤ N cm 就夹（默认 %(default)s）')
     parser.add_argument('--reach-extra', type=int, default=REACH_EXTRA,
+                        # 注意：help 里既有 %(default)d（argparse 后面会格式化一次），
+                        # 又有上限值要拼进去 —— 只能用 + 拼字符串，不能再套一层 % 格式化
                         help='22/23 越过路线 JSON 夹取位再前伸的脉宽（默认 %(default)d，'
-                             '上限 %d）。夹不到、差一点就把它调大；太大会让夹爪杵到地面'
-                             % REACH_EXTRA_MAX)
+                             '上限 ' + str(REACH_EXTRA_MAX) +
+                             '）。夹不到、差一点就把它调大；太大会让夹爪杵到地面')
     parser.add_argument('--manual', action='store_true',
                         help='夹取/放下恢复手动回车微调（调试用）')
     args = parser.parse_args()
