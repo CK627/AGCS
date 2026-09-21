@@ -118,6 +118,9 @@ STICKY_TOL_CM = 0.5                # 「只许越来越近」的容差（cm）�
 # 一起带跑了：现场 24 一路 270 → 174，比路线 JSON 的夹取角 290 低了 116，
 # 夹爪是歪着伸过去的，所以「看不到也夹不到」。估距一到收尾距离就把 24 还给 JSON。
 FINISH_CM = 14.0                   # 估距 ≤ 它（或框顶快被画面裁掉）→ 进入收尾，24 回 JSON
+FINISH_EXTRA_CM = 1.0              # 收尾盲走**多走**这么多（现场「差一点夹到，再伸过去一点」
+                                   # = 差 1cm）。注意它受 22/23 终点限制：终点不够前时
+                                   # 会被终点截住，这时要调 --reach-extra 把终点推出去
 # ---------- 靠近夹取（22/23 渐进前伸，21 水平居中，24 只管把目标留在画面里） ----------
 APPROACH_D = 5                     # 每步 22/23 朝目标脉宽靠近的最大量（越小越稳）
 APPROACH_STEPS = 90                # 靠近最多步数
@@ -823,7 +826,7 @@ def do_pick(board, ik, model_det, depth, rotate, pick_count, pulses,
             else:
                 rate = min(dist_rate if dist_rate > 0.05 else CM_PER_STEP_FALLBACK,
                            CM_PER_STEP_MAX)
-                need_cm = max(0.0, mem_cm - stop_cm)
+                need_cm = max(0.0, mem_cm - stop_cm) + FINISH_EXTRA_CM
                 n_blind = min(BLIND_MAX_STEPS, max(BLIND_MIN_STEPS, int(need_cm / rate) + 1))
             print('pick%d 收尾（%s）：24 回路线 JSON 夹取角 %d（再跟着目标走夹爪会歪），'
                   '锁定估距 %s → %.1fcm，剩 %.1fcm，按 %.2fcm/步 走 %d 步'
