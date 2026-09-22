@@ -1,15 +1,19 @@
-// ---------------- 研发进度流程图 ----------------
+// ---------------- 研发进度流程图（横版） ----------------
 // 数据来自中枢 /api/progress/flow（由本服务代理）。
-// 版面 / 文字**完全照《研发工单》原图**，只是从横版改成竖版：
-// 工单 → 第一阶段（手动链路）→ 第二阶段 → 四模块 → 各自步骤列 → 综合展示。
+// 版面 / 文字**完全照新版《研发工单》设计稿**：
+//   椭圆系统名 → 第一阶段验证可行性（手动链路 4 框）→ 第二阶段研发自动化系统
+//   → 四个模块横排（无人机自动巡检 / 中枢互通 / 模型训练 / 机器人自动捕获）
+//   → 每个模块下方竖排步骤堆叠 → 四路汇入「综合展示：自动巡检与捕获」。
+//   模块之间带标注连线：1自动巡检虫害、2识别虫害、3提供模型、3自动捕获虫害；
+//   数据类传递（无人机→模型训练、模型训练→机器人）用虚线 + 箭头。
 //
 // 管道动画的设计：
 //   1) SVG 只建一次，之后每次进度变化只改 class / 文本，不重建 DOM ——
-//      流动动画不会被整页重绘打断（旧版状态一变就重画，特效"一下跳出来"）；
+//      流动动画不会被整页重绘打断（旧版状态一变就画，特效"一下跳出来"）；
 //   2) 没走到的管子是干管（pending）；进度到达时才从源头**慢慢灌水**，
 //      灌满后再持续流动（live=青色，done=绿色），颜色变化也有过渡；
-//   3) 每根管子只有一层循环光带（不是三层虚线叠在一起），光带长度/周期
-//      按管长归一化 → 流动连续、不再一卡一卡。
+//   3) 每根管子只有一层循环光带（不是三层虚线叠在一起），光带周期按管长归一化
+//      → 流动连续、不再一卡一卡。
 
 const FLOW_KEYS = ['drone', 'yolo', 'hub', 'robot'];
 const FLOW_GROUPS = {
@@ -19,66 +23,121 @@ const FLOW_GROUPS = {
   robot: '机器人自动捕获',
 };
 
-// 原图里的模块框文字（照原图断行）
+// 模块标题框文字（照设计稿断行）
 const MOD_LINES = {
-  drone: ['无人机', '自动巡检'],
+  drone: ['无人机自动巡检'],
   yolo: ['模型训练'],
   hub: ['中枢互通'],
   robot: ['机器人', '自动捕获'],
 };
 
-// 原图里的步骤列文字（逐字照抄原图，一个字都不改）
+// 步骤（照设计稿逐字）——每个模块一行一个方框；
+// 中枢互通第 3 行是两个并排的方框（部署环境 | 网络配置）；共研航线第 2 行单独一格，与无人机模块一致
 const FLOW_STEPS = {
-  drone: [['自动直线飞行', 'S型提高巡检效率', '多机共检：修理飞机']],
-  yolo: [['拍照采样、数据标注', '欠拟合模型训练', '正常模型训练', '过拟合模型训练']],
-  hub: [['网络连线', '网络配置', '架设平台'], ['安装系统', '配置环境', '部署软件']],
-  robot: [['开发稳压电路板', '视觉追踪', '自主寻路', '自动抓取']],
+  drone: [['自动直线飞行'], ['共研航线'], ['S形航线验证'], ['多机共检：修理飞机'], ['数图联传']],
+  yolo: [['拍照采样、数据标注'], ['视频抽帧'], ['数据集划分'], ['训练过程'], ['合作探究模型']],
+  hub: [['网络连接'], ['共研航线'], ['部署环境', '网络配置'], ['数据恢复'], ['架设平台']],
+  robot: [['研发稳压板卡'], ['视觉追踪'], ['自动寻路'], ['自主夹取'], ['合作探究模型']],
 };
 
-// 第一阶段：手动链路（原图是横向三框串联，竖版改成一列向下串联）
-const MANUAL = [['手动操控', '无人机巡检'], ['人工传输', '巡检信息'], ['手动操控', '机器人捕获']];
+// 第一阶段：手动链路（4 框竖排串联，照设计稿逐字）
+const MANUAL = [['手动操控', '无人机巡检'], ['人工经验', '指导'],
+                ['人工传输', '巡检信息'], ['手动操控', '无人机巡检']];
 
-// ---- 竖版版面常量 ----
-// 左右留白必须对称（M = RM）：这样「列的中心」才会正好落在画布中轴上。
-const LV = {
-  W: 960, M: 56, RM: 56,
-  RAIL: 60,                 // 左侧主管道的横坐标（最左让给「第二阶段」竖排标题）
-  P2M: 130,                 // 第二阶段四个模块组的左边界（整体右移，给竖排标题让位）
-  stW: 150, stGap: 50,
-  rowGap: 22, grpPadY: 12,
-  modW: 210, modH: 60,
-  pillW: 700, pillH: 46,
-  phW: 420, phH: 40,
-  manW: 300, manH: 54, manGapV: 38, manPadY: 18,
-  botW: 470, botH: 46,
-  GAP: 36,
-  DROP: 48,                 // 模块框 → 步骤行 的落差
+// 标题下方空白区域的图例说明
+const LEGEND = [
+  { dashed: true, text: '虚线：研发初期，无人机回传图片给训练站，训练站输出模型给机器人。' },
+  { dashed: false, text: '实线：研发中后期，无人机回传视频给中枢，中枢推送视频至训练站，训练站生成模型并回传给中枢，中枢下发模型至机器人。' },
+];
+
+// ---- 横版版面常量 ----
+const BASE_LV = {
+  W: 1920,
+  sys: { x: 40, y: 26, w: 150, h: 210, rx: 16 },    // 系统名：圆角矩形，竖排两列（宽度收窄）
+  ph1: { x: 310, y: 40, w: 250, h: 44 },           // 第一阶段验证可行性
+  ph2: { x: 1180, y: 40, w: 390, h: 44 },          // 第二阶段研发自动化系统
+  trunkY: 62,                                       // 顶部主干高度
+  p2SplitY: 118,                                    // 第二阶段 → 四模块的分支横管高度
+  cols: {
+    phase1: { x: 310, w: 250 },                     // 手动链路
+    drone: { x: 630, w: 250 },
+    hub: { x: 950, w: 270 },
+    yolo: { x: 1290, w: 270 },
+    robot: { x: 1630, w: 250 },
+  },
+  man: { gap: 52, pad: 16 },                        // 手动链路容器（上下与四个模块组齐平）
+  modY: 140, modH: 72, modW: 240,                   // 模块标题框（部门框加大）
+  stepTop: 285, stepH: 72, stepGap: 36,             // 步骤方框
+  gPadX: 8,                                         // 步骤框在列内的左右内缩
+  /* 步骤组的圆角框：只圈"步骤框"，模块标题框在框**外面**（照设计稿）；
+     上下各留 18px 内边距，框底 = 最后一行步骤框底 + 18 */
+  grpTop: 267, grpBotPad: 18,
+  bot: { y: 870, h: 56, w: 470, cx: 1255 },         // 综合展示
+  /* 画布比例按 flow-wrap 的可用区域定（约 1920×950），
+     这样 fitFlow() 按宽度缩放后，纵向也正好铺满，不会在下面留一大片空白 */
+  H: 950,
 };
+
+let LV = BASE_LV;
+
+function computeGEO() {
+  return FLOW_KEYS.map(k => {
+    const rows = FLOW_STEPS[k];
+    const n = rows.reduce((a, r) => a + r.length, 0);          // 步骤总数（中枢互通 6）
+    const H = LV.stepTop + rows.length * LV.stepH
+            + (rows.length - 1) * LV.stepGap + LV.grpBotPad - LV.grpTop;
+    return { rows, n, H };
+  });
+}
+
+let GEO = computeGEO();
+
+// 全屏时使用更舒展的纵向版式，而不是把整张 SVG 非等比拉伸。
+function setFullscreenLayout(fs) {
+  if (fs) {
+    LV = {
+      ...BASE_LV,
+      stepTop: 315,
+      stepH: 80,
+      stepGap: 48,
+      grpBotPad: 22,
+      bot: { ...BASE_LV.bot, y: 990 },
+      H: 1080,
+    };
+  } else {
+    LV = BASE_LV;
+  }
+  GEO = computeGEO();
+}
 
 function setTxt(id, text) {
   const e = document.getElementById(id);
   if (e) e.textContent = (text == null || text === '') ? '-' : text;
 }
 
-// 管道路径总长（支持多段），用来给灌水/光带周期按管长归一化
-function pipeLen(d) {
-  const nums = d.match(/-?[\d.]+/g) || [];
-  let len = 0;
-  for (let i = 2; i + 1 < nums.length; i += 2) {
-    len += Math.abs(+nums[i] - +nums[i - 2]) + Math.abs(+nums[i + 1] - +nums[i - 1]);
+// 管道路径总长（支持多段 / 多子路径），用来给灌水/光带周期按管长归一化。
+// 注意：一根管子可能由多个 M 子路径组成（中枢互通的一分二 / 二合一），
+// 子路径之间不相连，不能把「上一子路径终点 → 下一子路径起点」的空隙算进去。
+function pathSegs(d) {
+  const segs = [];
+  for (const sub of d.split(/[Mm]/)) {
+    const nums = sub.match(/-?[\d.]+/g) || [];
+    for (let i = 2; i + 1 < nums.length; i += 2) {
+      segs.push({ dx: Math.abs(+nums[i] - +nums[i - 2]), dy: Math.abs(+nums[i + 1] - +nums[i - 1]) });
+    }
   }
+  return segs;
+}
+
+function pipeLen(d) {
+  const len = pathSegs(d).reduce((a, s) => a + s.dx + s.dy, 0);
   return len || 40;
 }
 
 // 管子走向（决定亮边/暗边往哪一侧偏）
 function pipeDir(d) {
-  const nums = d.match(/-?[\d.]+/g) || [];
-  let dx = 0, dy = 0;
-  for (let i = 2; i + 1 < nums.length; i += 2) {
-    dx += Math.abs(+nums[i] - +nums[i - 2]);
-    dy += Math.abs(+nums[i + 1] - +nums[i - 1]);
-  }
-  return dy >= dx ? 'v' : 'h';
+  const t = pathSegs(d).reduce((a, s) => ({ dx: a.dx + s.dx, dy: a.dy + s.dy }), { dx: 0, dy: 0 });
+  return t.dy >= t.dx ? 'v' : 'h';
 }
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -86,26 +145,10 @@ const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const fillDur = len => clamp(len * 0.0024, 0.8, 2.4);
 const lapDur = len => clamp(len / 130, 1.0, 4.5);
 
-// 每个模块「步骤组」的几何（只跟 FLOW_STEPS 常量有关，与进度数据无关）
-const GEO = FLOW_KEYS.map(k => {
-  const rows = FLOW_STEPS[k];
-  let maxChars = 2;
-  rows.forEach(r => r.forEach(t => { maxChars = Math.max(maxChars, Array.from(t).length); }));
-  const boxH = Math.max(96, Math.round(44 + maxChars * 13.6));
-  const cols = Math.max(...rows.map(r => r.length));
-  const rowW = cols * LV.stW + (cols - 1) * LV.stGap;
-  const rowX = LV.P2M + ((LV.W - LV.P2M - LV.RM) - rowW) / 2;
-  const firstCx = rowX + LV.stW / 2;
-  const lastCx = rowX + (cols - 1) * (LV.stW + LV.stGap) + LV.stW / 2;
-  const nCol = rows.reduce((a, r) => a + r.length, 0);
-  const H = LV.grpPadY + LV.modH + LV.DROP + rows.length * boxH
-          + (rows.length - 1) * LV.rowGap + LV.grpPadY;
-  return { rows, boxH, cols, rowW, rowX, firstCx, lastCx, nCol, H };
-});
-
 // 把一段连线画成「管道」：管壁 + 管腔 + 水体 + 流动光带 + 亮/暗边。
 // 初始统一 pending（干管），通水状态由 applyFlowStates() 按进度贴上；
 // opt.delay 让上下游接力灌水（主管道先满、支管跟着满），opt.mult 控制粗细。
+// 注意：模块之间那几条「提示连线」不是水，用 annoLink() 画细线，不走这里。
 function flPipe(d, key, opt) {
   const o = opt || {};
   const k = o.mult || 1;
@@ -115,35 +158,43 @@ function flPipe(d, key, opt) {
   const lap = lapDur(len);
   const delay = o.delay || 0;
   const start = delay + fill;
-  const rim = dir === 'v' ? `transform="translate(${(-2.4 * k).toFixed(2)},0)"`
-                          : `transform="translate(0,${(-2.4 * k).toFixed(2)})"`;
-  const shade = dir === 'v' ? `transform="translate(${(2.6 * k).toFixed(2)},0)"`
-                            : `transform="translate(0,${(2.6 * k).toFixed(2)})"`;
+  const rim = dir === 'v' ? `transform="translate(${(-3.4 * k).toFixed(2)},0)"`
+                          : `transform="translate(0,${(-3.4 * k).toFixed(2)})"`;
+  const shade = dir === 'v' ? `transform="translate(${(3.8 * k).toFixed(2)},0)"`
+                            : `transform="translate(0,${(3.8 * k).toFixed(2)})"`;
   const w = (n) => `stroke-width="${(n * k).toFixed(2)}"`;
   const vars = `style="--fill:${fill.toFixed(2)}s;--lap:${lap.toFixed(2)}s;`
              + `--delay:${delay.toFixed(2)}s;--start:${start.toFixed(2)}s;`
              + `--startm:${Math.max(0, start - 0.18).toFixed(2)}s"`;
   return `<g class="pipe pending" data-pipe="${key}" ${vars}>`
-       + `<path class="pipe-wall" d="${d}" ${w(9.5)}/>`
-       + `<path class="pipe-bore" d="${d}" ${w(6.4)}/>`
-       + `<path class="pipe-water" d="${d}" ${w(4)} pathLength="1"/>`
-       + `<path class="pipe-core" d="${d}" ${w(3.2)} pathLength="1"/>`
-       + `<path class="pipe-rim" d="${d}" ${w(1.2)} ${rim}/>`
-       + `<path class="pipe-shade" d="${d}" ${w(2)} ${shade}/>`
+       + `<path class="pipe-wall" d="${d}" ${w(13)}/>`
+       + `<path class="pipe-bore" d="${d}" ${w(10)}/>`
+       + `<path class="pipe-water" d="${d}" ${w(7)} pathLength="1"/>`
+       + `<path class="pipe-core" d="${d}" ${w(5.4)} pathLength="1"/>`
+       + `<path class="pipe-rim" d="${d}" ${w(2.2)} ${rim}/>`
+       + `<path class="pipe-shade" d="${d}" ${w(3)} ${shade}/>`
        + `</g>`;
 }
 
-// ---- 竖排文字（一个汉字一行）----
-function vText(text, cx, y0, cls, gap) {
-  const chars = Array.from(text);
-  const st = gap || 13.6;
-  return chars.map((ch, i) =>
-    `<text class="${cls}" x="${cx}" y="${(y0 + i * st).toFixed(1)}">${ch}</text>`
-  ).join('');
+// 提示连线（不是水管）：细实线 / 虚线 + 末端小箭头。
+// 模块之间那几条（1自动巡检虫害、2识别虫害、3提供模型、无人机→模型训练）
+// 表达的是"信息/数据怎么走"的提示，不属于水路，所以不画成管子、也不参与通水动画。
+// dir: 1 = 箭头朝右（落在 x2），-1 = 箭头朝左（落在 x1）
+function annoLink(x1, x2, y, opt) {
+  const o = opt || {};
+  const right = o.dir !== -1;
+  const tipX = right ? x2 : x1;
+  const s = right ? 1 : -1;
+  return `<g class="anno">`
+    + `<line class="anno-line${o.dashed ? ' dashed' : ''}" x1="${x1}" y1="${y}" x2="${x2}" y2="${y}"/>`
+    + `<polygon class="anno-arrow" points="${(tipX - 10 * s).toFixed(1)},${(y - 5.5).toFixed(1)}`
+    + ` ${tipX},${y} ${(tipX - 10 * s).toFixed(1)},${(y + 5.5).toFixed(1)}"/>`
+    + `</g>`;
 }
 
-// ---- 阶段条（原图里的"堆叠矩形"造型）----
-// pid 供 applyFlowStates 更新状态；发光配色由 .phaseg.pt1/.pt2/.done 控制。
+// ---- 阶段条（设计稿里的"堆叠矩形"造型）----
+// 发光在「框」上（彩色背景 + 彩色描边），文字正常白字；
+// pid 供 applyFlowStates 更新状态；配色由 .phaseg.pt1/.pt2 控制。
 function phaseBox(x, y, w, h, text, tcls, accent, pid) {
   return `<g class="phaseg ${tcls}" data-phase="${pid}">`
     + `<rect class="flow-box phase" x="${x}" y="${y}" width="${w}" height="${h}" rx="3"/>`
@@ -154,295 +205,274 @@ function phaseBox(x, y, w, h, text, tcls, accent, pid) {
     + `</g>`;
 }
 
-// 版面照原《研发工单》图，只是竖过来。buildFlowSvg() 只画「静止版面」，
-// 初始状态一律 pending；亮灯 / 通水由 applyFlowStates() 按中枢进度贴上去。
-function buildFlowSvg() {
-  const L = LV, W = L.W, M = L.M, cx = W / 2, grpW = W - M - L.RM;
+// 连线标注（1自动巡检虫害 / 2识别虫害 / 3提供模型 / 3自动捕获虫害）
+function linkLabel(text, x, y, cls) {
+  return `<text class="link-lb ${cls || ''}" x="${x}" y="${y}">${text}</text>`;
+}
 
-  // ---- y 轴自上而下推进 ----
-  let y = 12;
-  const yTitle = y; y += L.pillH + L.GAP;
-  const yPh1 = y; y += L.phH + L.GAP;
-  const manH2 = L.manPadY * 2 + 3 * L.manH + 2 * L.manGapV;
-  const yMan = y; y += manH2 + L.GAP;
-  const yP2 = y; y += 30;          // 第二阶段横条标题已改到左侧竖排，这里只留主管道过桥的高度
-  const modY = [];
-  let yy = y;
-  GEO.forEach(g => { modY.push(yy); yy += g.H + L.GAP; });
-  const yBot = yy;
-  const H = yBot + L.botH + 14;
+// 简单按最大字数换行，保证图例里的完整长句不会被截断。
+function wrapText(text, max) {
+  const chars = Array.from(text);
+  const lines = [];
+  let line = '';
+  for (const ch of chars) {
+    if (line.length >= max) {
+      lines.push(line);
+      line = ch;
+    } else {
+      line += ch;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+// 版面照新版设计稿。buildFlowSvg() 只画「静止版面」，
+// 初始状态一律 pending；通水 / 亮灯由 applyFlowStates() 按中枢进度贴上去。
+function buildFlowSvg() {
+  const L = LV, W = L.W, H = L.H;
+  const colCx = k => L.cols[k].x + L.cols[k].w / 2;
+  const manCx = colCx('phase1');
+  const manBoxW = L.cols.phase1.w - L.man.pad * 2;
+  // 手动链路容器：上下与四个模块组**齐平**（同一高度），四个框把剩余空间均分 → 框自动放大
+  const manTop = L.grpTop;
+  const manBot = L.stepTop + GEO[0].rows.length * L.stepH
+               + (GEO[0].rows.length - 1) * L.stepGap + L.grpBotPad;
+  const manH = manBot - manTop;
+  const manBoxH = (manH - L.man.pad * 2 - (MANUAL.length - 1) * L.man.gap) / MANUAL.length;
+  const rowY = r => L.stepTop + r * (L.stepH + L.stepGap);
+  const titleCy = L.modY + L.modH / 2;
 
   let s = `<svg class="flow" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">`;
+  // 提示线（细线）单独攒一份，最后统一插到 SVG **最前面**：先画 = 在最底层，
+  // 这样水路管道永远压在提示线之上，交叉处不会被细线盖住。
+  let anno = '';
 
-  // ① 研发工单（原图标题一字不改）
-  s += `<rect class="flow-box struct" data-box="title" x="${cx - L.pillW / 2}" y="${yTitle}" width="${L.pillW}" height="${L.pillH}" rx="23"/>`;
-  s += `<text class="flow-t title center" x="${cx}" y="${yTitle + L.pillH / 2}">《空地协同农作害虫AI视觉自动巡检捕获系统》研发工单</text>`;
+  // ① 系统名（圆角矩形）+ 第一阶段 + 第二阶段，顶部一条主干
+  const e = L.sys;
+  const ecx = e.x + e.w / 2, ecy = e.y + e.h / 2;
+  s += `<rect class="flow-box struct" data-box="title" x="${e.x}" y="${e.y}"`
+     + ` width="${e.w}" height="${e.h}" rx="${e.rx}"/>`;
+  // 系统名改为竖排两列：左 8 字、右 8 字
+  const sysText = '空地协同农作虫害自动巡检捕获系统';
+  const sysCols = [Array.from(sysText.slice(0, 8)), Array.from(sysText.slice(8))];
+  const sysGap = 24;
+  const sysColX = [ecx - 22, ecx + 22];
+  const sysTop = ecy - ((8 - 1) * sysGap) / 2;
+  sysCols.forEach((chars, ci) => {
+    chars.forEach((ch, i) => {
+      s += `<text class="flow-t center sys-v" x="${sysColX[ci]}" y="${sysTop + i * sysGap}">${ch}</text>`;
+    });
+  });
+  s += flPipe(`M${e.x + e.w} ${L.trunkY} L${L.ph1.x} ${L.trunkY}`, 'p-title-ph1');
+  s += phaseBox(L.ph1.x, L.ph1.y, L.ph1.w, L.ph1.h, '第一阶段验证可行性', 'pt1', '#7fb2ff', 'ph1');
+  // 主干：第一阶段 → 第二阶段（长的横管）
+  s += flPipe(`M${L.ph1.x + L.ph1.w} ${L.trunkY} L${L.ph2.x} ${L.trunkY}`, 'p-trunk');
+  s += phaseBox(L.ph2.x, L.ph2.y, L.ph2.w, L.ph2.h, '第二阶段研发自动化系统', 'pt2', '#a78bfa', 'ph2');
 
-  // ② 第一阶段验证可行性
-  s += flPipe(`M${cx} ${yTitle + L.pillH} L${cx} ${yPh1}`, 'p-title-ph1');
-  s += phaseBox(cx - L.phW / 2, yPh1, L.phW, L.phH, '第一阶段验证可行性', 'pt1', '#7fb2ff', 'ph1');
-
-  // ③ 手动链路（第一阶段）：一根管下来，到每个目标框上方分流向左右两侧，
-  //    两路贴着目标框两侧流下，框底再汇合成一根，继续去下一个目标。
-  //    目标框在分流时按状态过渡亮起（填充/描边过渡动画见 progress.css）。
-  s += `<rect class="flow-group" x="${cx - L.manW / 2 - 20}" y="${yMan}" width="${L.manW + 40}" height="${manH2}" rx="10"/>`;
-  const manBy = i => yMan + L.manPadY + i * (L.manH + L.manGapV);
-  const manSide = cx + L.manW / 2 + 14;            // 两侧分流管与目标框的距离
-  const manSideL = cx - L.manW / 2 - 14;
+  // ② 手动链路（第一阶段）：一列四个框，框与框之间一根竖管；容器与四个模块组等高
+  s += `<rect class="flow-group" data-pgrp="1" x="${L.cols.phase1.x}" y="${manTop}"`
+     + ` width="${L.cols.phase1.w}" height="${manH}" rx="12"/>`;
+  s += flPipe(`M${manCx} ${L.ph1.y + L.ph1.h} L${manCx} ${manTop + L.man.pad}`, 'p-ph1-man');
   MANUAL.forEach((lines, i) => {
-    const by = manBy(i);
-    const splitY = by - 8;                          // 框顶上方 8px：一分二
-    const mergeY = by + L.manH + 8;                 // 框底下方 8px：二合一
-    if (i === 0) {
-      s += flPipe(`M${cx} ${yPh1 + L.phH} L${cx} ${splitY}`, 'p-man-in0');
-    } else {
-      s += flPipe(`M${cx} ${manBy(i - 1) + L.manH + 8} L${cx} ${splitY}`, `p-man-out${i - 1}`,
-                  { delay: 0.2 });
+    const by = manTop + L.man.pad + i * (manBoxH + L.man.gap);
+    if (i) {
+      s += flPipe(`M${manCx} ${by - L.man.gap} L${manCx} ${by}`, `p-man${i - 1}`);
     }
-    s += flPipe(`M${cx} ${splitY} L${manSideL} ${splitY}`, `p-man${i}-tl`);
-    s += flPipe(`M${cx} ${splitY} L${manSide} ${splitY}`, `p-man${i}-tr`);
-    s += flPipe(`M${manSideL} ${splitY} L${manSideL} ${mergeY}`, `p-man${i}-l`, { delay: 0.08 });
-    s += flPipe(`M${manSide} ${splitY} L${manSide} ${mergeY}`, `p-man${i}-r`, { delay: 0.08 });
-    s += flPipe(`M${manSideL} ${mergeY} L${cx} ${mergeY}`, `p-man${i}-bl`, { delay: 0.16 });
-    s += flPipe(`M${manSide} ${mergeY} L${cx} ${mergeY}`, `p-man${i}-br`, { delay: 0.16 });
-    s += `<rect class="flow-box mod" data-man="${i}" x="${cx - L.manW / 2}" y="${by}" width="${L.manW}" height="${L.manH}" rx="6"/>`;
+    s += `<rect class="flow-box mod" data-man="${i}" x="${L.cols.phase1.x + L.man.pad}" y="${by}"`
+       + ` width="${manBoxW}" height="${manBoxH}" rx="6"/>`;
+    const manBx = L.cols.phase1.x + L.man.pad;
+    s += `<path class="sweep sweep-l" pathLength="1"`
+       + ` d="M${manCx} ${by} L${manBx} ${by} L${manBx} ${by + manBoxH} L${manCx} ${by + manBoxH}"/>`;
+    s += `<path class="sweep sweep-r" pathLength="1"`
+       + ` d="M${manCx} ${by} L${manBx + manBoxW} ${by} L${manBx + manBoxW} ${by + manBoxH} L${manCx} ${by + manBoxH}"/>`;
+    const manTitleGap = 40;
+    const manTitleStart = by + manBoxH / 2 - (lines.length - 1) * manTitleGap / 2;
     lines.forEach((t, k) => {
-      s += `<text class="flow-t center" x="${cx}" y="${by + L.manH / 2 - (lines.length - 1) * 8.5 + k * 17}">${t}</text>`;
+      s += `<text class="flow-t center man-t" x="${manCx}" y="${manTitleStart + k * manTitleGap}">${t}</text>`;
     });
   });
 
-  // ④ 第二阶段：整块虚线大框；左侧竖排标题（带小框）。
-  //    进水：标题顶部竖直伸出，到顶部后右拐接第一阶段；
-  //    出水：标题底部竖直伸出，到底部后右拐落进综合展示；
-  //    标题右侧四根进管向上/向下接到四个模块，模块出水走右侧汇流管汇到底部。
-  const bridgeY = yP2 + 15;                        // 顶部过桥高度
-  const finY = yBot - 8;                           // 底部汇合高度（综合展示顶部上方）
-  const retX = 916;                                // 右侧汇流管横坐标
+  // ③ 第二阶段 → 四个模块：从第二阶段下方中心点向左右分水，再各自竖直落进模块框
+  const droneCx = colCx('drone'), hubCx = colCx('hub'), yoloCx = colCx('yolo'), robotCx = colCx('robot');
+  const p2Cx = L.ph2.x + L.ph2.w / 2;
+  s += flPipe(`M${p2Cx} ${L.ph2.y + L.ph2.h} L${p2Cx} ${L.p2SplitY}`,
+              'p-p2-down');
+  // 从第二阶段正下方这个点向左右分流，而不是一根水管从左到右扫过去。
+  s += flPipe(`M${p2Cx} ${L.p2SplitY} L${droneCx} ${L.p2SplitY}`
+            + ` M${p2Cx} ${L.p2SplitY} L${robotCx} ${L.p2SplitY}`, 'p-p2-split');
+  s += flPipe(`M${droneCx} ${L.p2SplitY} L${droneCx} ${L.modY}`, 'p-b-drone');
+  s += flPipe(`M${hubCx} ${L.p2SplitY} L${hubCx} ${L.modY}`, 'p-b-hub');
+  s += flPipe(`M${yoloCx} ${L.p2SplitY} L${yoloCx} ${L.modY}`, 'p-b-yolo');
+  s += flPipe(`M${robotCx} ${L.p2SplitY} L${robotCx} ${L.modY}`, 'p-b-robot');
 
-  // 第二阶段大框（先画，标题 / 管子 / 模块都画在框内）
-  s += `<rect class="flow-group" data-p2box x="4" y="${yP2 - 6}" width="${W - 8}"`
-     + ` height="${yBot - yP2 + 20}" rx="14"/>`;
+  // ④ 中枢互通 → 机器人自动捕获：7、发布指令（提示线，不是水管）
+  //    从「中枢互通」框顶支起 → 走标题行上方一路向右 → 落进「机器人自动捕获」框顶（末端箭头）
+  const annoY2 = 100;
+  const ax1 = hubCx + 70, ax2 = robotCx + 60;
+  anno += `<path class="anno-line" d="M${ax1} ${L.modY} L${ax1} ${annoY2} L${ax2} ${annoY2} L${ax2} ${L.modY}"/>`
+     + `<polygon class="anno-arrow" points="${(ax2 - 5.5).toFixed(1)},${L.modY - 10}`
+     + ` ${ax2},${L.modY} ${(ax2 + 5.5).toFixed(1)},${L.modY - 10}"/>`;
+  s += linkLabel('7、发布指令', robotCx - 110, annoY2 - 12);
+  // 机器人自动捕获 → 中枢互通：8、回传监控数据（返回，从下面走，与上方 7、发布指令 路线镜像）
+  const annoY3 = 240;
+  const bx1 = robotCx + 60, bx2 = hubCx + 70;
+  anno += `<path class="anno-line" d="M${bx1} ${L.modY + L.modH} L${bx1} ${annoY3} L${bx2} ${annoY3} L${bx2} ${L.modY + L.modH}"/>`
+     + `<polygon class="anno-arrow" points="${(bx2 - 5.5).toFixed(1)},${L.modY + L.modH + 10}`
+     + ` ${bx2},${L.modY + L.modH} ${(bx2 + 5.5).toFixed(1)},${L.modY + L.modH + 10}"/>`;
+  s += linkLabel('8、回传监控数据', (bx1 + bx2) / 2 + 100, annoY3 - 12);
 
-  // 标题几何
-  const p2Title = '第二阶段研发自动化系统';
-  const p2MidY = (modY[0] + modY[3] + GEO[3].H) / 2;
-  const p2Gap = 26;
-  const p2y0 = p2MidY - ((p2Title.length - 1) * p2Gap) / 2;
-  const p2H = (p2Title.length - 1) * p2Gap + 32;
-  const p2TopEdge = p2y0 - 16;
-  const p2BotEdge = p2y0 + (p2Title.length - 1) * p2Gap + 16;
-  const p2LinkX = 42;                              // 标题小框右缘
+  // ⑤ 模块之间的**提示连线**（不是水管）：细线 + 箭头 + 文字标注，照设计稿
+  const halfModW = L.modW / 2;
+  // 无人机自动巡检 → 中枢互通：3、回传视频（实线）
+  anno += annoLink(droneCx + halfModW, hubCx - halfModW, titleCy, { dir: 1 });
+  s += linkLabel('3、回传视频', (droneCx + halfModW + hubCx - halfModW) / 2, titleCy - 12);
+  // 中枢互通 → 无人机自动巡检：6、回传监控数据（箭头朝左进无人机）
+  anno += annoLink(droneCx + halfModW, hubCx - halfModW, titleCy + 16, { dir: -1 });
+  s += linkLabel('6、回传监控数据', (droneCx + halfModW + hubCx - halfModW) / 2, titleCy + 52);
+  // 中枢互通 → 模型训练：4、推送视频流（实线）
+  anno += annoLink(hubCx + halfModW, yoloCx - halfModW, titleCy - 10, { dir: 1 });
+  s += linkLabel('4、推送视频流', (hubCx + halfModW + yoloCx - halfModW) / 2, titleCy - 22);
+  // 模型训练 → 中枢互通：5、回传识别信息（实线，箭头朝左）
+  anno += annoLink(hubCx + halfModW, yoloCx - halfModW, titleCy + 16, { dir: -1 });
+  s += linkLabel('5、回传识别信息', (hubCx + halfModW + yoloCx - halfModW) / 2, titleCy + 44);
+  // 模型训练 ┈虚线→ 机器人自动捕获：2、输出模型
+  anno += annoLink(yoloCx + halfModW, robotCx - halfModW, titleCy, { dir: 1, dashed: true });
+  s += linkLabel('2、输出模型', (yoloCx + halfModW + robotCx - halfModW) / 2, titleCy - 12);
+  // 无人机自动巡检 ┈虚线→ 模型训练：1、提供图片和视频
+  // 四个模块标题框等高、且下面就是步骤框，所以这条不能像设计稿那样"平着穿过去"，
+  // 改成走标题行下方的拐折线：从无人机框底下来 → 右拐 → 上折进模型训练框底下（两端都接上框）
+  const dY = L.modY + L.modH + 48;                 // 数据虚线的拐折高度（落在标题行与步骤框之间）
+  const dX1 = droneCx + 60, dX2 = yoloCx - 60;
+  const dBoxB = L.modY + L.modH;
+  anno += `<path class="anno-line dashed" d="M${dX1} ${dBoxB} L${dX1} ${dY} L${dX2} ${dY} L${dX2} ${dBoxB}"/>`
+     + `<polygon class="anno-arrow" points="${(dX2 - 5.5).toFixed(1)},${dBoxB + 10}`
+     + ` ${dX2},${dBoxB} ${(dX2 + 5.5).toFixed(1)},${dBoxB + 10}"/>`;
+  s += linkLabel('1、提供图片和视频', (dX1 + hubCx) / 2 + 60, dY - 12);   // 这条标注属于下面那条虚线
+  //   （放在虚线左半段上方：躲开"中枢互通"那根落管，不然字会被管子压住）
 
-  // 进水：手动链路底部 → 下行到过桥高度；标题顶部竖直伸出、到顶部右拐接上。
-  s += flPipe(`M${cx} ${manBy(2) + L.manH + 8} L${cx} ${bridgeY}`, 'p-man2-ph2', { delay: 0.2 });
-  s += flPipe(`M25 ${p2TopEdge} L25 ${bridgeY} L${cx} ${bridgeY}`, 'p-p2-in');
+  // ⑥ 四个模块：标题框 → 步骤堆叠（中枢互通第 2 行是两个并排方框）
+  FLOW_KEYS.forEach((key, i) => {
+    const g = GEO[i];
+    const col = L.cols[key], cx = col.x + col.w / 2;
+    const boxW = col.w - L.gPadX * 2;
+    const rows = g.rows;
+    const lastRowY = rowY(rows.length - 1) + L.stepH;
+    const grpH = (lastRowY + L.grpBotPad) - L.grpTop;
 
-  // 标题（小框 + 竖排文字）
-  s += `<g class="phaseg pt2" data-phase="ph2">`
-     + `<rect class="flow-box phase" x="8" y="${p2TopEdge}" width="34" height="${p2H}" rx="8"/>`
-     + vText(p2Title, 20, p2y0, 'vp2-t', p2Gap)
-     + `</g>`;
+    // 步骤组的圆角框（先画）：只圈步骤框，标题框在框外
+    s += `<rect class="flow-group" data-mgroup="${i}" x="${col.x}" y="${L.grpTop}"`
+       + ` width="${col.w}" height="${grpH}" rx="12"/>`;
 
-  // 标题右侧四根进管（不同高度出水，上两个向上、下两个向下，再右拐进模块）
-  const p2OutY = [p2y0 + 17.5, p2y0 + 62.5, p2y0 + 107.5, p2y0 + 257.5];
-  const p2OutX = [74, 90, 106, 122];               // 竖管横坐标错开
-
-  // 出水：标题底部竖直伸出，到底部后右拐，竖直落进综合展示顶部。
-  s += flPipe(`M25 ${p2BotEdge} L25 ${finY} L${cx} ${finY}`, 'p-p2-out');
-  s += flPipe(`M${cx} ${finY} L${cx} ${yBot}`, 'p-fin', { mult: 1.1 });
-
-  // 右侧汇流管：各模块出水接进来，下行到底部与标题出水管汇合。
-  const firstYCol = modY[0] + L.grpPadY + L.modH + L.DROP + GEO[0].boxH + 8;
-  s += flPipe(`M${retX} ${firstYCol} L${retX} ${finY} L${cx} ${finY}`, 'p-return', { mult: 1.1 });
-
-  // ⑥ 每个模块：从主管道分一路支管进来 → 模块框 → 分水器 → 它的步骤列
-  //    第二阶段整体右移（P2M）：循环内用局部 cx = 右移后的模块中轴，盖住外层的画布中轴
-  const g2w = W - L.P2M - L.RM;
-  GEO.forEach((g, i) => {
-    const cx = L.P2M + g2w / 2;
-    const gy = modY[i];
-    const modTop = gy + L.grpPadY;
-    const modBottom = modTop + L.modH;
-    const rowsY = modBottom + L.DROP;
-    const yR = r => rowsY + r * (g.boxH + L.rowGap) - 14;
-    const colCx = j => g.rowX + j * (L.stW + L.stGap) + L.stW / 2;
-
-    // 水直接从该任务上方流下来：支管/分流不设起步延迟，只有每根管本身的灌水动画。
-    // 一根管到模块框上方 → 一分二贴着框两侧流下 → 框底二合一 → 落管下到分水器。
-    const splitY = modTop - 8;                       // 模块框顶上方：一分二
-    const mergeY = modBottom + 8;                    // 模块框底下方：二合一
-    const sideL = cx - L.modW / 2 - 14;
-    const sideR = cx + L.modW / 2 + 14;
-    const branchDelay = 0;
-    const splitDelay = 0.06;
-    const sideDelay = 0.12;
-    const mergeDelay = 0.18;
-    const dropDelay = 0.26;
-    const dropDur = fillDur(yR(0) - mergeY);
-    const distDelay = dropDelay + dropDur * 0.4;
-
-    // 组虚线框（先画）
-    s += `<rect class="flow-group" data-mgroup="${i}" x="${L.P2M}" y="${gy}" width="${g2w}" height="${g.H}" rx="12"/>`;
-
-    // —— 先画所有管子（端点随后被框盖住，不露头、不凸出） ——
-    s += flPipe(`M${p2LinkX} ${p2OutY[i]} L${p2OutX[i]} ${p2OutY[i]} L${p2OutX[i]} ${splitY} L${cx} ${splitY}`,
-                `p-b${i}`, { delay: branchDelay });
-    s += flPipe(`M${cx} ${splitY} L${sideL} ${splitY}`, `p-mb${i}-tl`, { delay: splitDelay });
-    s += flPipe(`M${cx} ${splitY} L${sideR} ${splitY}`, `p-mb${i}-tr`, { delay: splitDelay });
-    s += flPipe(`M${sideL} ${splitY} L${sideL} ${mergeY}`, `p-mb${i}-l`, { delay: sideDelay });
-    s += flPipe(`M${sideR} ${splitY} L${sideR} ${mergeY}`, `p-mb${i}-r`, { delay: sideDelay });
-    s += flPipe(`M${sideL} ${mergeY} L${cx} ${mergeY}`, `p-mb${i}-bl`, { delay: mergeDelay });
-    s += flPipe(`M${sideR} ${mergeY} L${cx} ${mergeY}`, `p-mb${i}-br`, { delay: mergeDelay });
-    s += flPipe(`M${cx} ${mergeY} L${cx} ${yR(0)}`, `p-d${i}`, { delay: dropDelay });
-    if (g.rows.length > 1) {
-      // 多行（中枢互通）：水从中间落点往左走到最左端，沿竖管下行；
-      // 第一行、第二行都从左往右推进（与步骤先后一致），
-      // 两行最右列排入底部收集管，汇合后一起流回主管道。
-      const yTop = yR(0);
-      const leftX = g.rowX - 40;
-      const r1y = rowsY + g.boxH / 2;
-      const rNy = rowsY + (g.rows.length - 1) * (g.boxH + L.rowGap) + g.boxH / 2;
-      const topDur = fillDur(cx - leftX);
-      const legDur = fillDur(rNy - yTop);
-      const inDur = fillDur(g.rowX - leftX);
-      const segDur = fillDur(L.stGap);
-      const legDelay = distDelay + topDur * 0.25;
-      const r0InDelay = legDelay + legDur * 0.12;
-      const r1InDelay = legDelay + legDur * 0.25;
-      const r0Seg = r0InDelay + inDur * 0.3;
-      const r1Seg = r1InDelay + inDur * 0.3;
-      s += flPipe(`M${cx} ${yTop} L${leftX} ${yTop}`, 'p-hub-top', { delay: distDelay });
-      s += flPipe(`M${leftX} ${yTop} L${leftX} ${rNy}`, 'p-hub-leg', { delay: legDelay });
-      s += flPipe(`M${leftX} ${r1y} L${g.rowX} ${r1y}`, 'p-hub-r0-in', { delay: r0InDelay });
-      s += flPipe(`M${leftX} ${rNy} L${g.rowX} ${rNy}`, 'p-hub-r1-in', { delay: r1InDelay });
-      g.rows.forEach((row, r) => {
-        const mid = r === 0 ? r1y : rNy;
-        const base = r === 0 ? r0Seg : r1Seg;
-        for (let j = 1; j < row.length; j++) {
-          s += flPipe(`M${colCx(j - 1) + L.stW / 2} ${mid} L${colCx(j) - L.stW / 2} ${mid}`,
-                      `p-hub-r${r}-${j}`, { delay: base + (j - 1) * 0.04 });
-        }
-      });
-      // 每列左进右出：从左缘中缝一分二，一路贴框顶、一路贴框底绕过，右缘中缝二合一
-      g.rows.forEach((row, r) => {
-        const mid = r === 0 ? r1y : rNy;
-        const base = r === 0 ? r0Seg : r1Seg;
-        row.forEach((txt, j) => {
-          const bx = g.rowX + j * (L.stW + L.stGap);
-          const ry = rowsY + r * (g.boxH + L.rowGap);
-          const topY = ry - 6;
-          const botY = ry + g.boxH + 6;
-          const dly = base + (j === 0 ? 0 : (j - 1) * 0.04) + 0.05;
-          s += flPipe(`M${bx} ${mid} L${bx} ${topY} L${bx + L.stW} ${topY} L${bx + L.stW} ${mid}`,
-                      `p-hub-r${r}-${j}-t`, { delay: dly });
-          s += flPipe(`M${bx} ${mid} L${bx} ${botY} L${bx + L.stW} ${botY} L${bx + L.stW} ${mid}`,
-                      `p-hub-r${r}-${j}-b`, { delay: dly });
-        });
-      });
-      // 合并回路：两行都从最右列出管，右侧竖管下行，分别横向接入右侧汇流管（错开高度）。
-      const row1Top = rowsY + g.boxH + L.rowGap;
-      const row1Bottom = row1Top + g.boxH;
-      const yColA = rowsY + g.boxH + 8;                              // 第一行出水高度
-      const yCol = row1Bottom + 8;                                   // 第二行出水高度
-      const outRDelay = r0Seg + 0.08 + segDur * 0.25;
-      const outLDelay = r1Seg + 0.08 + segDur * 0.25;
-      const sideX = colCx(2) + L.stW / 2 + 14;                       // 第一行右侧竖管
-      const sideX2 = colCx(2) + L.stW / 2 + 28;                      // 第二行右侧竖管（错开）
-      s += flPipe(`M${colCx(2) + L.stW / 2} ${r1y} L${sideX} ${r1y} L${sideX} ${yColA} L${retX} ${yColA}`,
-                  'p-hub-out-r', { delay: outRDelay });
-      s += flPipe(`M${colCx(2) + L.stW / 2} ${rNy} L${sideX2} ${rNy} L${sideX2} ${yCol} L${retX} ${yCol}`,
-                  'p-hub-out-l', { delay: outLDelay });
-    } else {
-      // 单行：顶部分水器向左右分流 → 每根滴管进小目标框上方再一分二，
-      // 贴着小目标框两侧流下、框底二合一 → 底部收集管从左往右汇入右侧汇流管。
-      const yr = yR(0);
-      const halfLen = (g.lastCx - g.firstCx) / 2;
-      const halfDur = fillDur(halfLen);
-      const yCol = rowsY + g.boxH + 8;
-      const stOff = 84;                            // 小目标框两侧分流管偏移（列间距 200，不会碰相邻列）
-      s += flPipe(`M${cx} ${yr} L${g.firstCx} ${yr}`, `p-dist${i}-l`, { delay: distDelay });
-      s += flPipe(`M${cx} ${yr} L${g.lastCx} ${yr}`, `p-dist${i}-r`, { delay: distDelay });
-      g.rows[0].forEach((txt, j) => {
-        const ccx = colCx(j);
-        const frac = halfLen > 0 ? Math.abs(colCx(j) - cx) / halfLen : 0;
-        const dripDelay = distDelay + halfDur * frac * 0.2;
-        const splitDelay = dripDelay + 0.06;
-        const sideDelay = splitDelay + 0.06;
-        const mergeDelay = sideDelay + 0.06;
-        const splitY = rowsY - 6;                  // 小目标框顶上方：一分二
-        s += flPipe(`M${ccx} ${yr} L${ccx} ${splitY}`, `p-drip${i}-${j}`, { delay: dripDelay });
-        s += flPipe(`M${ccx} ${splitY} L${ccx - stOff} ${splitY}`, `p-st${i}-${j}-tl`, { delay: splitDelay });
-        s += flPipe(`M${ccx} ${splitY} L${ccx + stOff} ${splitY}`, `p-st${i}-${j}-tr`, { delay: splitDelay });
-        s += flPipe(`M${ccx - stOff} ${splitY} L${ccx - stOff} ${yCol}`, `p-st${i}-${j}-l`, { delay: sideDelay });
-        s += flPipe(`M${ccx + stOff} ${splitY} L${ccx + stOff} ${yCol}`, `p-st${i}-${j}-r`, { delay: sideDelay });
-        s += flPipe(`M${ccx - stOff} ${yCol} L${ccx} ${yCol}`, `p-st${i}-${j}-bl`, { delay: mergeDelay });
-        s += flPipe(`M${ccx + stOff} ${yCol} L${ccx} ${yCol}`, `p-st${i}-${j}-br`, { delay: mergeDelay });
-      });
-      for (let j = 1; j < g.cols; j++) {
-        const frac = halfLen > 0 ? Math.abs(colCx(j) - cx) / halfLen : 0;
-        s += flPipe(`M${colCx(j - 1)} ${yCol} L${colCx(j)} ${yCol}`, `p-col${i}-${j}`,
-                    { delay: distDelay + halfDur * frac * 0.2 + 0.2 });
+    // —— 先画管子（端点随后被框盖住，不露头） ——
+    s += flPipe(`M${cx} ${L.modY + L.modH} L${cx} ${rowY(0)}`, `p-feed${i}`);
+    for (let r = 0; r + 1 < rows.length; r++) {
+      const y1 = rowY(r) + L.stepH, y2 = rowY(r + 1);
+      const mid = (y1 + y2) / 2;
+      const cur = rows[r], nxt = rows[r + 1];
+      const cellCx = (row, j) => {
+        const w = (boxW - (row.length - 1) * 12) / row.length;
+        let x = col.x + L.gPadX;
+        for (let q = 0; q < j; q++) x += w + 12;
+        return x + w / 2;
+      };
+      if (cur.length === 1 && nxt.length === 1) {
+        s += flPipe(`M${cx} ${y1} L${cx} ${y2}`, `p-step${i}-${r}`);
+      } else if (cur.length === 1) {
+        // 一分为二：水从上面落下来，到 mid 后同时向左、右两个格子分流。
+        // 管道路径不变，只是让水流从中间开始向左右走，而不是从左到右扫一遍。
+        s += flPipe(`M${cx} ${y1} L${cx} ${mid}`
+                  + ` M${cx} ${mid} L${cellCx(nxt, 0)} ${mid} L${cellCx(nxt, 0)} ${y2}`
+                  + ` M${cx} ${mid} L${cellCx(nxt, 1)} ${mid} L${cellCx(nxt, 1)} ${y2}`,
+                  `p-step${i}-${r}`);
+      } else {
+        // 二合一：两个格子分别落下来，到 mid 后汇成中间一根继续向下。
+        s += flPipe(`M${cellCx(cur, 0)} ${y1} L${cellCx(cur, 0)} ${mid} L${cx} ${mid}`
+                  + ` M${cellCx(cur, 1)} ${y1} L${cellCx(cur, 1)} ${mid} L${cx} ${mid}`
+                  + ` M${cx} ${mid} L${cx} ${y2}`,
+                  `p-step${i}-${r}`);
       }
-      s += flPipe(`M${g.lastCx} ${yCol} L${retX} ${yCol}`, `p-mg${i}`,
-                  { delay: distDelay + 0.2 });
     }
+    // 模块 → 综合展示：**各自单独一根管**（不用汇流总管）
+    //   中间两列直接落进框顶；左边那列下到底后右拐进框的左口；右边那列下到底后左拐进框的右口
+    const boxL = L.bot.cx - L.bot.w / 2, boxR = L.bot.cx + L.bot.w / 2;
+    const boxMidY = L.bot.y + L.bot.h / 2;
+    const finD = (cx < boxL) ? `M${cx} ${lastRowY} L${cx} ${boxMidY} L${boxL} ${boxMidY}`
+               : (cx > boxR) ? `M${cx} ${lastRowY} L${cx} ${boxMidY} L${boxR} ${boxMidY}`
+                             : `M${cx} ${lastRowY} L${cx} ${L.bot.y}`;
+    s += flPipe(finD, `p-fin${i}`);
 
     // —— 再画框和文字（盖住上面的管子端点） ——
-    s += `<rect class="flow-box mod" data-mbox="${i}" x="${cx - L.modW / 2}" y="${modTop}" width="${L.modW}" height="${L.modH}" rx="6"/>`;
-    const lines = MOD_LINES[FLOW_KEYS[i]] || [FLOW_GROUPS[FLOW_KEYS[i]]];
+    s += `<rect class="flow-box mod" data-mbox="${i}" x="${cx - L.modW / 2}" y="${L.modY}"`
+       + ` width="${L.modW}" height="${L.modH}" rx="6"/>`;
+    const lines = MOD_LINES[key] || [FLOW_GROUPS[key]];
+    const modTitleGap = 34;
+    const modTitleStart = L.modY + L.modH / 2 - (lines.length - 1) * modTitleGap / 2;
     lines.forEach((t, k) => {
-      s += `<text class="flow-t center" x="${cx}" y="${modTop + (lines.length > 1 ? 24 + k * 18 : L.modH / 2)}">${t}</text>`;
+      s += `<text class="flow-t center" x="${cx}" y="${modTitleStart + k * modTitleGap}">${t}</text>`;
     });
-    s += `<text class="flow-t small" data-mpct="${i}" text-anchor="end" x="${L.P2M + g2w - 16}" y="${modTop + 20}">进度 0%</text>`;
+    // 模块标题框里就是模块名，不再显示「进度 %」
 
     let idx = 0;
-    g.rows.forEach((row, r) => {
-      const ry = rowsY + r * (g.boxH + L.rowGap);
+    rows.forEach((row, r) => {
+      const ry = rowY(r);
+      const w = (boxW - (row.length - 1) * 12) / row.length;
       row.forEach((txt, j) => {
-        const bx = g.rowX + j * (L.stW + L.stGap);
-        const ccx = bx + L.stW / 2;
-        const nCh = Array.from(txt).length;
-        const ty0 = ry + g.boxH / 2 - (nCh - 1) * 13.6 / 2 + 4.6;
+        const bx = col.x + L.gPadX + j * (w + 12);
+        const scx = bx + w / 2;
         s += `<g class="stepg pending" data-stepg="${i}:${idx}">`
-           + `<rect class="fl-step" x="${bx}" y="${ry}" width="${L.stW}" height="${g.boxH}" rx="6"/>`
-           + vText(txt, ccx, ty0, 'v-t', 13.6)
+           + `<rect class="fl-step" x="${bx}" y="${ry}" width="${w}" height="${L.stepH}" rx="6"/>`
+           + `<path class="sweep sweep-l" pathLength="1"`
+           + ` d="M${scx} ${ry} L${bx} ${ry} L${bx} ${ry + L.stepH} L${scx} ${ry + L.stepH}"/>`
+           + `<path class="sweep sweep-r" pathLength="1"`
+           + ` d="M${scx} ${ry} L${bx + w} ${ry} L${bx + w} ${ry + L.stepH} L${scx} ${ry + L.stepH}"/>`
+           + `<text class="v-t" x="${scx}" y="${ry + L.stepH / 2}">${txt}</text>`
            + `</g>`;
         idx++;
       });
     });
   });
 
-  // ⑦ 综合展示（水由主管道从左侧送进来，见 ⑤）
-  s += `<rect class="flow-box struct" data-box="bot" x="${cx - L.botW / 2}" y="${yBot}" width="${L.botW}" height="${L.botH}" rx="8"/>`;
-  s += `<text class="flow-t title center" x="${cx}" y="${yBot + L.botH / 2}">综合展示：自动巡检与捕获</text>`;
+  // ⑦ 底部「综合展示：自动巡检与捕获」：四路**各自单独接进来**（见 ⑥ 里的 p-fin*），
+  //    不再有汇流总管
+  s += `<rect class="flow-box struct" data-box="bot" x="${L.bot.cx - L.bot.w / 2}" y="${L.bot.y}"`
+     + ` width="${L.bot.w}" height="${L.bot.h}" rx="26"/>`;
+  s += `<text class="flow-t title center" x="${L.bot.cx}" y="${L.bot.y + L.bot.h / 2}">综合展示：自动巡检与捕获</text>`;
+  // 标题下方空白区域的图例说明：放在系统名正下方，最后画避免被其他元素压住
+  const legX = L.sys.x;
+  const legW = L.sys.w;
+  const legLineH = 28;
+  const legPad = 12;
+  let legY = 248;
+  LEGEND.forEach(lg => {
+    const legLines = wrapText(lg.text, 5);
+    const legH = legLines.length * legLineH + legPad * 2;
+    s += `<rect class="legend-box ${lg.dashed ? 'dashed' : 'solid'}" x="${legX}" y="${legY}"`
+       + ` width="${legW}" height="${legH}" rx="6"/>`;
+    legLines.forEach((t, i) => {
+      s += `<text class="legend-t" x="${legX + 12}" y="${legY + legPad + legLineH * (i + 0.5)}">${t}</text>`;
+    });
+    legY += legH + 12;
+  });
   s += `</svg>`;
+  // 提示线插到 SVG 最前面（最先绘制 → 最底层），保证管道压在它上面
+  s = s.replace('xmlns="http://www.w3.org/2000/svg">',
+                'xmlns="http://www.w3.org/2000/svg">' + anno);
   return s;
 }
 
 // ---- 状态映射（只改 class / 文本，不重建 SVG） ----
-// 步骤列的亮灯：中枢里每个模块是 6 步，原图里是 3/4/6 列
-// → 按"模块完成比例 × 列数"把状态等比铺到各列上。
-function colStates(steps, n) {
-  const tot = steps.length || 1;
-  const done = steps.filter(s => s.state === 'done').length;
-  const act = steps.some(s => s.state === 'active') ? 0.5 : 0;
-  const pos = Math.min(1, (done + act) / tot) * n;
-  const out = [];
-  for (let j = 0; j < n; j++) {
-    out.push(pos >= j + 1 - 1e-6 ? 'done' : (pos > j ? 'active' : 'pending'));
+// 前 r 行是否全部完成 → 决定第 r 行下方那根管子通不通水
+function rowsDone(states, geo, r) {
+  let idx = 0;
+  for (let q = 0; q <= r; q++) {
+    for (let c = 0; c < geo.rows[q].length; c++) {
+      if (states[idx] !== 'done') return false;
+      idx++;
+    }
   }
-  return out;
+  return true;
 }
-
-function modState(steps) {
-  const allDone = steps.length > 0 && steps.every(t => t.state === 'done');
-  const someProg = steps.some(t => t.state === 'active' || t.state === 'done');
-  return {
-    cls: allDone ? 'done' : (someProg ? 'active' : ''),
-    st: allDone ? 'done' : (someProg ? 'live' : 'pending'),
-  };
-}
-
 const stepPipe = st => (st === 'done' ? 'done' : (st === 'active' ? 'live' : 'pending'));
 
 function applyFlowStates(data) {
@@ -455,105 +485,119 @@ function applyFlowStates(data) {
     const el = document.querySelector(sel);
     if (el && el.getAttribute('class') !== cls) el.setAttribute('class', cls);
   };
-  const setP = (key, st) => setCls(`[data-pipe="${key}"]`, `pipe ${st}`);
+  const setP = (key, st) => setCls(`[data-pipe="${key}"]`, 'pipe ' + st);
+  const doFlash = stateReady;
 
+  // ---- 第一阶段（手动链路）状态 ----
   const phSteps = (byKey.phase1 || {}).steps || [];
   const phSt = i => (phSteps[i] || {}).state || 'pending';
-  const ph1st = (phSteps.length && phSteps.every(s => s.state === 'done')) ? 'done'
-              : (phSteps.some(s => s.state === 'active') ? 'active' : 'idle');
-  const allSteps = mods.reduce((a, m) => a.concat(m.steps || []), []);
-  const ph2st = (allSteps.length && allSteps.every(s => s.state === 'done')) ? 'done'
-              : (allSteps.some(s => s.state === 'active' || s.state === 'done') ? 'active' : 'idle');
-  const allDone = allSteps.length > 0 && allSteps.every(s => s.state === 'done');
-  const anyProg = allSteps.some(s => s.state === 'active' || s.state === 'done');
-  // 水只有一个源头（大标题）：第一阶段没走完之前，第二阶段整条水路保持干管，
-  // 不会出现"没头就从主管道里流出来"的情况。
+  const phaseCurrent = (byKey.phase1 || {}).current;
   const ph1Done = phSteps.length > 0 && phSteps.every(s => s.state === 'done');
+  const ph1Any = phSteps.some(s => s.state === 'done' || s.state === 'active');
+
+  // ---- 第二阶段（四个模块）状态 ----
+  const modStates = mods.map(m => (m.steps || []).map(s => s.state));
+  const allSteps = modStates.reduce((a, s) => a.concat(s), []);
+  const allDone = allSteps.length > 0 && allSteps.every(s => s === 'done');
+  const anyProg = allSteps.some(s => s === 'done' || s === 'active');
+  // 水只有一个源头（第一阶段）：第一阶段没走完之前，第二阶段整条水路保持干管
   const gate = st => (ph1Done ? st : 'pending');
-  const gatedStep = st => gate(stepPipe(st));
   const p2 = ph1Done ? (allDone ? 'done' : (anyProg ? 'live' : 'pending')) : 'pending';
 
-  // 结构管道：进度走到哪，水才通到哪。
-  // 大标题是整条水路的水源：标题 → 第一阶段的这段水管**从一开始就通水**，
-  // 不随进度干涸（第一阶段全部完成后，随源头一起变绿）。
-  setP('p-title-ph1', ph1st === 'done' ? 'done' : 'live');
-  // 手动链路：一根管进目标框上方 → 左右分流贴着框两侧流下 → 框底汇合 → 去下一个目标
-  setP('p-man-in0', stepPipe(phSt(0)));
-  for (let i = 0; i < 3; i++) {
-    const st = stepPipe(phSt(i));
-    ['tl', 'tr', 'l', 'r', 'bl', 'br'].forEach(side => setP(`p-man${i}-${side}`, st));
-    if (i < 2) setP(`p-man-out${i}`, st);
+  // ---- 顶部主干 ----
+  // 系统名（椭圆）是整条水路的水源：椭圆 → 第一阶段的这段管**从一开始就通水**，
+  // 第一阶段全部完成后随源头一起变绿。
+  setP('p-title-ph1', ph1Done ? 'done' : 'live');
+  setP('p-ph1-man', stepPipe(phSt(0)));
+  // 手动链路：框与框之间的管子只有当上一框**完成**后才通水（进行中时水停在当前框）
+  for (let i = 0; i < MANUAL.length - 1; i++) {
+    setP(`p-man${i}`, phSt(i) === 'done' ? 'done' : 'pending');
   }
-  setP('p-man2-ph2', stepPipe(phSt(2)));
-  setP('p-p2-in', p2);
-  setP('p-p2-out', p2);
-  setP('p-return', p2);
-  setP('p-fin', gate(allDone ? 'done' : 'pending'));
+  setP('p-trunk', ph1Done ? p2 : 'pending');
+  setP('p-p2-down', p2);
+  setP('p-p2-split', p2);
 
-  // 源头（大标题）与终点（综合展示）水池跟着水流状态发光
-  setCls('[data-box="title"]', 'flow-box struct' + (ph1st === 'done' ? ' done' : ' live'));
-  setCls('[data-box="bot"]', 'flow-box struct'
-    + (allDone ? ' done' : (ph1Done && anyProg ? ' live' : '')));
-
-  // 阶段框 / 手动链路框
-  setCls('[data-phase="ph1"]', 'phaseg pt1' + (ph1st === 'done' ? ' done' : ''));
-  setCls('[data-phase="ph2"]', 'phaseg pt2' + (ph2st === 'done' ? ' done' : ''));
-  setCls('[data-p2box]', 'flow-group' + (allDone ? ' done' : (anyProg ? ' active' : '')));
+  // ---- 阶段框 / 系统名 / 综合展示 ----
+  setCls('[data-pgrp="1"]', 'flow-group' + (ph1Done ? ' done' : (ph1Any ? ' active' : '')));
+  setCls('[data-phase="ph1"]', 'phaseg pt1' + (ph1Done ? ' done' : ''));
+  setCls('[data-phase="ph2"]', 'phaseg pt2'
+    + (ph1Done && allDone ? ' done' : (ph1Done && anyProg ? ' live' : '')));
+  setCls('[data-box="title"]', 'flow-box struct' + (ph1Done ? ' done' : ' live'));
+  // 综合展示：四路出水全部完成前不亮（没有水提前流进去）
+  setCls('[data-box="bot"]', 'flow-box struct' + (allDone ? ' done' : ''));
   MANUAL.forEach((_, i) => {
     const st = phSt(i);
-    setCls(`[data-man="${i}"]`, 'flow-box mod' + (st === 'done' ? ' done' : (st === 'active' ? ' active' : '')));
-  });
-
-  // 模块：支管 / 落管 / 分水器 / 步骤列
-  mods.forEach((m, i) => {
-    const steps = m.steps || [];
-    const ms = modState(steps);
-    setCls(`[data-mgroup="${i}"]`, 'flow-group' + (ms.cls ? ' ' + ms.cls : ''));
-    setCls(`[data-mbox="${i}"]`, 'flow-box mod' + (ms.cls ? ' ' + ms.cls : ''));
-    const pct = document.querySelector(`[data-mpct="${i}"]`);
-    if (pct) pct.textContent = `进度 ${m.percent}%`;
-
-    const g = GEO[i];
-    const sts = colStates(steps, g.nCol);
-    const msP = gate(ms.st);
-    setP(`p-b${i}`, msP);
-    ['tl', 'tr', 'l', 'r', 'bl', 'br'].forEach(side => setP(`p-mb${i}-${side}`, msP));
-    setP(`p-d${i}`, msP);
-    if (i === 2) {
-      setP('p-hub-top', msP);
-      setP('p-hub-leg', msP);
-      setP('p-hub-r0-in', gatedStep(sts[0]));
-      setP('p-hub-r0-1', gatedStep(sts[1]));
-      setP('p-hub-r0-2', gatedStep(sts[2]));
-      setP('p-hub-r1-in', gatedStep(sts[3]));
-      setP('p-hub-r1-1', gatedStep(sts[4]));
-      setP('p-hub-r1-2', gatedStep(sts[5]));
-      for (let r = 0; r < 2; r++) {
-        g.rows[r].forEach((txt, j) => {
-          const cp = gatedStep(sts[r * 3 + j]);
-          setP(`p-hub-r${r}-${j}-t`, cp);
-          setP(`p-hub-r${r}-${j}-b`, cp);
-        });
-      }
-      setP('p-hub-out-r', gatedStep(sts[2]));
-      setP('p-hub-out-l', gatedStep(sts[5]));
-    } else {
-      setP(`p-dist${i}-l`, msP);
-      setP(`p-dist${i}-r`, msP);
-      sts.forEach((c, j) => {
-        const cp = gatedStep(c);
-        setP(`p-drip${i}-${j}`, cp);
-        ['tl', 'tr', 'l', 'r', 'bl', 'br'].forEach(side => setP(`p-st${i}-${j}-${side}`, cp));
-      });
-      for (let j = 1; j < g.cols; j++) setP(`p-col${i}-${j}`, gatedStep(sts[j]));
-      setP(`p-mg${i}`, gatedStep(sts[g.cols - 1]));
+    const c = st === 'done' ? 'done' : (st === 'active' ? 'active' : '');
+    const key = `man${i}`;
+    const prev = prevManStates[key] || 'pending';
+    let cls = 'flow-box mod' + (c ? ' ' + c : '');
+    const shouldFlash = doFlash && i === phaseCurrent && prev !== c && c !== 'pending'
+      && (!lastFlashAt[key] || Date.now() - lastFlashAt[key] > 2500);
+    if (shouldFlash) {
+      cls += ' flash';
+      lastFlashAt[key] = Date.now();
     }
-    sts.forEach((c, j) => setCls(`[data-stepg="${i}:${j}"]`, `stepg ${c}`));
+    prevManStates[key] = c;
+    setCls(`[data-man="${i}"]`, cls);
+    if (cls.includes('flash')) {
+      if (flashTimers[key]) clearTimeout(flashTimers[key]);
+      flashTimers[key] = setTimeout(() => {
+        const el = document.querySelector(`[data-man="${i}"]`);
+        if (el) el.classList.remove('flash');
+      }, 1600);
+    }
   });
+
+
+  // ---- 每个模块：落管 / 行间管 / 汇流管 / 步骤列 ----
+  mods.forEach((m, i) => {
+    const g = GEO[i];
+    const states = modStates[i];
+    const done = states.length > 0 && states.every(s => s === 'done');
+    const prog = states.some(s => s === 'done' || s === 'active');
+    const currentOrder = m.current;
+    const msCls = done ? 'done' : (prog ? 'active' : '');
+    setCls(`[data-mgroup="${i}"]`, 'flow-group' + (msCls ? ' ' + msCls : ''));
+    setCls(`[data-mbox="${i}"]`, 'flow-box mod' + (msCls ? ' ' + msCls : ''));
+
+    const msP2 = gate(done ? 'done' : (prog ? 'live' : 'pending'));
+    // 每个部门的进水口只看**本部门**进度：别的部门动起来时这边保持干管
+    setP(`p-b-${FLOW_KEYS[i]}`, msP2);
+    setP(`p-feed${i}`, msP2);
+    // 行间管：只有上面的行全部完成才通水（进行中的那一行不往下漏水）
+    for (let r = 0; r + 1 < g.rows.length; r++) {
+      setP(`p-step${i}-${r}`, gate(rowsDone(states, g, r) ? 'done' : 'pending'));
+    }
+    // 出水管：本部门全部完成才汇入综合展示
+    setP(`p-fin${i}`, gate(done ? 'done' : 'pending'));
+
+    states.forEach((st, k) => {
+      const c = st === 'done' ? 'done' : (st === 'active' ? 'active' : 'pending');
+      const key = `${i}:${k}`;
+      const prev = prevStepStates[key] || 'pending';
+      let cls = `stepg ${c}`;
+      const shouldFlash = doFlash && k === currentOrder && prev !== c && c !== 'pending'
+        && (!lastFlashAt[key] || Date.now() - lastFlashAt[key] > 2500);
+      if (shouldFlash) {
+        cls += ' flash';
+        lastFlashAt[key] = Date.now();
+      }
+      prevStepStates[key] = c;
+      setCls(`[data-stepg="${i}:${k}"]`, cls);
+      if (cls.includes('flash')) {
+        if (flashTimers[key]) clearTimeout(flashTimers[key]);
+        flashTimers[key] = setTimeout(() => {
+          const el = document.querySelector(`[data-stepg="${i}:${k}"]`);
+          if (el) el.classList.remove('flash');
+        }, 1600);
+      }
+    });
+  });
+  stateReady = true;
 }
 
-// 竖版长图自适应：按可用宽高取较小缩放比 → 整张图一屏可见、比例不变形。
-// 例外：横屏（比如 1920×1080）时按高缩会小到看不清，改成按宽铺满 + 纵向滚动。
+// 自适应：横版长图按可用宽高取较小缩放比 → 一屏完整显示、比例不变形。
+// 竖屏（比如把页面拖到竖显示器上）时按宽铺满 + 纵向滚动。
 function fitFlow() {
   const wrap = document.getElementById('flowWrap');
   if (!wrap) return;
@@ -564,17 +608,17 @@ function fitFlow() {
   const availW = wrap.clientWidth - 16;
   const availH = window.innerHeight - wrap.getBoundingClientRect().top - 22;
   if (availW <= 0 || availH <= 0) return;
-  const fitW = availW / vb[2], fitH = availH / vb[3];
-  let scale = Math.min(fitW, fitH);
-  let scroll = false;
-  if (scale < 0.5) {
-    scale = Math.min(fitW, 1);
-    scroll = true;
-  }
   const apply = (k) => {
     svg.style.width = Math.round(vb[2] * k) + 'px';
     svg.style.height = Math.round(vb[3] * k) + 'px';
   };
+  const fitW = availW / vb[2], fitH = availH / vb[3];
+  let scale = Math.min(fitW, fitH);
+  let scroll = false;
+  if (scale < 0.5) {                     // 竖屏：按宽铺满，纵向滚动
+    scale = Math.min(fitW, 1);
+    scroll = true;
+  }
   wrap.classList.toggle('scroll', scroll);
   apply(scale);
   if (!scroll) {
@@ -585,6 +629,11 @@ function fitFlow() {
 
 let flowSig = '';
 let rendered = false;
+let stateReady = false;
+const prevStepStates = {};
+const prevManStates = {};
+const flashTimers = {};
+const lastFlashAt = {};
 
 async function refreshFlow() {
   let d;
@@ -592,13 +641,13 @@ async function refreshFlow() {
     d = await (await fetch('/api/progress/flow')).json();
   } catch (e) {
     const on = document.getElementById('fOnline');
-    if (on) { on.textContent = '● 接口错误'; on.className = 'chip bad'; }
+    if (on) { on.textContent = '● 接口错误'; on.className = 'chip bad'; on.style.display = ''; }
     return;
   }
   const on = document.getElementById('fOnline');
   const wrap = document.getElementById('flowWrap');
   if (!d.hub_online) {
-    if (on) { on.textContent = '● 中枢未连接'; on.className = 'chip bad'; }
+    if (on) { on.textContent = '● 中枢未连接'; on.className = 'chip bad'; on.style.display = ''; }
     if (flowSig !== 'offline') {
       flowSig = 'offline';
       rendered = false;
@@ -611,15 +660,11 @@ async function refreshFlow() {
   if (d.hub_url) document.getElementById('hubLink').href = d.hub_url;
 
   const mods = d.modules || [];
-  const total = d.total_percent;
-  if (on) {
-    on.textContent = total > 0 ? '● 进行中' : '● 未开始';
-    on.className = 'chip ' + (total > 0 ? 'ok' : '');
-  }
+  // 不显示「进行中」标签（用户要求去掉）；状态标签只在接口错误 / 中枢未连接时出现
+  if (on) on.style.display = 'none';
 
   const sig = mods.map(m => m.key + ':' + m.percent + ':' +
-    (m.steps || []).map(t => t.state.charAt(0)).join('') +
-    ':' + (m.timing ? m.timing.state : '')).join('|');
+    (m.steps || []).map(t => t.state.charAt(0)).join('')).join('|');
 
   // 只有状态真的变化时才动 DOM：整张 SVG 只建一次，之后只改 class，
   // 管道灌水 / 流动动画不会被"整页重绘"打断，也自然得到"慢慢填充"的过渡。
@@ -645,8 +690,16 @@ document.getElementById('fsBtn').onclick = () => {
   }
 };
 document.addEventListener('fullscreenchange', () => {
+  const fs = !!document.fullscreenElement;
   document.getElementById('fsBtn').textContent =
-    document.fullscreenElement ? '✕ 退出全屏' : '⛶ 全屏';
+    fs ? '✕ 退出全屏' : '⛶ 全屏';
+  setFullscreenLayout(fs);
+  rendered = false;
+  flowSig = '';
+  stateReady = false;
+  const wrap = document.getElementById('flowWrap');
+  if (wrap) wrap.innerHTML = '';
+  refreshFlow();
   setTimeout(fitFlow, 60);
 });
 window.addEventListener('resize', fitFlow);

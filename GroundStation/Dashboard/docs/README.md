@@ -28,6 +28,8 @@
 | `robot.url` | 机器人 task_server 地址（默认 5000，IP 会变需核对） |
 | `yolo.url` | YOLO 仪表盘地址（默认 20003） |
 | `drone.video` / `yolo.video` / `robot.video` | 各视频开关 |
+| `robot.force_connected` / `drone.force_connected` / `yolo.force_connected` / `server.force_connected` | 强制显示「已连接」（设备因电压掉到直连模式、实际拉不到但设备在跑时用） |
+| `robot.placeholder_video` / `drone.placeholder_video` / `yolo.placeholder_video` | 画面拉不到时循环播放的本地占位视频路径（空 = 不启用） |
 | `dashboard.hub_port` | 中枢端口（默认 20000） |
 
 ## 页面布局

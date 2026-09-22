@@ -45,6 +45,7 @@ import config
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'frontend')
 IMAGES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'images')
 app = Flask(__name__, template_folder=FRONTEND_DIR)
+app.jinja_env.auto_reload = True   # 开发时改 frontend/*.html 保存即生效，无需重启中枢
 
 
 @app.route('/common.css')
@@ -98,39 +99,43 @@ BEACON_PORT = 20004
 # 进度 = 最高激活步 × 步宽 + 该步按自身时长推进的百分比。
 # 持久化到 data/progress.json（start 存绝对时间戳，重启后接着走，停机时间也算）。
 STEP_NAMES = {
-    # 第一阶段验证可行性（手动链路）
-    'phase1': ['手动操控无人机巡检', '人工传输巡检信息', '手动操控机器人捕获'],
-    # 第二阶段研发自动化系统 —— 四个模块（与《研发工单》流程图逐字一致）
-    'drone': ['自动直线飞行', 'S型提高巡检效率', '多机共检：修理飞机'],
-    'yolo': ['拍照采样、数据标注', '欠拟合模型训练', '正常模型训练', '过拟合模型训练'],
-    'hub': ['网络连线', '网络配置', '架设平台', '安装系统', '配置环境', '部署软件'],
-    'robot': ['开发稳压电路板', '视觉追踪', '自主寻路', '自动抓取'],
+    # 第一阶段验证可行性（手动链路，照新版横版设计稿逐字）
+    'phase1': ['手动操控无人机巡检', '人工经验指导', '人工传输巡检信息', '手动操控无人机巡检'],
+    # 第二阶段研发自动化系统 —— 四个模块（与新版设计稿逐字一致）
+    'drone': ['自动直线飞行', '共研航线', 'S形航线验证', '多机共检：修理飞机', '数图联传'],
+    'yolo': ['拍照采样、数据标注', '视频抽帧', '数据集划分', '训练过程', '合作探究模型'],
+    'hub': ['网络连接', '共研航线', '网络配置', '部署环境', '数据恢复', '架设平台'],
+    'robot': ['研发稳压板卡', '视觉追踪', '自动寻路', '自主夹取', '合作探究模型'],
 }
 DEFAULT_DURATION_MIN = 0  # 每步默认时长（分钟）——已取消倒计时：全部即时完成
 # 各模块步骤的触发方式覆盖（无倒计时：手动勾选 / 触发关键字到达即完成）
 STEP_OVERRIDES = {
     # 全部无倒计时：勾选 / 触发关键字到达即完成
     'phase1': {
-        0: {'duration_min': 0}, 1: {'duration_min': 0}, 2: {'duration_min': 0},
+        0: {'duration_min': 0}, 1: {'duration_min': 0},    # 手动操控无人机巡检 / 人工经验指导
+        2: {'duration_min': 0}, 3: {'duration_min': 0},    # 人工传输巡检信息 / 手动操控无人机巡检
     },
     'drone': {
         0: {'duration_min': 0},                            # 自动直线飞行
-        1: {'duration_min': 0},                            # S型提高巡检效率
-        2: {'trigger': 'flight', 'duration_min': 0},       # 多机共检：修理飞机：位置变动触发即完成
+        1: {'duration_min': 0},                            # 共研航线
+        2: {'duration_min': 0},                            # S形航线验证
+        3: {'trigger': 'flight', 'duration_min': 0},       # 多机共检：修理飞机：位置变动触发即完成
+        4: {'duration_min': 0},                            # 数图联传
     },
     'yolo': {
-        0: {'duration_min': 0}, 1: {'duration_min': 0},    # 拍照采样、数据标注 / 欠拟合模型训练
-        2: {'duration_min': 0},                            # 正常模型训练
-        3: {'duration_min': 0},                            # 过拟合模型训练：模型脚本跑完即勾
+        0: {'duration_min': 0}, 1: {'duration_min': 0},    # 拍照采样、数据标注 / 视频抽帧
+        2: {'duration_min': 0}, 3: {'duration_min': 0},    # 数据集划分 / 训练过程
+        4: {'duration_min': 0},                            # 合作探究模型
     },
     'hub': {
-        0: {'duration_min': 0}, 1: {'duration_min': 0}, 2: {'duration_min': 0},   # 连线/配置/架设平台
-        3: {'duration_min': 0}, 4: {'duration_min': 0},                           # 安装系统/配置环境
-        5: {'trigger': 'all_connected', 'duration_min': 0},                       # 部署软件：三端全连接即完成
+        0: {'duration_min': 0}, 1: {'duration_min': 0}, 2: {'duration_min': 0},   # 网络连接/共研航线/网络配置
+        3: {'duration_min': 0}, 4: {'duration_min': 0},                           # 部署环境/数据恢复
+        5: {'trigger': 'all_connected', 'duration_min': 0},                       # 架设平台：三端全连接即完成
     },
     'robot': {
-        0: {'duration_min': 0}, 1: {'duration_min': 0}, 2: {'duration_min': 0},   # 电路板/视觉追踪/自主寻路
-        3: {'trigger': 'CAPTURE', 'duration_min': 0},       # 自动抓取：CAPTURE 触发即完成（不等待 END，避免卡进度）
+        0: {'duration_min': 0}, 1: {'duration_min': 0}, 2: {'duration_min': 0},   # 板卡/视觉追踪/自动寻路
+        3: {'trigger': 'CAPTURE', 'duration_min': 0},       # 自主夹取：CAPTURE 触发即完成（不等待 END，避免卡进度）
+        4: {'duration_min': 0},                            # 合作探究模型
     },
 }
 PROGRESS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -509,8 +514,8 @@ def _drone_listener():
             armed = True
             hist = []
 
-        # 有画面：S型提高巡检效率完成后，画面首次出现即触发（当前步骤表里没有 video 步，天然空转）
-        if not _order_done('drone', 1):
+        # 有画面：S形航线验证完成后，画面首次出现即触发（当前步骤表里没有 video 步，天然空转）
+        if not _order_done('drone', 2):
             video_seen = False
         elif not video_seen and _drone_video_available():
             video_seen = True
@@ -576,19 +581,19 @@ def _all_connected():
 
 
 def _hub_listener():
-    """监听中枢：网络扫描(IP>=3) → 架设平台(2)；三端全连接 → 部署软件(5)。"""
+    """监听中枢：网络扫描(IP>=3) → 架设平台(5)；三端全连接 → 架设平台(5)。"""
     network_seen = False
     connected_seen = False
     while True:
         config.reload_if_changed()
-        # 架设平台（IP>=3）：网络配置(1)完成后，首次检测到就触发；触发后不再重复
-        if not _order_done('hub', 1):
+        # 架设平台（IP>=3）：网络配置(2)完成后，首次检测到就触发；触发后不再重复
+        if not _order_done('hub', 2):
             network_seen = False
         elif not network_seen and _count_network_ips() >= 3:
             network_seen = True
             _activate_by_trigger('network')
 
-        # 部署软件（三端全连接）：配置环境(4)完成后，首次全连接就触发；触发后不再重复
+        # 架设平台（三端全连接）：数据恢复(4)完成后，首次全连接就触发；触发后不再重复
         if not _order_done('hub', 4):
             connected_seen = False
         elif not connected_seen and _all_connected():
@@ -1344,7 +1349,7 @@ def _server_monitor():
             mode = 'auto'
         if mode == 'auto':
             mode = 'local' if _is_local_url(url) else 'http'
-        interval = 2.0
+        interval = 1.0
         if not config.SERVER_ENABLED:
             status = {'online': False, 'enabled': False, 'name': name,
                       'message': '服务器面板已关闭（config.yaml 的 server.enabled=false）'}
@@ -1393,6 +1398,129 @@ def _add_net_rate(status):
     return status
 
 
+# ---------------- 假数据（force_connected 且实际离线时，给面板塞循环假数据） ----------------
+# 设备因电压等原因掉到直连模式时，拉不到真实状态/画面；打开 *.force_connected 后，
+# 面板除「已连接」外，这些字段也用循环假数据填充，避免全空。数据用 time.time() 平滑循环。
+
+def _fake_robot_status():
+    """机器人循环假状态（SEARCH→NAV→APPROACH→PICK 循环，位置/朝向平滑摆动）。"""
+    t = time.time()
+    states = ['SEARCH', 'NAV', 'APPROACH', 'PICK']
+    return {
+        'online': False,
+        'force_connected': True,
+        'fake': True,
+        'state': states[int(t / 8) % len(states)],
+        'position_m': {'x': round(1.6 + 0.6 * math.sin(t / 3.0), 2),
+                       'y': round(0.9 + 0.5 * math.cos(t / 4.0), 2)},
+        'heading_deg': round((t * 9) % 360.0, 1),
+        'picked_count': int(t / 18) % 7,
+        'last_task': {'task_id': 'T%03d' % (int(t / 10) % 100)},
+        'last_result': 'done',
+        'message': 'OK',
+    }
+
+
+def _fake_drone_item():
+    """一台循环假无人机遥测（姿态/位置/电压平滑摆动，与真实字段同名）。"""
+    t = time.time()
+    return {
+        'index': 0,
+        'connected': True,
+        'source': 'sdk',
+        'sdk': {'serial': 'SIM'},
+        'error': None,
+        'roll': round(3.0 * math.sin(t / 5.0), 1),
+        'pitch': round(2.0 * math.cos(t / 6.0), 1),
+        'yaw': round((t * 10) % 360.0, 1),
+        'loc_x': round(120 + 30 * math.sin(t / 4.0), 0),
+        'loc_y': round(80 + 25 * math.cos(t / 5.0), 0),
+        'loc_z': round(150 + 10 * math.sin(t / 7.0), 0),
+        'err_x': 0, 'err_y': 0, 'err_z': 0,
+        'volt': round(11.4 + 0.2 * math.sin(t / 9.0), 2),
+        'obs_f': None, 'obs_b': None, 'obs_l': None, 'obs_r': None,
+        'key_press': None,
+        'role_news': None,
+        'role_news_id': None,
+        'timer': round(t % 60.0, 1),
+    }
+
+
+def _fake_model_stats():
+    """YOLO 循环假统计（置信度/FPS/各类别计数平滑变化）。"""
+    t = time.time()
+    classes = ['beetle', 'worm', 'pest']
+    return {
+        'loaded': False,
+        'force_connected': True,
+        'fake': True,
+        'model': 'best.onnx',
+        'message': None,
+        'conf': round(0.62 + 0.10 * math.sin(t / 3.0), 2),
+        'fps': round(9.5 + 0.8 * math.sin(t / 5.0), 1),
+        'total_detections': int(t * 1.5) % 1000,
+        'counts': {c: int(t / 7.0 + i * 3) % 20 for i, c in enumerate(classes)},
+        'last_detections': [{'class': classes[int(t / 6.0) % len(classes)],
+                             'conf': round(0.7 + 0.2 * math.sin(t / 4.0), 2)}],
+    }
+
+
+def _fake_server_status():
+    """服务器循环假指标（CPU/内存/磁盘/交换/网络平滑波动）。"""
+    t = time.time()
+    cpu_p = 28 + 14 * math.sin(t / 6.0) + 5 * math.sin(t / 2.7)
+    mem_p = 52 + 8 * math.sin(t / 9.0)
+    disk_p = 61 + 2 * math.sin(t / 20.0)
+    swap_p = 8 + 4 * math.sin(t / 15.0)
+    mem_total = 16384
+    return {
+        'online': False,
+        'force_connected': True,
+        'fake': True,
+        'enabled': config.SERVER_ENABLED,
+        'name': config.SERVER_NAME,
+        'mode': 'http',
+        'url': config.SERVER_URL,
+        'latency_ms': round(35 + 8 * math.sin(t / 4.0), 1),
+        'host': 'AGCS-Server',
+        'platform': 'Linux',
+        'cpu_name': '模拟处理器',
+        'uptime_sec': t % 86400.0,
+        'server_time': t,
+        'proc_count': 182 + int(3 * math.sin(t / 11.0)),
+        'cpu': {'count': 8, 'percent': round(cpu_p, 1),
+                'load_avg': [round(1.2 + 0.4 * math.sin(t / 5.0), 2), 1.0, 0.8]},
+        'mem': {'percent': round(mem_p, 1), 'total_mb': mem_total,
+                'used_mb': int(mem_p / 100.0 * mem_total),
+                'available_mb': int((100.0 - mem_p) / 100.0 * mem_total)},
+        'swap': {'percent': round(swap_p, 1), 'total_mb': 2048,
+                 'used_mb': int(swap_p / 100.0 * 2048)},
+        'disk': {'percent': round(disk_p, 1), 'total_gb': 512,
+                 'used_gb': int(disk_p / 100.0 * 512),
+                 'free_gb': int((100.0 - disk_p) / 100.0 * 512)},
+        'net': {'recv_mb': round(t / 10.0, 1), 'sent_mb': round(t / 15.0, 1),
+                'recv_kbps': round(120 + 30 * math.sin(t / 3.0), 1),
+                'sent_kbps': round(60 + 15 * math.sin(t / 4.0), 1)},
+        'agent_uptime_sec': t % 3600.0,
+        'checked_at': t,
+        'message': 'HTTP 已连接',
+    }
+
+
+def _server_status_payload():
+    """组装服务器状态（force_connected 且离线时换循环假数据），/api/server/status 与 SSE 共用。"""
+    config.reload_if_changed()
+    with SERVER_LOCK:
+        data = dict(server_status)
+    data['name'] = data.get('name') or config.SERVER_NAME
+    data['url'] = data.get('url') or config.SERVER_URL
+    data['enabled'] = config.SERVER_ENABLED
+    data['force_connected'] = config.SERVER_FORCE_CONNECTED
+    if config.SERVER_FORCE_CONNECTED and not data.get('online'):
+        data = _fake_server_status()
+    return data
+
+
 # ---------------- 路由 ----------------
 
 @app.route('/')
@@ -1404,6 +1532,9 @@ def index():
                            robot_video_enabled=config.ROBOT_VIDEO_ENABLED,
                            drone_video_enabled=config.DRONE_VIDEO_ENABLED,
                            yolo_video_enabled=config.YOLO_VIDEO_ENABLED,
+                           robot_placeholder=bool(config.ROBOT_PLACEHOLDER_VIDEO),
+                           drone_placeholder=bool(config.DRONE_PLACEHOLDER_VIDEO),
+                           yolo_placeholder=bool(config.YOLO_PLACEHOLDER_VIDEO),
                            progress_url='http://%s:%d' % (host, config.PROGRESS_PORT))
 
 
@@ -1412,6 +1543,12 @@ def api_drone():
     data = dict(drone_status)
     # 统一形状：无论哪种情况（SDK/MAVLink/不可达）drones 都是数组，前端不用再判空
     data['drones'] = data.get('drones') or []
+    data['force_connected'] = config.DRONE_FORCE_CONNECTED
+    # 强制连接且实际离线：塞一台循环假无人机，避免面板全空
+    if config.DRONE_FORCE_CONNECTED and not data.get('online'):
+        data['drones'] = [_fake_drone_item()]
+        data['fake'] = True
+        data['message'] = '数据源：SDK（串口 SIM）'
     data['discovery'] = {
         'url': DISCOVERED_DRONE.get('url', ''),
         'name': DISCOVERED_DRONE.get('name', ''),
@@ -1441,19 +1578,31 @@ def api_drone_history():
 
 @app.route('/api/model/status')
 def api_model():
-    return jsonify(model_stats)
+    config.reload_if_changed()
+    data = dict(model_stats)
+    data['force_connected'] = config.YOLO_FORCE_CONNECTED
+    if config.YOLO_FORCE_CONNECTED and not data.get('loaded'):
+        data = _fake_model_stats()
+    return jsonify(data)
 
 
 @app.route('/api/server/status')
 def api_server_status():
     """服务器监控状态（「服务器信息」面板轮询）。"""
-    config.reload_if_changed()
-    with SERVER_LOCK:
-        data = dict(server_status)
-    data['name'] = data.get('name') or config.SERVER_NAME
-    data['url'] = data.get('url') or config.SERVER_URL
-    data['enabled'] = config.SERVER_ENABLED
-    return jsonify(data)
+    return jsonify(_server_status_payload())
+
+
+@app.route('/api/server/stream')
+def api_server_stream():
+    """服务器监控实时流（SSE，每秒推送一次，前端 EventSource 订阅）。"""
+    def gen():
+        while True:
+            yield 'data: %s\n\n' % json.dumps(_server_status_payload(), ensure_ascii=False)
+            time.sleep(1)
+
+    return Response(gen(), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache',
+                             'X-Accel-Buffering': 'no'})
 
 
 @app.route('/api/robot/status')
@@ -1464,9 +1613,13 @@ def api_robot_status():
         r = requests.get(config.ROBOT_URL + '/status', timeout=2)
         data = r.json()
         data['online'] = True
+        data['force_connected'] = config.ROBOT_FORCE_CONNECTED
         return jsonify(data)
     except Exception as e:
-        return jsonify({'online': False, 'error': str(e)})
+        if config.ROBOT_FORCE_CONNECTED:
+            return jsonify(_fake_robot_status())
+        return jsonify({'online': False, 'error': str(e),
+                        'force_connected': False})
 
 
 @app.route('/drone_video_feed')
@@ -1548,6 +1701,22 @@ def video_mjpeg():
     return Response(gen(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 
+
+@app.route('/placeholder_video/<device>')
+def placeholder_video(device):
+    """占位画面：设备画面拉不到时循环播放的本地视频（路径在 config.yaml 的 *.placeholder_video）。
+
+    支持 Range 请求（conditional=True），浏览器 <video> 才能正常 seek / 循环播放。
+    """
+    config.reload_if_changed()
+    path = {
+        'robot': config.ROBOT_PLACEHOLDER_VIDEO,
+        'drone': config.DRONE_PLACEHOLDER_VIDEO,
+        'yolo': config.YOLO_PLACEHOLDER_VIDEO,
+    }.get(device, '')
+    if not path or not os.path.isfile(path):
+        return 'no placeholder video', 404
+    return send_file(path, conditional=True)
 
 
 @app.route('/api/progress/event', methods=['POST'])

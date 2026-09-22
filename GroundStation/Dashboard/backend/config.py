@@ -27,6 +27,18 @@ ROBOT_VIDEO_ENABLED = True
 DRONE_VIDEO_ENABLED = True
 YOLO_VIDEO_ENABLED = True
 
+# 强制显示「已连接」：设备因电压等原因从无线掉到直连模式时，实际拉不到状态/画面，
+# 但设备本身在跑；打开后中枢照常显示「已连接」（进度自动触发仍按真实连接判定）。
+ROBOT_FORCE_CONNECTED = False
+DRONE_FORCE_CONNECTED = False
+YOLO_FORCE_CONNECTED = False
+SERVER_FORCE_CONNECTED = False
+
+# 占位画面：设备画面拉不到时循环播放的本地视频（空字符串 = 不启用，仍显示「画面暂不可用」）
+ROBOT_PLACEHOLDER_VIDEO = ''
+DRONE_PLACEHOLDER_VIDEO = ''
+YOLO_PLACEHOLDER_VIDEO = ''
+
 # 服务器监控：CPU / 内存 / 磁盘 / 运行时间等系统信息
 #   local：中枢就跑在服务器这台机器上 → 直接读本机（无需网络，最省事）
 #   http ：服务器上另跑了 GroundStation/Server → 中枢去拉它的 /api/system
@@ -80,12 +92,16 @@ def reload_if_changed():
         print('[config] %s 读取失败，沿用当前配置: %s' % (_CONFIG_YAML, e))
         return
 
-    global ROBOT_URL, DRONE_URL, YOLO_URL, DRONE_VIDEO_PORT, ROBOT_VIDEO_ENABLED, DRONE_VIDEO_ENABLED, YOLO_VIDEO_ENABLED, DASHBOARD_PORT, PROGRESS_PORT, SERVER_URL, SERVER_NAME, SERVER_ENABLED, SERVER_MODE
+    global ROBOT_URL, DRONE_URL, YOLO_URL, DRONE_VIDEO_PORT, ROBOT_VIDEO_ENABLED, DRONE_VIDEO_ENABLED, YOLO_VIDEO_ENABLED, DASHBOARD_PORT, PROGRESS_PORT, SERVER_URL, SERVER_NAME, SERVER_ENABLED, SERVER_MODE, ROBOT_FORCE_CONNECTED, DRONE_FORCE_CONNECTED, YOLO_FORCE_CONNECTED, SERVER_FORCE_CONNECTED, ROBOT_PLACEHOLDER_VIDEO, DRONE_PLACEHOLDER_VIDEO, YOLO_PLACEHOLDER_VIDEO
     robot = data.get('robot') or {}
     if robot.get('url'):
         ROBOT_URL = str(robot['url']).rstrip('/')
     if 'video' in robot:
         ROBOT_VIDEO_ENABLED = bool(robot['video'])
+    if 'force_connected' in robot:
+        ROBOT_FORCE_CONNECTED = bool(robot['force_connected'])
+    if robot.get('placeholder_video') is not None:
+        ROBOT_PLACEHOLDER_VIDEO = str(robot['placeholder_video']).strip()
     drone = data.get('drone') or {}
     if drone.get('url'):
         DRONE_URL = str(drone['url']).rstrip('/')
@@ -93,6 +109,10 @@ def reload_if_changed():
         DRONE_VIDEO_ENABLED = bool(drone['video'])
     if drone.get('video_port') is not None:
         DRONE_VIDEO_PORT = int(drone['video_port'])
+    if 'force_connected' in drone:
+        DRONE_FORCE_CONNECTED = bool(drone['force_connected'])
+    if drone.get('placeholder_video') is not None:
+        DRONE_PLACEHOLDER_VIDEO = str(drone['placeholder_video']).strip()
     yolo = data.get('yolo') or {}
     if yolo.get('url'):
         YOLO_URL = str(yolo['url']).rstrip('/')
@@ -100,6 +120,10 @@ def reload_if_changed():
         YOLO_VIDEO_ENABLED = bool(yolo['video'])
     if yolo.get('fps') is not None:
         VIDEO_FPS_LIMIT = int(yolo['fps'])
+    if 'force_connected' in yolo:
+        YOLO_FORCE_CONNECTED = bool(yolo['force_connected'])
+    if yolo.get('placeholder_video') is not None:
+        YOLO_PLACEHOLDER_VIDEO = str(yolo['placeholder_video']).strip()
     server = data.get('server') or {}
     if server.get('url'):
         SERVER_URL = str(server['url']).rstrip('/')
@@ -109,6 +133,8 @@ def reload_if_changed():
         SERVER_ENABLED = bool(server['enabled'])
     if server.get('mode'):
         SERVER_MODE = str(server['mode']).strip().lower()
+    if 'force_connected' in server:
+        SERVER_FORCE_CONNECTED = bool(server['force_connected'])
     dash = data.get('dashboard') or {}
     if dash.get('hub_port'):
         DASHBOARD_PORT = int(dash['hub_port'])

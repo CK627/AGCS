@@ -110,9 +110,10 @@
   .modal-foot .btn-ghost:hover { background: #475569; }
 
   /* 服务器信息面板 */
-  /* 面板基准高度：服务器信息多，撑高这一行，同行右侧的 YOLO 画面也会跟着变大（画面框是 flex 自适应）。
-     想让 YOLO 画面再大/再小，只改这一行即可。 */
-  #serverPanel { min-height: 540px; }
+  /* 两行面板共用同一个基准高度：第一行（服务器+YOLO）和第二行（无人机+机器人）严格等高。
+     想整体调高/调低，只改 --row-h 这一个变量即可。 */
+  :root { --row-h: 540px; }
+  #serverPanel { min-height: var(--row-h); }
   .srv-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
   .srv-grid + .srv-grid { margin-top: 10px; }
   .srv-card { background: #0b1220; border-radius: 8px; padding: 8px 10px; }
@@ -133,40 +134,48 @@
   .srv-row b { color: #e2e8f0; font-weight: 400; text-align: right; word-break: break-all; }
   .srv-msg { font-size: 13px; color: #64748b; margin-top: 8px; }
 
-  /* 无人机面板：两台左右并列；每台内部 = 画面 → 9 张数据卡片 → 2 条曲线。
-     数据卡片沿用无人机仪表盘（Dron/Dashboard）的 .card 版式：
-     信息以"卡片"呈现，与其它面板用 chip 小标签的方式区分开，两边看同一套字段。 */
+  /* 无人机面板：数据全部放进 titlebar（与服务器/机器人/YOLO 的 chip 一致），
+     下面只留一个画面；画面用 flex 撑满剩余高度、object-fit: cover 填充（和 YOLO 一样不裁边留黑）。 */
   .drone-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .drone-grid.single { grid-template-columns: 1fr; }   /* 单机：整行铺满，别挤在半边 */
   @media (max-width: 1100px) { .drone-grid { grid-template-columns: 1fr; } }
-  .drone-cell { background: #0b1220; border-radius: 8px; padding: 8px; }
-  .drone-cell-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-  .drone-cell-head h3 { flex: 1; margin: 0; font-size: 15px; font-weight: 400; color: #94a3b8; }
-  .drone-cell-head .ok, .drone-cell-head .bad { padding: 2px 8px; border-radius: 999px; font-size: 12px; }
-  .drone-cell .videoBox { height: 200px; border-radius: 6px; }
-  .drone-cell .grid { grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
-  .drone-cell .card { background: #1e293b; border-radius: 8px; padding: 8px 10px; }
-  .drone-cell .card h2 { font-size: 12px; color: #94a3b8; font-weight: 400; margin-bottom: 0; }
-  .drone-cell .card .v { font-size: 15px; font-weight: 600; margin-top: 2px; overflow-wrap: break-word; }
-  .drone-cell .card .v.txt { font-size: 13px; font-weight: 400; }
-  .drone-cell .card .s { font-size: 12px; color: #94a3b8; }
-  .drone-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
-  .drone-charts canvas { height: 112px; margin-top: 0; }
-  @media (max-width: 1500px) { .drone-charts { grid-template-columns: 1fr; } }
+  .drone-cell { background: #0b1220; border-radius: 8px; padding: 8px; display: flex; flex-direction: column; }
+  .drone-cell .videoBox { flex: 1 1 0; min-height: 300px; height: auto; border-radius: 6px; }
   .drone-placeholder { color: #64748b; font-size: 13px; padding: 16px; text-align: center; grid-column: 1 / -1; }
   .drone-placeholder b { color: #94a3b8; font-weight: 400; }
 
   #serverPanel:fullscreen, #dronePanel:fullscreen { background: #0f172a; width: 100vw; height: 100vh; overflow: auto; padding: 16px; }
-  /* 无人机面板全屏特殊处理：画面与曲线放大，卡片随之放大 */
-  #dronePanel:fullscreen .drone-cell .videoBox { height: 52vh; }
-  #dronePanel:fullscreen .drone-cell-head h3 { font-size: 18px; }
-  #dronePanel:fullscreen .drone-cell .card .v { font-size: 20px; }
-  #dronePanel:fullscreen .drone-charts { grid-template-columns: 1fr 1fr; }
-  #dronePanel:fullscreen .drone-charts canvas { height: 20vh; }
+
+  /* 无人机全屏专用三栏布局：左视频 / 中位置信息 / 右目标记录 */
+  #droneFullscreen { display: none; }
+  #dronePanel:fullscreen > .titlebar,
+  #dronePanel:fullscreen > .drone-grid { display: none; }
+  #dronePanel:fullscreen #droneFullscreen {
+    display: grid; grid-template-columns: minmax(0, 1fr) 340px 240px; gap: 14px;
+    flex: 1 1 auto; min-height: 0;
+  }
+  .dfs-video, .dfs-info, .dfs-log {
+    background: #0b1220; border-radius: 10px; padding: 12px;
+    min-height: 0; display: flex; flex-direction: column;
+  }
+  .dfs-video .videoBox { flex: 1 1 auto; min-height: 0; height: auto; border-radius: 8px; }
+  .dfs-video .videoBox img { object-fit: cover; }
+  .dfs-head { font-size: 15px; color: #93c5fd; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid #1e293b; }
+  .dfs-rows, .dfs-list { flex: 1 1 auto; overflow-y: auto; }
+  .dfs-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+    font-size: 14px; color: #94a3b8; padding: 8px 0; border-bottom: 1px dashed #24334a; }
+  .dfs-row b { color: #e2e8f0; font-weight: 600; text-align: right; }
+  .dfs-list { display: flex; flex-direction: column; gap: 8px; }
+  .dfs-empty { color: #64748b; font-size: 13px; text-align: center; padding: 16px 0; }
+  .dfs-item { background: #111c30; border: 1px solid #1e293b; border-radius: 8px; padding: 8px 10px; }
+  .dfs-item .t { font-size: 13px; color: #a5f3fc; font-weight: 600; }
+  .dfs-item .p { font-size: 13px; color: #e2e8f0; margin-top: 3px; }
+  .dfs-item .m { font-size: 11px; color: #64748b; margin-top: 2px; }
 
   /* ==================== 画面填充 ====================
      画面框高度保持固定（布局尺寸不变）。
-     - 非全屏：画面按框的比例铺满整个框（把多余边缘裁掉），两侧/上下不留黑边；
-     - 全屏  ：改为完整显示（不裁切），按屏幕比例尽可能放大。
+     - YOLO / 机器人 / 无人机：非全屏都按框的比例铺满整个框（object-fit: cover，多余边缘裁掉），
+       两侧/上下不留黑边；全屏时改为完整显示（不裁切），按屏幕比例尽可能放大。
      注意：原先写死高度的 ID 选择器优先级高于 .videoBox:fullscreen（1,0,0 > 0,2,0），
      会把全屏的 height:100vh 压掉，导致全屏时框还是 300px —— 下面用 !important 兜住。 */
   #yoloVideoBox, #robotVideoBox { flex: 1 1 300px; min-height: 300px; height: auto; }
@@ -177,6 +186,9 @@
   #yoloVideoBox:not(:fullscreen) img,
   #robotVideoBox:not(:fullscreen) img,
   .drone-cell .videoBox:not(:fullscreen) img { object-fit: cover; }
+  /* 占位视频（本地 mp4）与 img 一样铺满画面框 */
+  .videoBox video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .videoBox:fullscreen video { object-fit: contain; }
 
   /* 面板之间保持等高对齐（同行两栏一样高）；同时让"画面 / 卡片"把面板内部撑满，
      这样既不会一高一低，也不会在面板里留一大块空白。 */
@@ -186,6 +198,15 @@
   #robotPanel > .titlebar { flex: 0 0 auto; }
   #serverPanel .srv-grid { flex: 1 1 auto; }
   #serverPanel .srv-card { display: flex; flex-direction: column; justify-content: center; }
+
+  /* 第二行与第一行等高：无人机/机器人面板也吃同一个基准高度，
+     机器人画面框 flex 自适应把多出来的高度吃掉（不露黑底）；
+     无人机未连接时占位文字垂直居中，不留一块空的。 */
+  #dronePanel, #robotPanel { min-height: var(--row-h); }
+  #dronePanel { display: flex; flex-direction: column; }
+  #dronePanel > .titlebar { flex: 0 0 auto; }
+  #dronePanel .drone-grid { flex: 1 1 auto; }
+  #dronePanel .drone-placeholder { grid-column: 1 / -1; }
 
 </style>
 </head>
@@ -207,7 +228,7 @@
       <button id="configBtn" class="hdrbtn">⚙ 配置</button>
     </div>
   </div>
-  <div class="hint">服务器 + 无人机（两台画面 + 数据卡片 + 曲线） + 机器人 + YOLO 统一视图。</div>
+  <div class="hint">服务器 + 无人机（顶部数据 chip + 画面 + 曲线） + 机器人 + YOLO 统一视图。</div>
 
   <!-- ==================== 第一行：服务器信息（左）+ YOLO 模型检测流（右） ==================== -->
   <div class="wrap" id="rowTop">
@@ -303,19 +324,51 @@
     </div>
   </div>
 
-  <!-- ==================== 第二行：无人机（两台左右并列；每台 = 画面 + 9 张数据卡片 + 姿态/高度曲线） ==================== -->
+  <!-- ==================== 第二行：无人机（按实际台数排布；每台 = 顶部数据 chip + 画面 + 姿态/高度曲线） ==================== -->
   <div class="wrap" id="rowBottom" style="margin-top:14px">
     <div class="box" id="dronePanel">
       <div class="titlebar">
         <h2>📡 无人机</h2>
         <span class="chip" id="dOnline">连接 -</span>
-        <span class="chip">台数 <b id="dCount">-</b></span>
-        <span class="chip">源 <b id="dSrc">-</b></span>
-        <span class="chip msg">消息 <b id="dNews">-</b></span>
+        <span class="chip">源 <b id="src">-</b></span>
+        <span class="chip">姿态 <b id="att">-</b></span>
+        <span class="chip">位置 <b id="pos">-</b></span>
+        <span class="chip">高度 <b id="alt">-</b></span>
+        <span class="chip">误差 <b id="errVal">-</b></span>
+        <span class="chip">电池 <b id="bat">-</b></span>
+        <span class="chip">避障 <b id="obs">-</b></span>
+        <span class="chip">按键 <b id="key">-</b></span>
+        <span class="chip">计时 <b id="timer">-</b></span>
+        <span class="chip msg">消息 <b id="news">-</b></span>
         <button class="fsbtn" data-fs="dronePanel">⛶ 全屏</button>
       </div>
       <div class="drone-grid" id="droneGrid">
         <div class="drone-placeholder">等待无人机数据…</div>
+      </div>
+      <!-- 无人机全屏专用三栏布局（默认隐藏，全屏时显示） -->
+      <div id="droneFullscreen">
+        <div class="dfs-video">
+          <div class="videoBox" id="dfsVideo"><span class="offline">画面加载中…</span></div>
+        </div>
+        <div class="dfs-info">
+          <div class="dfs-head">实时坐标位置</div>
+          <div class="dfs-rows">
+            <div class="dfs-row"><span>数据源</span><b id="dfs_src">-</b></div>
+            <div class="dfs-row"><span>姿态 r/p/y</span><b id="dfs_att">-</b></div>
+            <div class="dfs-row"><span>位置 x/y/z</span><b id="dfs_pos">-</b></div>
+            <div class="dfs-row"><span>高度</span><b id="dfs_alt">-</b></div>
+            <div class="dfs-row"><span>定位误差</span><b id="dfs_err">-</b></div>
+            <div class="dfs-row"><span>电池</span><b id="dfs_bat">-</b></div>
+            <div class="dfs-row"><span>避障 前/后/左/右</span><b id="dfs_obs">-</b></div>
+            <div class="dfs-row"><span>遥控器按键</span><b id="dfs_key">-</b></div>
+            <div class="dfs-row"><span>计时器</span><b id="dfs_timer">-</b></div>
+            <div class="dfs-row"><span>消息</span><b id="dfs_news">-</b></div>
+          </div>
+        </div>
+        <div class="dfs-log">
+          <div class="dfs-head">目标检测记录</div>
+          <div class="dfs-list" id="dfsList"><div class="dfs-empty">暂无检测记录</div></div>
+        </div>
       </div>
     </div>
 
@@ -396,12 +449,36 @@ document.addEventListener('fullscreenchange', () => {
   document.querySelectorAll('.fsbtn').forEach(b => {
     b.textContent = document.fullscreenElement ? '✕ 退出全屏' : '⛶ 全屏';
   });
+  droneFullscreenSync();
 });
 
 // MJPEG 画面自愈：挂 <img>，断流/被热关闭后 5 秒自动重试，恢复后画面自动回来
-function videoHeal(boxId, src) {
+// 第三个参数 placeholderSrc（可选）：画面拉不到时循环播放的本地占位视频地址；
+// 有占位视频就先把占位画面垫上、真实流加载成功再替换，避免断流时一片空白。
+function videoHeal(boxId, src, placeholderSrc) {
   const box = document.getElementById(boxId);
   if (!box) return;
+
+  if (placeholderSrc) {
+    if (!box.querySelector('video')) {
+      const v = document.createElement('video');
+      v.src = placeholderSrc;
+      v.autoplay = v.loop = v.muted = v.playsInline = true;
+      v.onerror = () => {
+        box.innerHTML = '<div class="offline">占位画面不可用（检查占位视频文件是否存在）</div>';
+      };
+      box.innerHTML = '';
+      box.appendChild(v);
+    }
+    const img = document.createElement('img');
+    img.style.display = 'none';   // 真实流加载成功前不显示，占位画面一直垫在下面
+    img.src = src + (src.includes('?') ? '&' : '?') + 't=' + Date.now();
+    img.onload = () => { box.innerHTML = ''; img.style.display = ''; box.appendChild(img); };
+    img.onerror = () => { img.remove(); setTimeout(() => videoHeal(boxId, src, placeholderSrc), 5000); };
+    box.appendChild(img);
+    return;
+  }
+
   const img = document.createElement('img');
   img.src = src + (src.includes('?') ? '&' : '?') + 't=' + Date.now();
   img.alt = '画面未连接';
@@ -412,9 +489,12 @@ function videoHeal(boxId, src) {
   box.innerHTML = '';
   box.appendChild(img);
 }
-{% if yolo_video_enabled %}videoHeal('yoloVideoBox', '/video.mjpeg');{% endif %}
-{% if robot_video_enabled %}videoHeal('robotVideoBox', '/robot_video_feed');{% endif %}
-// 无人机的两路画面在 buildDroneCells() 里按实际台数挂载（拿到 /api/drone/status 后）
+const ROBOT_PLACEHOLDER = {{ 'true' if robot_placeholder else 'false' }} ? '/placeholder_video/robot' : null;
+const DRONE_PLACEHOLDER = {{ 'true' if drone_placeholder else 'false' }} ? '/placeholder_video/drone' : null;
+const YOLO_PLACEHOLDER = {{ 'true' if yolo_placeholder else 'false' }} ? '/placeholder_video/yolo' : null;
+{% if yolo_video_enabled %}videoHeal('yoloVideoBox', '/video.mjpeg', YOLO_PLACEHOLDER);{% endif %}
+{% if robot_video_enabled %}videoHeal('robotVideoBox', '/robot_video_feed', ROBOT_PLACEHOLDER);{% endif %}
+// 无人机的画面在 buildDroneCells() 里按实际台数挂载（拿到 /api/drone/status 后）
 const DRONE_VIDEO_ENABLED = {{ 'true' if drone_video_enabled else 'false' }};
 
 // ---------------- 顶部状态徽标 ----------------
@@ -525,13 +605,13 @@ function renderSrvRows(s) {
   });
 }
 
-async function refreshServer() {
+function applyServerStatus(s) {
   try {
-    const s = await (await fetch('/api/server/status')).json();
-    setSrvStatus(s.online);
+    const ok = !!(s.online || s.force_connected);
+    setSrvStatus(ok);
     const on = document.getElementById('sOnline');
-    on.textContent = s.online ? '● 在线' : '● 离线';
-    on.className = 'chip ' + (s.online ? 'ok' : 'bad');
+    on.textContent = ok ? '● 在线' : '● 离线';
+    on.className = 'chip ' + (ok ? 'ok' : 'bad');
     document.getElementById('sName').textContent = s.name || '-';
     document.getElementById('sHost').textContent = s.host || '-';
     document.getElementById('sMode').textContent =
@@ -570,47 +650,53 @@ async function refreshServer() {
   }
 }
 
-// ---------------- 无人机：两台左右并列，每台 = 画面 + 9 张数据卡片 + 姿态/高度曲线 ----------------
-// 卡片字段与无人机仪表盘（Dron/Dashboard）完全一致，两台各显示自己那台的数据。
+// 一次性拉取（初次加载 / SSE 不可用时的兜底）
+async function refreshServer() {
+  try {
+    const s = await (await fetch('/api/server/status')).json();
+    applyServerStatus(s);
+  } catch (e) {
+    setSrvStatus(false);
+    const on = document.getElementById('sOnline');
+    on.textContent = '● 接口错误';
+    on.className = 'chip bad';
+  }
+}
+
+// 实时订阅：SSE 推送（断开后 3 秒自动重连）
+function connectServerStream() {
+  if (typeof EventSource === 'undefined') {
+    setInterval(refreshServer, 1000);   // 不支持 SSE 时退回轮询
+    return;
+  }
+  const es = new EventSource('/api/server/stream');
+  es.onmessage = function (e) {
+    try { applyServerStatus(JSON.parse(e.data)); } catch (err) { /* 忽略坏数据 */ }
+  };
+  es.onerror = function () {
+    es.close();
+    setTimeout(connectServerStream, 3000);
+  };
+}
+
+// ---------------- 无人机：数据全在面板 titlebar（chip），每台只放一个画面 ----------------
+// 数据字段与无人机仪表盘（Dron/Dashboard）完全一致（此处用面板 titlebar 的 chip 呈现）。
 let droneCellsBuilt = -1;      // 已生成的台数（-1 表示还是占位）
 let dronePlaceholderMsg = null;
 
-function el(id, i) {
-  return document.getElementById(id + '_' + i);
-}
 const f0 = v => (v == null || isNaN(Number(v))) ? '-' : Number(v).toFixed(0);
 const f1 = v => (v == null || isNaN(Number(v))) ? '-' : Number(v).toFixed(1);
 const f2 = v => (v == null || isNaN(Number(v))) ? '-' : Number(v).toFixed(2);
 function setTxt(node, text) { if (node) node.textContent = text; }
 
-// 一台无人机的版式：标题 → 画面 → 9 张数据卡片 → 2 条曲线（与仪表盘同款，仅排布为上下）
+// 一台无人机的版式：数据都在面板 titlebar 里，这里只放一个画面（撑满剩余高度）
 function droneCellHtml(i) {
   return `
     <div class="drone-cell">
-      <div class="drone-cell-head">
-        <h3>无人机 ${i + 1}</h3>
-        <span class="bad" id="st_${i}">未连接</span>
-        <button class="fsbtn" data-fs="droneVideoBox${i}">⛶ 全屏</button>
-      </div>
       <div class="videoBox" id="droneVideoBox${i}">
         ${DRONE_VIDEO_ENABLED
           ? '<span class="offline">画面 ' + (i + 1) + '（图传未连接）</span>'
           : '<span class="offline">画面已关闭（data/config.yaml 的 drone.video=false）</span>'}
-      </div>
-      <div class="grid">
-        <div class="card"><h2>数据源</h2><div class="v" id="src_${i}">-</div><div class="s" id="src2_${i}">-</div></div>
-        <div class="card"><h2>姿态 r/p/y</h2><div class="v" id="att_${i}">-</div><div class="s">单位：度</div></div>
-        <div class="card"><h2>位置 x/y/z</h2><div class="v" id="pos_${i}">-</div><div class="s" id="alt_${i}">高度 - m</div></div>
-        <div class="card"><h2>定位误差 x/y/z</h2><div class="v" id="errVal_${i}">-</div><div class="s">单位：cm</div></div>
-        <div class="card"><h2>电池</h2><div class="v" id="bat_${i}">-</div><div class="s">单位：伏</div></div>
-        <div class="card"><h2>避障 前/后/左/右</h2><div class="v" id="obs_${i}">-</div><div class="s">单位：cm</div></div>
-        <div class="card"><h2>遥控器按键</h2><div class="v" id="key_${i}">-</div><div class="s">是否按下</div></div>
-        <div class="card"><h2>计时器</h2><div class="v" id="timer_${i}">-</div><div class="s">单位：秒</div></div>
-        <div class="card"><h2>消息</h2><div class="v txt" id="news_${i}">-</div><div class="s" id="newsId_${i}">-</div></div>
-      </div>
-      <div class="drone-charts">
-        <canvas id="attChart_${i}"></canvas>
-        <canvas id="altChart_${i}"></canvas>
       </div>
     </div>`;
 }
@@ -621,20 +707,9 @@ function buildDroneCells(n) {
   let html = '';
   for (let i = 0; i < n; i++) html += droneCellHtml(i);
   grid.innerHTML = html;
-  // 每台自己的全屏按钮：只放大该台的画面
-  grid.querySelectorAll('.fsbtn').forEach(btn => {
-    btn.onclick = () => {
-      const box = document.getElementById(btn.dataset.fs);
-      if (!box) return;
-      if (!document.fullscreenElement) {
-        (box.requestFullscreen || box.webkitRequestFullscreen).call(box);
-      } else {
-        document.exitFullscreen();
-      }
-    };
-  });
+  grid.classList.toggle('single', n === 1);   // 单机时铺满整个无人机面板，不挤在半边
   if (DRONE_VIDEO_ENABLED) {   // 每台挂自己那路图传（cam=i，与仪表盘画面一致）
-    for (let i = 0; i < n; i++) videoHeal('droneVideoBox' + i, '/drone_video_feed?cam=' + i);
+    for (let i = 0; i < n; i++) videoHeal('droneVideoBox' + i, '/drone_video_feed?cam=' + i, DRONE_PLACEHOLDER);
   }
   droneCellsBuilt = n;
   dronePlaceholderMsg = null;
@@ -658,30 +733,105 @@ function showDronePlaceholder(msg) {
   dronePlaceholderMsg = msg || null;
 }
 
-// 把一台机的最新遥测填进它自己的卡片（与仪表盘 updateDrone 一一对应）
-function updateDroneCell(i, dr) {
-  const st = el('st', i);
-  if (st) {
-    st.textContent = dr.connected ? '已连接' : '未连接';
-    st.className = dr.connected ? 'ok' : 'bad';
-  }
+// 把一台机的最新遥测填进面板 titlebar 里的数据 chip（字段与仪表盘 updateDrone 一致）
+function updateDroneCell(dr) {
   const isSdk = (dr.source || '') === 'sdk';
   const sdk = dr.sdk || {};
-  setTxt(el('src', i), isSdk ? 'SDK 链路' : (dr.source || '-'));
-  setTxt(el('src2', i), isSdk ? (sdk.serial ? '串口 ' + sdk.serial : '') : (dr.error || ''));
-  setTxt(el('att', i), f1(dr.roll) + ' / ' + f1(dr.pitch) + ' / ' + f1(dr.yaw));
-  setTxt(el('pos', i), dr.loc_x == null ? '-'
+  const srcExtra = isSdk ? (sdk.serial ? ' · 串口 ' + sdk.serial : '') : (dr.error ? ' · ' + dr.error : '');
+  setTxt(document.getElementById('src'), (isSdk ? 'SDK 链路' : (dr.source || '-')) + srcExtra);
+  setTxt(document.getElementById('att'), f1(dr.roll) + ' / ' + f1(dr.pitch) + ' / ' + f1(dr.yaw));
+  setTxt(document.getElementById('pos'), dr.loc_x == null ? '-'
     : f0(dr.loc_x) + ', ' + f0(dr.loc_y) + ', ' + f0(dr.loc_z) + ' cm');
-  setTxt(el('alt', i), '高度 ' + (dr.loc_z == null ? '-' : (Number(dr.loc_z) / 100).toFixed(1)) + ' m');
+  setTxt(document.getElementById('alt'), dr.loc_z == null ? '-' : (Number(dr.loc_z) / 100).toFixed(1) + ' m');
   const hasErr = [dr.err_x, dr.err_y, dr.err_z].some(v => v != null && Number(v) !== 0);
-  setTxt(el('errVal', i), hasErr ? (dr.err_x + ', ' + dr.err_y + ', ' + dr.err_z) : '-');
-  setTxt(el('bat', i), dr.volt == null ? '-' : f2(dr.volt) + ' V');
-  setTxt(el('obs', i), dr.obs_f == null ? '-'
+  setTxt(document.getElementById('errVal'), hasErr ? (dr.err_x + ', ' + dr.err_y + ', ' + dr.err_z + ' cm') : '-');
+  setTxt(document.getElementById('bat'), dr.volt == null ? '-' : f2(dr.volt) + ' V');
+  setTxt(document.getElementById('obs'), dr.obs_f == null ? '-'
     : dr.obs_f + ' / ' + dr.obs_b + ' / ' + dr.obs_l + ' / ' + dr.obs_r);
-  setTxt(el('key', i), dr.key_press ? '按下' : '-');
-  setTxt(el('timer', i), f1(dr.timer));
-  setTxt(el('news', i), dr.role_news || '-');
-  setTxt(el('newsId', i), dr.role_news ? ('消息序号 ' + dr.role_news_id) : '');
+  setTxt(document.getElementById('key'), dr.key_press ? '按下' : '-');
+  setTxt(document.getElementById('timer'), f1(dr.timer) + ' s');
+  setTxt(document.getElementById('news'), dr.role_news
+    ? (dr.role_news + (dr.role_news_id != null ? ' · #' + dr.role_news_id : ''))
+    : '-');
+  dronePosCache = dr;                 // 供全屏「检测到目标」时取 xyz
+  updateDroneFullscreenInfo(dr);      // 同步中间位置信息面板
+}
+
+// ---------------- 无人机全屏：视频 + 位置信息 + 目标检测记录 ----------------
+let dronePosCache = null;   // 最近一次遥测，供「检测到目标」时取 xyz
+let dfsSeq = 0;             // 虫害序号
+let dfsSeen = {};           // 目标签名 -> 记录时间（去重）
+
+// 中间位置信息面板：字段与 titlebar chip 一致
+function updateDroneFullscreenInfo(dr) {
+  const isSdk = (dr.source || '') === 'sdk';
+  const sdk = dr.sdk || {};
+  const src = (isSdk ? 'SDK 链路' : (dr.source || '-'))
+    + (isSdk ? (sdk.serial ? ' · 串口 ' + sdk.serial : '') : (dr.error ? ' · ' + dr.error : ''));
+  setTxt(document.getElementById('dfs_src'), src);
+  setTxt(document.getElementById('dfs_att'), f1(dr.roll) + ' / ' + f1(dr.pitch) + ' / ' + f1(dr.yaw));
+  setTxt(document.getElementById('dfs_pos'), dr.loc_x == null ? '-' : f0(dr.loc_x) + ', ' + f0(dr.loc_y) + ', ' + f0(dr.loc_z) + ' cm');
+  setTxt(document.getElementById('dfs_alt'), dr.loc_z == null ? '-' : (Number(dr.loc_z) / 100).toFixed(1) + ' m');
+  const hasErr = [dr.err_x, dr.err_y, dr.err_z].some(v => v != null && Number(v) !== 0);
+  setTxt(document.getElementById('dfs_err'), hasErr ? (dr.err_x + ', ' + dr.err_y + ', ' + dr.err_z + ' cm') : '-');
+  setTxt(document.getElementById('dfs_bat'), dr.volt == null ? '-' : f2(dr.volt) + ' V');
+  setTxt(document.getElementById('dfs_obs'), dr.obs_f == null ? '-' : dr.obs_f + ' / ' + dr.obs_b + ' / ' + dr.obs_l + ' / ' + dr.obs_r);
+  setTxt(document.getElementById('dfs_key'), dr.key_press ? '按下' : '-');
+  setTxt(document.getElementById('dfs_timer'), f1(dr.timer) + ' s');
+  setTxt(document.getElementById('dfs_news'), dr.role_news || '-');
+}
+
+// 往右侧记录列追加一条「发现虫害 序号N + xyz」
+function dfsAddLog(dr, det) {
+  const list = document.getElementById('dfsList');
+  if (!list) return;
+  const empty = list.querySelector('.dfs-empty');
+  if (empty) empty.remove();
+  const x = dr && dr.loc_x != null ? f0(dr.loc_x) : '-';
+  const y = dr && dr.loc_y != null ? f0(dr.loc_y) : '-';
+  const z = dr && dr.loc_z != null ? f0(dr.loc_z) : '-';
+  const item = document.createElement('div');
+  item.className = 'dfs-item';
+  const t = document.createElement('div'); t.className = 't';
+  t.textContent = '发现虫害 序号' + (++dfsSeq);
+  const p = document.createElement('div'); p.className = 'p';
+  p.textContent = 'x=' + x + '  y=' + y + '  z=' + z + ' cm';
+  const m = document.createElement('div'); m.className = 'm';
+  m.textContent = (det.class || '目标') + '  置信度 ' + (det.conf != null ? det.conf : '-');
+  item.appendChild(t); item.appendChild(p); item.appendChild(m);
+  list.appendChild(item);
+}
+
+// 检测到「新目标」就记录一次（同一目标 6 秒内不重复记）
+function dfsCheckDetections(m) {
+  const fs = document.fullscreenElement;
+  if (!fs || fs.id !== 'dronePanel') return;
+  const dets = (m && m.last_detections) || [];
+  if (!dets.length) return;
+  const now = Date.now();
+  dets.forEach(d => {
+    const c = d.center || [0, 0];
+    const sig = d.class + '@' + Math.round(c[0] / 40) + ',' + Math.round(c[1] / 40);
+    if (dfsSeen[sig] && now - dfsSeen[sig] < 6000) return;
+    dfsSeen[sig] = now;
+    dfsAddLog(dronePosCache, d);
+  });
+}
+
+// 进入/退出无人机全屏：进入时重置记录并挂视频
+function droneFullscreenSync() {
+  const fs = document.fullscreenElement;
+  const on = !!(fs && fs.id === 'dronePanel');
+  if (on) {
+    dfsSeq = 0;
+    dfsSeen = {};
+    const list = document.getElementById('dfsList');
+    if (list) list.innerHTML = '<div class="dfs-empty">暂无检测记录</div>';
+    videoHeal('dfsVideo', '/video.mjpeg', YOLO_PLACEHOLDER);   // YOLO 标注画面（带检测框）
+  } else {
+    const box = document.getElementById('dfsVideo');
+    if (box) box.innerHTML = '<span class="offline">画面加载中…</span>';
+  }
 }
 
 function renderDronePos(drones, message) {
@@ -693,151 +843,37 @@ function renderDronePos(drones, message) {
   }
   if (droneCellsBuilt !== drones.length) {   // 台数变化才重建，避免闪烁
     buildDroneCells(drones.length);
-    refreshDroneHistory();                   // 建好后立刻补画一次曲线
   }
-  drones.forEach((dr, i) => updateDroneCell(i, dr));
+  drones.forEach(updateDroneCell);
 }
 
 async function refreshDrone() {
   try {
     const d = await (await fetch('/api/drone/status')).json();
-    setDroneStatus(d.online);
+    const ok = !!(d.online || d.force_connected);
+    setDroneStatus(ok);
     const on = document.getElementById('dOnline');
-    on.textContent = d.online ? '● 在线' : '● 离线';
-    on.className = 'chip ' + (d.online ? 'ok' : 'bad');
-    const drones = d.drones || [];
-    document.getElementById('dCount').textContent = drones.length || '-';
-    document.getElementById('dSrc').textContent =
-      d.source === 'sdk' ? 'SDK' : (d.source || '-');
-    document.getElementById('dNews').textContent = d.message || '-';
-    renderDronePos(drones, d.message);
+    on.textContent = ok ? '● 在线' : '● 离线';
+    on.className = 'chip ' + (ok ? 'ok' : 'bad');
+    renderDronePos(d.drones || [], d.message);
   } catch (e) {
     setDroneStatus(false);
     const on = document.getElementById('dOnline');
     on.textContent = '● 接口错误';
     on.className = 'chip bad';
-    document.getElementById('dNews').textContent = String(e);
     renderDronePos([], '中枢接口异常：' + e);
   }
 }
-
-// ---------------- 无人机曲线（中转上游 /api/history，画法与仪表盘一致） ----------------
-function drawChart(canvas, series, label) {
-  if (!canvas) return;
-  const ctx = canvas.getContext('2d');
-  const dpr = window.devicePixelRatio || 1;
-  const cw = canvas.clientWidth, ch = canvas.clientHeight;
-  if (!cw || !ch) return;  // 布局还没就绪：跳过本次，等下一次重画
-  const W = canvas.width = cw * dpr;
-  const H = canvas.height = ch * dpr;
-  ctx.clearRect(0, 0, W, H);
-  const pad = 8 * dpr;
-  const left = 30 * dpr;
-  const top = 22 * dpr;
-  const n = series[0].values.length;
-
-  let min = Infinity, max = -Infinity;
-  series.forEach(s => s.values.forEach(v => {
-    const x = Number(v);
-    if (!isNaN(x)) { min = Math.min(min, x); max = Math.max(max, x); }
-  }));
-  if (!isFinite(min)) { min = 0; max = 0; }
-  if (max === min) { min -= 1; max += 1; }
-
-  ctx.fillStyle = '#0b1220';
-  ctx.fillRect(0, 0, W, top);
-  ctx.fillStyle = '#94a3b8';
-  ctx.font = (11 * dpr) + 'px sans-serif';
-  ctx.fillText(n === 0 ? (label + '：等待数据…')
-                       : (label + ' 范围 ' + min.toFixed(1) + ' ~ ' + max.toFixed(1)),
-               pad, 14 * dpr);
-  const plotTop = top + 6 * dpr;
-  const plotBottom = H - pad;
-  const plotH = plotBottom - plotTop;
-  const plotW = W - pad - left;
-
-  ctx.strokeStyle = '#1a2740';
-  ctx.lineWidth = 1 * dpr;
-  for (let gi = 0; gi <= 4; gi++) {
-    const gy = plotTop + (gi / 4) * plotH;
-    ctx.beginPath();
-    ctx.moveTo(left, gy);
-    ctx.lineTo(W - pad, gy);
-    ctx.stroke();
-    const gv = max - (max - min) * (gi / 4);
-    ctx.fillStyle = '#475569';
-    ctx.font = (9 * dpr) + 'px sans-serif';
-    ctx.textAlign = 'right';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(gv.toFixed(1), left - 4 * dpr, gy);
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'alphabetic';
-  }
-  const zeroY = plotTop + (1 - (0 - min) / (max - min)) * plotH;
-  ctx.strokeStyle = '#334155';
-  ctx.lineWidth = 1 * dpr;
-  ctx.beginPath();
-  ctx.moveTo(left, zeroY);
-  ctx.lineTo(W - pad, zeroY);
-  ctx.stroke();
-
-  if (n === 0) return;
-  const yOf = v => plotTop + (1 - (v - min) / (max - min)) * plotH;
-  const xOf = i => n === 1 ? left + plotW / 2 : left + (i / (n - 1)) * plotW;
-  series.forEach(s => {
-    ctx.beginPath(); ctx.strokeStyle = s.color; ctx.lineWidth = 1.5 * dpr;
-    if (n === 1) {
-      const v = Number(s.values[0]);
-      if (!isNaN(v)) {
-        const y = yOf(v);
-        ctx.moveTo(left, y);
-        ctx.lineTo(left + plotW, y);
-        ctx.stroke();
-        ctx.fillStyle = s.color;
-        ctx.beginPath();
-        ctx.arc(left + plotW / 2, y, 2.5 * dpr, 0, 2 * Math.PI);
-        ctx.fill();
-      }
-      return;
-    }
-    let started = false;
-    for (let i = 0; i < n; i++) {
-      const v = Number(s.values[i]);
-      if (isNaN(v)) continue;
-      const x = xOf(i), y = yOf(v);
-      if (!started) { ctx.moveTo(x, y); started = true; }
-      else ctx.lineTo(x, y);
-    }
-    if (started) ctx.stroke();
-  });
-}
-
-async function refreshDroneHistory() {
-  if (droneCellsBuilt <= 0) return;
-  try {
-    const h = await (await fetch('/api/drone/history')).json();
-    const drones = h.drones || [];
-    for (let i = 0; i < droneCellsBuilt; i++) {
-      const hist = drones[i] || {};
-      drawChart(el('attChart', i),
-        [{ name: 'roll', color: '#f87171', values: hist.roll || [] },
-         { name: 'pitch', color: '#4ade80', values: hist.pitch || [] },
-         { name: 'yaw', color: '#60a5fa', values: hist.yaw || [] }], '姿态(°)');
-      drawChart(el('altChart', i),
-        [{ name: 'alt', color: '#22d3ee', values: hist.alt || [] }], '高度(m)');
-    }
-  } catch (e) {}
-}
-
 
 // ---------------- 机器人 ----------------
 async function refreshRobot() {
   try {
     const d = await (await fetch('/api/robot/status')).json();
-    setRobotStatus(d.online);
+    const ok = !!(d.online || d.force_connected);
+    setRobotStatus(ok);
     const on = document.getElementById('rOnline');
-    on.textContent = d.online ? '● 在线' : '● 离线';
-    on.className = 'chip ' + (d.online ? 'ok' : 'bad');
+    on.textContent = ok ? '● 在线' : '● 离线';
+    on.className = 'chip ' + (ok ? 'ok' : 'bad');
     const st = document.getElementById('rState');
     st.textContent = d.state || '-';
     st.className = 'state' + (d.state ? ' ' + d.state : '');
@@ -863,11 +899,12 @@ async function refreshRobot() {
 async function refreshModel() {
   try {
     const m = await (await fetch('/api/model/status')).json();
-    setYoloStatus(m.loaded);
+    const ok = !!(m.loaded || m.force_connected);
+    setYoloStatus(ok);
     document.getElementById('modelName').textContent = m.model || '-';
     const ld = document.getElementById('modelLoaded');
-    ld.textContent = m.loaded ? '已加载' : '未加载';
-    ld.className = 'chip ' + (m.loaded ? 'ok' : 'bad');
+    ld.textContent = ok ? '已加载' : '未加载';
+    ld.className = 'chip ' + (ok ? 'ok' : 'bad');
     document.getElementById('modelMsg').textContent = m.loaded ? '-' : (m.message || '-');
     document.getElementById('modelConf').textContent = m.conf != null ? m.conf : '-';
     document.getElementById('modelFps').textContent = m.fps != null ? m.fps : '-';
@@ -878,18 +915,17 @@ async function refreshModel() {
     document.getElementById('modelLast').textContent =
       m.last_detections && m.last_detections.length
         ? m.last_detections.map(x => x.class + ' ' + x.conf).join(', ') : '-';
+    dfsCheckDetections(m);   // 无人机全屏：检测到新目标就记录当前位置
   } catch (e) {
     setYoloStatus(false);
     document.getElementById('modelName').textContent = '接口错误';
   }
 }
 
-refreshServer(); setInterval(refreshServer, 2000);
+refreshServer(); connectServerStream();
 refreshDrone(); setInterval(refreshDrone, 2000);
-refreshDroneHistory(); setInterval(refreshDroneHistory, 2000);
 refreshRobot(); setInterval(refreshRobot, 1000);
 refreshModel(); setInterval(refreshModel, 2000);
-window.addEventListener('resize', () => { if (droneCellsBuilt > 0) refreshDroneHistory(); });
 
 // ---------------- 配置弹窗（读写 data/config.yaml） ----------------
 const configModal = document.getElementById('configModal');
@@ -902,14 +938,21 @@ const CONFIG_LABELS = {
   'server.url': '服务器监控地址',
   'server.name': '服务器显示名称',
   'server.enabled': '显示服务器信息面板',
+  'server.force_connected': '服务器强制显示已连接',
   'drone.url': '无人机地址',
   'drone.video': '无人机画面开关',
   'drone.video_port': '无人机视频端口',
+  'drone.force_connected': '无人机强制显示已连接',
+  'drone.placeholder_video': '无人机占位画面路径',
   'robot.url': '机器人地址',
   'robot.video': '机器人画面开关',
+  'robot.force_connected': '机器人强制显示已连接',
+  'robot.placeholder_video': '机器人占位画面路径',
   'yolo.url': 'YOLO 地址',
   'yolo.video': 'YOLO 画面开关',
   'yolo.fps': '转发帧率',
+  'yolo.force_connected': 'YOLO 强制显示已加载',
+  'yolo.placeholder_video': 'YOLO 占位画面路径',
   'dashboard.hub_port': '中枢端口',
   'dashboard.progress_port': '进度流程图端口',
 };
