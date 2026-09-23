@@ -1685,6 +1685,9 @@ def video_mjpeg():
     config.reload_if_changed()
     if not config.YOLO_VIDEO_ENABLED:
         return 'yolo video disabled', 503
+    # 强制连接且模型实际未加载：返回 503，让前端落到占位画面（和机器人/无人机断流一致）
+    if config.YOLO_FORCE_CONNECTED and not model_stats.get('loaded'):
+        return 'yolo offline (forced)', 503
 
     def gen():
         while True:

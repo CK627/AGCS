@@ -592,7 +592,7 @@ function renderSrvRows(s) {
     ['采集方式', s.mode === 'local' ? '本机采集' : (s.mode === 'http' ? 'HTTP 拉取' : '-')],
     ['采集延迟', s.latency_ms != null ? s.latency_ms + ' ms'
       : (s.mode === 'local' ? '—（本机）' : '-')],
-    ['服务器状态', s.online ? '在线' : '离线'],
+    ['服务器状态', (s.online || s.force_connected) ? '在线' : '离线'],
   ];
   if (box.children.length !== rows.length) {
     box.innerHTML = rows.map(() => '<div class="srv-row"><span></span><b></b></div>').join('');

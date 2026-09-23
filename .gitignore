@@ -58,3 +58,6 @@ GroundStation/Dashboard/data/config.yaml
 # 进度/清单运行时状态（后端自动读写，缺失时用默认值重建）
 GroundStation/Dashboard/data/progress.json
 GroundStation/Dashboard/data/checklist.json
+
+# 中枢占位画面视频（本地大文件，不入库）
+GroundStation/Dashboard/backend/video/
